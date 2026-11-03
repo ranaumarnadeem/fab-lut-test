@@ -32,11 +32,33 @@ def load(netlist: str):
     p = REPORTS / f"{netlist}_exhaust.json"
     if p.exists():
         ex = {str(r["id"]): r for r in json.loads(p.read_text())["faults"]}
+    # Cone-split verdicts (sim/run_conesplit.py) replace "not enumerated".
+    cp = REPORTS / f"{netlist}_conesplit.json"
+    if cp.exists():
+        for r in json.loads(cp.read_text()):
+            rec = ex.setdefault(str(r["id"]), {"k": r.get("k"), "assignments": None})
+            rec["cone"] = r
+    # Faults that create a combinational loop reaching an observed output.
+    lp = REPORTS / f"{netlist}_loops.json"
+    loops = set()
+    if lp.exists():
+        for f in json.loads(lp.read_text())["faults_creating_loops"]:
+            if any(l["outputs"] for ls in f["configs"].values() for l in ls):
+                loops.add(str(f["id"]))
+    for i in loops:
+        ex.setdefault(i, {"k": None, "assignments": None})["loop"] = True
     return m, reg, ex
 
 
 def exh_ok(rec: dict | None) -> bool | None:
-    if rec is None or rec.get("assignments") is None:
+    if rec is None:
+        return None
+    if rec.get("loop"):
+        return False   # loop under fault: never counted as detected
+    if "cone" in rec:
+        v = rec["cone"]["verdict"]
+        return True if v == "detected" else False if v == "escapes" else None
+    if rec.get("assignments") is None:
         return None
     return all(set(found) & set(CONFIGS) for _, found in rec["assignments"])
 
@@ -48,6 +70,14 @@ def pct(a: int, b: int) -> str:
 def undetected_class(row: dict, reg: dict, rec: dict | None) -> str:
     path = row["path"]
     st = row["any"]
+    if rec is not None and rec.get("loop"):
+        return "loop under fault (X from a loop the fault creates; never detected)"
+    if rec is not None and "cone" in rec:
+        v = rec["cone"]["verdict"]
+        if v == "escapes":
+            return "X-only, escapes for some power-up state (cone-split witness, confirmed)"
+        if v == "group too large":
+            return "X-only, cone-split undecided (a group > 16 elements)"
     if rec is not None and rec.get("timeout"):
         return "timeout (oscillation suspected)"
     if rec is not None and rec.get("assignments") is None:
@@ -129,9 +159,50 @@ def main() -> None:
                "strobe branch into a LUT latch (k = 1), EN SA0 of a LUT (k = 1), "
                "a UserCLK branch (k = 1) or the UserCLK stem (k = 8): all detected "
                "for every power-up assignment.")
-    out.append("- The 20 stuck FrameStrobe stems leave 24 to 32 latches unwritten "
-               "(k > 12): reported, not enumerated or sampled. They are config "
-               "access faults, outside the target population.")
+    out.append("- The 20 FrameStrobe stem SA0 faults (config access, outside the "
+               "target population) leave 24 to 32 latches unwritten. They are decided "
+               "by cone-split enumeration (exact, no k cap; NOTES.md):")
+    out.append("")
+    out.append("| frame | holds | " + " | ".join(NETLISTS) + " |")
+    out.append("|---|---|" + "---|" * len(NETLISTS))
+    holds = {}
+    for r in csv.DictReader((ROOT / "configs" / "tile_bitmap.csv").open()):
+        holds.setdefault(int(r["frame"]), set()).add(r["owner"].split("[")[0])
+    cone = {}
+    for n in NETLISTS:
+        cp = REPORTS / f"{n}_conesplit.json"
+        if cp.exists():
+            for r in json.loads(cp.read_text()):
+                if r["path"].startswith("FrameStrobe[") and r["polarity"] == "0":
+                    cone[(n, int(r["path"][12:-1]))] = r
+    for f in sorted(holds):
+        own = sorted(holds[f])
+        luts = [o for o in own if o.startswith("L")]
+        desc = ", ".join(luts) + (" + " if luts else "") + ", ".join(o for o in own if not o.startswith("L"))
+        cells = []
+        for n in NETLISTS:
+            r = cone.get((n, f))
+            if r is None:
+                cells.append("-")
+                continue
+            v = r["verdict"]
+            how = (f" (output {r['detecting_output']}, {len(r['detecting_elements'])} elements)"
+                   if r.get("method") == "output" else
+                   f" (group of {len(r['detecting_group'])})" if v == "detected" else
+                   f" (largest group {max(r['group_sizes'])})" if v == "group too large" else
+                   " (witness confirmed)" if r.get("witness_check") == "escapes" else "")
+            cells.append(f"{v}{how}, k = {r.get('k')}")
+        out.append(f"| {f} | {desc} | " + " | ".join(cells) + " |")
+    nloop = 0
+    for n in NETLISTS:
+        lp = REPORTS / f"{n}_loops.json"
+        if lp.exists():
+            nloop += sum(1 for x in json.loads(lp.read_text())["faults_creating_loops"]
+                         if any(l["outputs"] for ls in x["configs"].values() for l in ls))
+    out.append("")
+    out.append(f"- Loop under fault (a fault that creates a combinational loop reaching "
+               f"an observed output; never counted as detected): {nloop} faults "
+               f"(reports/loops.md). BC1, D0C and D1 are loop free fault free.")
     out.append("")
     out.append("## Netlists and fault populations")
     out.append("")
