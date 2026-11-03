@@ -557,10 +557,10 @@ id,class,lut,detail
 555,target,A,driver PORT -> LUT input
 556,target,shared,driver PORT -> shared LUT input
 557,target,shared,driver PORT -> shared LUT input
-558,sm,,driver PORT -> switch matrix
-559,sm,,driver PORT -> switch matrix
-560,sm,,driver PORT -> switch matrix
-561,sm,,driver PORT -> switch matrix
+558,other,,driver PORT (config access)
+559,other,,driver PORT (config access)
+560,other,,driver PORT (config access)
+561,other,,driver PORT (config access)
 562,other,,driver PORT (config access)
 563,other,,driver PORT (config access)
 564,other,,driver PORT (config access)
@@ -617,16 +617,16 @@ id,class,lut,detail
 615,other,,driver PORT (config access)
 616,other,,driver PORT (config access)
 617,other,,driver PORT (config access)
-618,sm,,driver PORT -> switch matrix
-619,sm,,driver PORT -> switch matrix
-620,sm,,driver PORT -> switch matrix
-621,sm,,driver PORT -> switch matrix
-622,sm,,driver PORT -> switch matrix
-623,sm,,driver PORT -> switch matrix
-624,sm,,driver PORT -> switch matrix
-625,sm,,driver PORT -> switch matrix
-626,sm,,driver PORT -> switch matrix
-627,sm,,driver PORT -> switch matrix
+618,other,,driver PORT (config access)
+619,other,,driver PORT (config access)
+620,other,,driver PORT (config access)
+621,other,,driver PORT (config access)
+622,other,,driver PORT (config access)
+623,other,,driver PORT (config access)
+624,other,,driver PORT (config access)
+625,other,,driver PORT (config access)
+626,other,,driver PORT (config access)
+627,other,,driver PORT (config access)
 628,other,,driver PORT (config access)
 629,other,,driver PORT (config access)
 630,other,,driver PORT (config access)
@@ -659,8 +659,8 @@ id,class,lut,detail
 657,other,,driver PORT (config access)
 658,other,,driver PORT (config access)
 659,other,,driver PORT (config access)
-660,sm,,driver PORT -> switch matrix
-661,sm,,driver PORT -> switch matrix
+660,other,,driver PORT (config access)
+661,other,,driver PORT (config access)
 662,sm,,driver SM -> switch matrix
 663,sm,,driver SM -> switch matrix
 664,sm,,driver SM -> switch matrix

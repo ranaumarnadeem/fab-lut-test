@@ -103,7 +103,9 @@ def main() -> None:
                 drv = e["drivers"][0]
                 r = "PORT" if drv.startswith("port:") else reg_of_pin(drv)
                 detail = f"driver {r}"
-                if r in ("SM", "PORT"):
+                if r == "PORT" and flt["net"].startswith(("FrameData[", "FrameStrobe[")):
+                    r = "CONFIG"   # config access: feeds latches of every owner
+                elif r in ("SM", "PORT"):
                     # judge by the cells it feeds; output-port sinks are pass-throughs
                     sinks = {reg_of_pin(s) for s in e["sinks"]} - {"PORT"}
                     if sinks and sinks <= luts:

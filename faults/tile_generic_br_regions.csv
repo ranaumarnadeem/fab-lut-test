@@ -623,10 +623,10 @@ id,class,lut,detail
 621,target,shared,driver PORT -> shared LUT input
 622,other,,branch into PORT
 623,other,,branch into PORT
-624,sm,,driver PORT -> switch matrix
-625,sm,,driver PORT -> switch matrix
-626,sm,,driver PORT -> switch matrix
-627,sm,,driver PORT -> switch matrix
+624,other,,driver PORT (config access)
+625,other,,driver PORT (config access)
+626,other,,driver PORT (config access)
+627,other,,driver PORT (config access)
 628,other,,driver PORT (config access)
 629,other,,driver PORT (config access)
 630,other,,driver PORT (config access)
@@ -683,10 +683,10 @@ id,class,lut,detail
 681,other,,driver PORT (config access)
 682,other,,driver PORT (config access)
 683,other,,driver PORT (config access)
-684,sm,,driver PORT -> switch matrix
-685,sm,,driver PORT -> switch matrix
-686,sm,,driver PORT -> switch matrix
-687,sm,,driver PORT -> switch matrix
+684,other,,driver PORT (config access)
+685,other,,driver PORT (config access)
+686,other,,driver PORT (config access)
+687,other,,driver PORT (config access)
 688,other,,branch into PORT (config access)
 689,other,,branch into PORT (config access)
 690,other,,branch into PORT (config access)
@@ -751,12 +751,12 @@ id,class,lut,detail
 749,other,,branch into PORT (config access)
 750,other,,branch into PORT (config access)
 751,other,,branch into PORT (config access)
-752,sm,,driver PORT -> switch matrix
-753,sm,,driver PORT -> switch matrix
-754,sm,,driver PORT -> switch matrix
-755,sm,,driver PORT -> switch matrix
-756,sm,,driver PORT -> switch matrix
-757,sm,,driver PORT -> switch matrix
+752,other,,driver PORT (config access)
+753,other,,driver PORT (config access)
+754,other,,driver PORT (config access)
+755,other,,driver PORT (config access)
+756,other,,driver PORT (config access)
+757,other,,driver PORT (config access)
 758,other,,driver PORT (config access)
 759,other,,driver PORT (config access)
 760,other,,driver PORT (config access)
@@ -789,8 +789,8 @@ id,class,lut,detail
 787,other,,driver PORT (config access)
 788,other,,driver PORT (config access)
 789,other,,driver PORT (config access)
-790,sm,,driver PORT -> switch matrix
-791,sm,,driver PORT -> switch matrix
+790,other,,driver PORT (config access)
+791,other,,driver PORT (config access)
 792,other,,branch into PORT (config access)
 793,other,,branch into PORT (config access)
 794,other,,branch into PORT (config access)
