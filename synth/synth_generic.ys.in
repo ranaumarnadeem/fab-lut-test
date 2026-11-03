@@ -1,0 +1,28 @@
+# Netlist G: flattened @TOP@ as generic yosys gates, no liberty, no abc.
+# Structure follows the RTL (cus_mux* trees stay mux trees). Every $_MUX_ is
+# then decomposed to Y = (A & ~S) | (B & S) so inverted selects and the
+# AND-OR decode become separate nets that can carry faults.
+# Template, filled in by synth/run_synth.sh for the cell and for the tile.
+# @TAGS@ (tile only) overwrites `src` on the flattened coarse cells with a
+# region name; simplemap/techmap carry it onto the gates (metadata only).
+
+read_verilog -defer @SOURCES@
+hierarchy -check -top @TOP@
+proc
+flatten
+@TAGS@
+opt_expr
+opt_clean
+synth -top @TOP@ -flatten -noabc
+
+techmap -map synth/mux_decompose.v t:$_MUX_
+opt_merge
+splitnets
+opt_clean -purge
+# Public names for every wire so JSON names match the Verilog for force
+rename -enumerate -pattern n%
+
+@CHECK@
+tee -o @OUT@.stat stat
+write_verilog -noattr -noexpr -nohex -nodec @OUT@.v
+write_json @OUT@.json

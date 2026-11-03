@@ -1,0 +1,1759 @@
+{
+ "tile": "LUT4AB",
+ "lut_inputs": {
+  "LA_I0": "E2END[6]",
+  "LA_I1": "E2END[2]",
+  "LA_I2": "E2MID[4]",
+  "LA_I3": "E2END[0]",
+  "LB_I0": "E2MID[7]",
+  "LB_I1": "E2MID[2]",
+  "LB_I2": "E2MID[5]",
+  "LB_I3": "E2MID[0]",
+  "LC_I0": "E2MID[6]",
+  "LC_I1": "E2MID[3]",
+  "LC_I2": "E2END[4]",
+  "LC_I3": "E2MID[1]",
+  "LD_I0": "N2MID[7]",
+  "LD_I1": "N2END[2]",
+  "LD_I2": "N2MID[4]",
+  "LD_I3": "EE4END[1]",
+  "LE_I0": "EE4END[2]",
+  "LE_I1": "E2END[3]",
+  "LE_I2": "E2END[5]",
+  "LE_I3": "E2END[1]",
+  "LF_I0": "N2MID[6]",
+  "LF_I1": "N2MID[2]",
+  "LF_I2": "N2MID[5]",
+  "LF_I3": "N2MID[1]",
+  "LG_I0": "E2END[7]",
+  "LG_I1": "N2END[3]",
+  "LG_I2": "E6END[1]",
+  "LG_I3": "E6END[0]",
+  "LH_I0": "EE4END[0]",
+  "LH_I1": "N2MID[3]",
+  "LH_I2": "NN4END[1]",
+  "LH_I3": "EE4END[3]",
+  "J_SR_BEG[0]": "E1END[0]",
+  "J_EN_BEG[0]": "E1END[1]"
+ },
+ "lut_outputs": {
+  "LA_O": "NN4BEG[13]",
+  "LB_O": "NN4BEG[14]",
+  "LC_O": "N1BEG[0]",
+  "LD_O": "N1BEG[1]",
+  "LE_O": "N1BEG[2]",
+  "LF_O": "N1BEG[3]",
+  "LG_O": "N4BEG[14]",
+  "LH_O": "N4BEG[15]"
+ },
+ "carry_in": "Ci[0]",
+ "carry_out": "Co[0]",
+ "switch_matrix_bits_set": {
+  "154": 0,
+  "155": 0,
+  "156": 0,
+  "157": 0,
+  "158": 0,
+  "159": 0,
+  "160": 0,
+  "161": 0,
+  "166": 1,
+  "167": 1,
+  "168": 1,
+  "169": 1,
+  "173": 1,
+  "174": 1,
+  "175": 0,
+  "176": 1,
+  "177": 1,
+  "178": 0,
+  "266": 0,
+  "267": 1,
+  "268": 0,
+  "269": 1,
+  "270": 0,
+  "271": 0,
+  "272": 0,
+  "273": 1,
+  "274": 1,
+  "275": 1,
+  "276": 1,
+  "277": 0,
+  "278": 0,
+  "279": 0,
+  "280": 1,
+  "281": 0,
+  "282": 0,
+  "283": 0,
+  "284": 1,
+  "285": 1,
+  "286": 0,
+  "287": 0,
+  "288": 1,
+  "289": 0,
+  "290": 0,
+  "291": 1,
+  "292": 1,
+  "293": 0,
+  "294": 1,
+  "295": 1,
+  "296": 1,
+  "297": 0,
+  "298": 0,
+  "299": 1,
+  "300": 0,
+  "301": 0,
+  "302": 0,
+  "303": 1,
+  "304": 1,
+  "305": 1,
+  "306": 0,
+  "307": 1,
+  "308": 0,
+  "309": 1,
+  "310": 0,
+  "311": 1,
+  "312": 0,
+  "313": 1,
+  "314": 1,
+  "315": 1,
+  "316": 0,
+  "317": 0,
+  "318": 0,
+  "319": 0,
+  "320": 1,
+  "321": 0,
+  "322": 1,
+  "323": 0,
+  "324": 1,
+  "325": 1,
+  "326": 0,
+  "327": 1,
+  "328": 0,
+  "329": 1,
+  "330": 1,
+  "331": 1,
+  "332": 1,
+  "333": 1,
+  "334": 1,
+  "335": 1,
+  "336": 1,
+  "337": 1,
+  "338": 1,
+  "339": 0,
+  "340": 0,
+  "341": 1,
+  "342": 0,
+  "343": 1,
+  "344": 1,
+  "345": 1,
+  "356": 0,
+  "357": 0,
+  "358": 1,
+  "359": 0,
+  "360": 1,
+  "361": 0,
+  "362": 0,
+  "363": 0,
+  "366": 0,
+  "367": 0,
+  "370": 0,
+  "371": 0,
+  "372": 0,
+  "373": 0,
+  "386": 1,
+  "387": 0,
+  "390": 1,
+  "391": 0,
+  "394": 0,
+  "395": 0,
+  "396": 1,
+  "397": 0,
+  "400": 1,
+  "401": 0,
+  "406": 0,
+  "407": 0,
+  "408": 0,
+  "409": 0,
+  "412": 0,
+  "413": 0,
+  "418": 1,
+  "419": 0,
+  "420": 1,
+  "421": 0,
+  "424": 1,
+  "425": 0,
+  "428": 0,
+  "429": 0,
+  "430": 1,
+  "431": 0,
+  "432": 1,
+  "433": 0,
+  "434": 1,
+  "435": 0,
+  "436": 1,
+  "437": 0,
+  "438": 1,
+  "439": 0,
+  "440": 1,
+  "441": 0,
+  "442": 1,
+  "443": 0,
+  "444": 0,
+  "445": 0,
+  "446": 0,
+  "447": 0,
+  "448": 1,
+  "449": 0,
+  "454": 0,
+  "455": 1,
+  "456": 0,
+  "457": 0,
+  "458": 0,
+  "459": 1,
+  "460": 0,
+  "461": 0,
+  "602": 1,
+  "603": 0,
+  "606": 0,
+  "607": 0,
+  "608": 1,
+  "609": 0,
+  "610": 0,
+  "611": 0,
+  "612": 1,
+  "613": 0,
+  "614": 0,
+  "615": 1
+ },
+ "routes": [
+  {
+   "type": "input",
+   "nets": [
+    "E1END[0]",
+    "JN2BEG[1]",
+    "J_SR_BEG[0]"
+   ],
+   "hops": [
+    {
+     "mux": "JN2BEG1",
+     "kind": "cus_mux161",
+     "input": 2,
+     "from": "E1END[0]",
+     "to": "JN2BEG[1]",
+     "sel": {
+      "454": 0,
+      "455": 1,
+      "456": 0,
+      "457": 0
+     }
+    },
+    {
+     "mux": "J_SR_BEG0",
+     "kind": "cus_mux81",
+     "input": 4,
+     "from": "JN2BEG[1]",
+     "to": "J_SR_BEG[0]",
+     "sel": {
+      "610": 0,
+      "611": 0,
+      "612": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E1END[1]",
+    "JN2BEG[2]",
+    "J_EN_BEG[0]"
+   ],
+   "hops": [
+    {
+     "mux": "JN2BEG2",
+     "kind": "cus_mux161",
+     "input": 2,
+     "from": "E1END[1]",
+     "to": "JN2BEG[2]",
+     "sel": {
+      "458": 0,
+      "459": 1,
+      "460": 0,
+      "461": 0
+     }
+    },
+    {
+     "mux": "J_EN_BEG0",
+     "kind": "cus_mux81",
+     "input": 4,
+     "from": "JN2BEG[2]",
+     "to": "J_EN_BEG[0]",
+     "sel": {
+      "613": 0,
+      "614": 0,
+      "615": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[0]",
+    "J2END_AB_BEG[3]",
+    "LA_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_AB_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[0]",
+     "to": "J2END_AB_BEG[3]",
+     "sel": {
+      "424": 1,
+      "425": 0
+     }
+    },
+    {
+     "mux": "LA_I3",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_AB_BEG[3]",
+     "to": "LA_I3",
+     "sel": {
+      "272": 0,
+      "273": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[1]",
+    "J2END_EF_BEG[3]",
+    "LE_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_EF_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[1]",
+     "to": "J2END_EF_BEG[3]",
+     "sel": {
+      "440": 1,
+      "441": 0
+     }
+    },
+    {
+     "mux": "LE_I3",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_EF_BEG[3]",
+     "to": "LE_I3",
+     "sel": {
+      "312": 0,
+      "313": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[2]",
+    "J2END_AB_BEG[1]",
+    "LA_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_AB_BEG1",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[2]",
+     "to": "J2END_AB_BEG[1]",
+     "sel": {
+      "420": 1,
+      "421": 0
+     }
+    },
+    {
+     "mux": "LA_I1",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_AB_BEG[1]",
+     "to": "LA_I1",
+     "sel": {
+      "268": 0,
+      "269": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[3]",
+    "J2END_EF_BEG[1]",
+    "LE_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_EF_BEG1",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[3]",
+     "to": "J2END_EF_BEG[1]",
+     "sel": {
+      "436": 1,
+      "437": 0
+     }
+    },
+    {
+     "mux": "LE_I1",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_EF_BEG[1]",
+     "to": "LE_I1",
+     "sel": {
+      "308": 0,
+      "309": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[4]",
+    "J2END_CD_BEG[2]",
+    "LC_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_CD_BEG2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[4]",
+     "to": "J2END_CD_BEG[2]",
+     "sel": {
+      "430": 1,
+      "431": 0
+     }
+    },
+    {
+     "mux": "LC_I2",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_CD_BEG[2]",
+     "to": "LC_I2",
+     "sel": {
+      "290": 0,
+      "291": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[5]",
+    "J2END_EF_BEG[2]",
+    "LE_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_EF_BEG2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[5]",
+     "to": "J2END_EF_BEG[2]",
+     "sel": {
+      "438": 1,
+      "439": 0
+     }
+    },
+    {
+     "mux": "LE_I2",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_EF_BEG[2]",
+     "to": "LE_I2",
+     "sel": {
+      "310": 0,
+      "311": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[6]",
+    "J2END_AB_BEG[0]",
+    "LA_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_AB_BEG0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[6]",
+     "to": "J2END_AB_BEG[0]",
+     "sel": {
+      "418": 1,
+      "419": 0
+     }
+    },
+    {
+     "mux": "LA_I0",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_AB_BEG[0]",
+     "to": "LA_I0",
+     "sel": {
+      "266": 0,
+      "267": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2END[7]",
+    "J2END_GH_BEG[0]",
+    "LG_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_GH_BEG0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2END[7]",
+     "to": "J2END_GH_BEG[0]",
+     "sel": {
+      "442": 1,
+      "443": 0
+     }
+    },
+    {
+     "mux": "LG_I0",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_GH_BEG[0]",
+     "to": "LG_I0",
+     "sel": {
+      "326": 0,
+      "327": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[0]",
+    "J2MID_ABa_BEG[3]",
+    "LB_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_ABa_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[0]",
+     "to": "J2MID_ABa_BEG[3]",
+     "sel": {
+      "360": 1,
+      "361": 0
+     }
+    },
+    {
+     "mux": "LB_I3",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_ABa_BEG[3]",
+     "to": "LB_I3",
+     "sel": {
+      "282": 0,
+      "283": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[1]",
+    "J2MID_CDb_BEG[3]",
+    "LC_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_CDb_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[1]",
+     "to": "J2MID_CDb_BEG[3]",
+     "sel": {
+      "400": 1,
+      "401": 0
+     }
+    },
+    {
+     "mux": "LC_I3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_CDb_BEG[3]",
+     "to": "LC_I3",
+     "sel": {
+      "292": 1,
+      "293": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[2]",
+    "J2MID_ABa_BEG[1]",
+    "LB_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_ABa_BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "E2MID[2]",
+     "to": "J2MID_ABa_BEG[1]",
+     "sel": {
+      "356": 0,
+      "357": 0
+     }
+    },
+    {
+     "mux": "LB_I1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_ABa_BEG[1]",
+     "to": "LB_I1",
+     "sel": {
+      "278": 0,
+      "279": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[3]",
+    "J2MID_CDb_BEG[1]",
+    "LC_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_CDb_BEG1",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[3]",
+     "to": "J2MID_CDb_BEG[1]",
+     "sel": {
+      "396": 1,
+      "397": 0
+     }
+    },
+    {
+     "mux": "LC_I1",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_CDb_BEG[1]",
+     "to": "LC_I1",
+     "sel": {
+      "288": 1,
+      "289": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[4]",
+    "J2MID_ABa_BEG[2]",
+    "LA_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_ABa_BEG2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[4]",
+     "to": "J2MID_ABa_BEG[2]",
+     "sel": {
+      "358": 1,
+      "359": 0
+     }
+    },
+    {
+     "mux": "LA_I2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_ABa_BEG[2]",
+     "to": "LA_I2",
+     "sel": {
+      "270": 0,
+      "271": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[5]",
+    "J2MID_ABb_BEG[2]",
+    "LB_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_ABb_BEG2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[5]",
+     "to": "J2MID_ABb_BEG[2]",
+     "sel": {
+      "390": 1,
+      "391": 0
+     }
+    },
+    {
+     "mux": "LB_I2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_ABb_BEG[2]",
+     "to": "LB_I2",
+     "sel": {
+      "280": 1,
+      "281": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[6]",
+    "J2MID_CDa_BEG[0]",
+    "LC_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_CDa_BEG0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "E2MID[6]",
+     "to": "J2MID_CDa_BEG[0]",
+     "sel": {
+      "362": 0,
+      "363": 0
+     }
+    },
+    {
+     "mux": "LC_I0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_CDa_BEG[0]",
+     "to": "LC_I0",
+     "sel": {
+      "286": 0,
+      "287": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E2MID[7]",
+    "J2MID_ABb_BEG[0]",
+    "LB_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_ABb_BEG0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E2MID[7]",
+     "to": "J2MID_ABb_BEG[0]",
+     "sel": {
+      "386": 1,
+      "387": 0
+     }
+    },
+    {
+     "mux": "LB_I0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_ABb_BEG[0]",
+     "to": "LB_I0",
+     "sel": {
+      "276": 1,
+      "277": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E6END[0]",
+    "J_l_GH_BEG[3]",
+    "LG_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J_l_GH_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "E6END[0]",
+     "to": "J_l_GH_BEG[3]",
+     "sel": {
+      "608": 1,
+      "609": 0
+     }
+    },
+    {
+     "mux": "LG_I3",
+     "kind": "cus_mux41",
+     "input": 3,
+     "from": "J_l_GH_BEG[3]",
+     "to": "LG_I3",
+     "sel": {
+      "332": 1,
+      "333": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "E6END[1]",
+    "J_l_GH_BEG[2]",
+    "LG_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J_l_GH_BEG2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "E6END[1]",
+     "to": "J_l_GH_BEG[2]",
+     "sel": {
+      "606": 0,
+      "607": 0
+     }
+    },
+    {
+     "mux": "LG_I2",
+     "kind": "cus_mux41",
+     "input": 3,
+     "from": "J_l_GH_BEG[2]",
+     "to": "LG_I2",
+     "sel": {
+      "330": 1,
+      "331": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "EE4END[0]",
+    "J_l_GH_BEG[0]",
+    "LH_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J_l_GH_BEG0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "EE4END[0]",
+     "to": "J_l_GH_BEG[0]",
+     "sel": {
+      "602": 1,
+      "603": 0
+     }
+    },
+    {
+     "mux": "LH_I0",
+     "kind": "cus_mux41",
+     "input": 3,
+     "from": "J_l_GH_BEG[0]",
+     "to": "LH_I0",
+     "sel": {
+      "336": 1,
+      "337": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "EE4END[1]",
+    "J2END_CD_BEG[3]",
+    "LD_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_CD_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "EE4END[1]",
+     "to": "J2END_CD_BEG[3]",
+     "sel": {
+      "432": 1,
+      "433": 0
+     }
+    },
+    {
+     "mux": "LD_I3",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_CD_BEG[3]",
+     "to": "LD_I3",
+     "sel": {
+      "302": 0,
+      "303": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "EE4END[2]",
+    "J2END_EF_BEG[0]",
+    "LE_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_EF_BEG0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "EE4END[2]",
+     "to": "J2END_EF_BEG[0]",
+     "sel": {
+      "434": 1,
+      "435": 0
+     }
+    },
+    {
+     "mux": "LE_I0",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_EF_BEG[0]",
+     "to": "LE_I0",
+     "sel": {
+      "306": 0,
+      "307": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "EE4END[3]",
+    "J2END_GH_BEG[3]",
+    "LH_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_GH_BEG3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "EE4END[3]",
+     "to": "J2END_GH_BEG[3]",
+     "sel": {
+      "448": 1,
+      "449": 0
+     }
+    },
+    {
+     "mux": "LH_I3",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_GH_BEG[3]",
+     "to": "LH_I3",
+     "sel": {
+      "342": 0,
+      "343": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2END[2]",
+    "J2END_CD_BEG[1]",
+    "LD_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_CD_BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2END[2]",
+     "to": "J2END_CD_BEG[1]",
+     "sel": {
+      "428": 0,
+      "429": 0
+     }
+    },
+    {
+     "mux": "LD_I1",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_CD_BEG[1]",
+     "to": "LD_I1",
+     "sel": {
+      "298": 0,
+      "299": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2END[3]",
+    "J2END_GH_BEG[1]",
+    "LG_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_GH_BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2END[3]",
+     "to": "J2END_GH_BEG[1]",
+     "sel": {
+      "444": 0,
+      "445": 0
+     }
+    },
+    {
+     "mux": "LG_I1",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_GH_BEG[1]",
+     "to": "LG_I1",
+     "sel": {
+      "328": 0,
+      "329": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[1]",
+    "J2MID_EFb_BEG[3]",
+    "LF_I3"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_EFb_BEG3",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[1]",
+     "to": "J2MID_EFb_BEG[3]",
+     "sel": {
+      "408": 0,
+      "409": 0
+     }
+    },
+    {
+     "mux": "LF_I3",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_EFb_BEG[3]",
+     "to": "LF_I3",
+     "sel": {
+      "322": 1,
+      "323": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[2]",
+    "J2MID_EFa_BEG[1]",
+    "LF_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_EFa_BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[2]",
+     "to": "J2MID_EFa_BEG[1]",
+     "sel": {
+      "372": 0,
+      "373": 0
+     }
+    },
+    {
+     "mux": "LF_I1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_EFa_BEG[1]",
+     "to": "LF_I1",
+     "sel": {
+      "318": 0,
+      "319": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[3]",
+    "J2MID_GHb_BEG[1]",
+    "LH_I1"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_GHb_BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[3]",
+     "to": "J2MID_GHb_BEG[1]",
+     "sel": {
+      "412": 0,
+      "413": 0
+     }
+    },
+    {
+     "mux": "LH_I1",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_GHb_BEG[1]",
+     "to": "LH_I1",
+     "sel": {
+      "338": 1,
+      "339": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[4]",
+    "J2MID_CDa_BEG[2]",
+    "LD_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_CDa_BEG2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[4]",
+     "to": "J2MID_CDa_BEG[2]",
+     "sel": {
+      "366": 0,
+      "367": 0
+     }
+    },
+    {
+     "mux": "LD_I2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_CDa_BEG[2]",
+     "to": "LD_I2",
+     "sel": {
+      "300": 0,
+      "301": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[5]",
+    "J2MID_EFb_BEG[2]",
+    "LF_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_EFb_BEG2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[5]",
+     "to": "J2MID_EFb_BEG[2]",
+     "sel": {
+      "406": 0,
+      "407": 0
+     }
+    },
+    {
+     "mux": "LF_I2",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_EFb_BEG[2]",
+     "to": "LF_I2",
+     "sel": {
+      "320": 1,
+      "321": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[6]",
+    "J2MID_EFa_BEG[0]",
+    "LF_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_EFa_BEG0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[6]",
+     "to": "J2MID_EFa_BEG[0]",
+     "sel": {
+      "370": 0,
+      "371": 0
+     }
+    },
+    {
+     "mux": "LF_I0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "J2MID_EFa_BEG[0]",
+     "to": "LF_I0",
+     "sel": {
+      "316": 0,
+      "317": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "N2MID[7]",
+    "J2MID_CDb_BEG[0]",
+    "LD_I0"
+   ],
+   "hops": [
+    {
+     "mux": "J2MID_CDb_BEG0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "N2MID[7]",
+     "to": "J2MID_CDb_BEG[0]",
+     "sel": {
+      "394": 0,
+      "395": 0
+     }
+    },
+    {
+     "mux": "LD_I0",
+     "kind": "cus_mux41",
+     "input": 1,
+     "from": "J2MID_CDb_BEG[0]",
+     "to": "LD_I0",
+     "sel": {
+      "296": 1,
+      "297": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "input",
+   "nets": [
+    "NN4END[1]",
+    "J2END_GH_BEG[2]",
+    "LH_I2"
+   ],
+   "hops": [
+    {
+     "mux": "J2END_GH_BEG2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "NN4END[1]",
+     "to": "J2END_GH_BEG[2]",
+     "sel": {
+      "446": 0,
+      "447": 0
+     }
+    },
+    {
+     "mux": "LH_I2",
+     "kind": "cus_mux41",
+     "input": 2,
+     "from": "J2END_GH_BEG[2]",
+     "to": "LH_I2",
+     "sel": {
+      "340": 0,
+      "341": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LA_O",
+    "NN4BEG[13]"
+   ],
+   "hops": [
+    {
+     "mux": "NN4BEG1",
+     "kind": "cus_mux81",
+     "input": 3,
+     "from": "LA_O",
+     "to": "NN4BEG[13]",
+     "sel": {
+      "173": 1,
+      "174": 1,
+      "175": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LB_O",
+    "NN4BEG[14]"
+   ],
+   "hops": [
+    {
+     "mux": "NN4BEG2",
+     "kind": "cus_mux81",
+     "input": 3,
+     "from": "LB_O",
+     "to": "NN4BEG[14]",
+     "sel": {
+      "176": 1,
+      "177": 1,
+      "178": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LC_O",
+    "N1BEG[0]"
+   ],
+   "hops": [
+    {
+     "mux": "N1BEG0",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "LC_O",
+     "to": "N1BEG[0]",
+     "sel": {
+      "154": 0,
+      "155": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LD_O",
+    "N1BEG[1]"
+   ],
+   "hops": [
+    {
+     "mux": "N1BEG1",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "LD_O",
+     "to": "N1BEG[1]",
+     "sel": {
+      "156": 0,
+      "157": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LE_O",
+    "N1BEG[2]"
+   ],
+   "hops": [
+    {
+     "mux": "N1BEG2",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "LE_O",
+     "to": "N1BEG[2]",
+     "sel": {
+      "158": 0,
+      "159": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LF_O",
+    "N1BEG[3]"
+   ],
+   "hops": [
+    {
+     "mux": "N1BEG3",
+     "kind": "cus_mux41",
+     "input": 0,
+     "from": "LF_O",
+     "to": "N1BEG[3]",
+     "sel": {
+      "160": 0,
+      "161": 0
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LG_O",
+    "N4BEG[14]"
+   ],
+   "hops": [
+    {
+     "mux": "N4BEG2",
+     "kind": "cus_mux41",
+     "input": 3,
+     "from": "LG_O",
+     "to": "N4BEG[14]",
+     "sel": {
+      "166": 1,
+      "167": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "output",
+   "nets": [
+    "LH_O",
+    "N4BEG[15]"
+   ],
+   "hops": [
+    {
+     "mux": "N4BEG3",
+     "kind": "cus_mux41",
+     "input": 3,
+     "from": "LH_O",
+     "to": "N4BEG[15]",
+     "sel": {
+      "168": 1,
+      "169": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LA_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LA_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "274": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LA_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LA_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "275": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LB_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LB_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "284": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LB_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LB_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "285": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LC_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LC_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "294": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LC_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LC_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "295": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LD_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LD_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "304": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LD_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LD_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "305": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LE_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LE_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "314": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LE_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LE_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "315": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LF_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LF_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "324": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LF_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LF_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "325": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LG_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LG_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "334": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LG_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LG_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "335": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_SR_BEG[0]",
+    "LH_SR"
+   ],
+   "hops": [
+    {
+     "mux": "LH_SR",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "344": 1
+     }
+    }
+   ]
+  },
+  {
+   "type": "select",
+   "nets": [
+    "J_EN_BEG[0]",
+    "LH_EN"
+   ],
+   "hops": [
+    {
+     "mux": "LH_EN",
+     "kind": "cus_mux21",
+     "input": 1,
+     "sel": {
+      "345": 1
+     }
+    }
+   ]
+  }
+ ]
+}

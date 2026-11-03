@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Give every fanout branch its own net, for branch stuck-at faults.
 
-For each net with more than one sink, every sink pin (cell input) is moved
-to a new net `<stem>__br<k>` driven by a `$_BUF_` from the stem. Forcing a branch net then affects only that sink, which `force` on
+For each net with more than one sink, every sink pin (cell input or output
+port bit) is moved to a new net `<stem>__br<k>` driven by a `$_BUF_` from
+the stem. Forcing a branch net then affects only that sink, which `force` on
 a cell input pin cannot do (iverilog collapses ports). The stem keeps its
 name, so stem faults are unchanged. Output: a yosys JSON netlist; yosys
 writes the matching Verilog (see run_synth.sh).
 """
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "faults"))
+import gen_faults  # noqa: E402
 
 
 def main() -> None:
@@ -24,15 +29,7 @@ def main() -> None:
         raise SystemExit(f"cannot pick top module: {tops}")
     mod = design["modules"][tops[0]]
 
-    names: dict[int, str] = {}
-    for name, nn in mod["netnames"].items():
-        w = len(nn["bits"])
-        for k, b in enumerate(nn["bits"]):
-            if isinstance(b, int):
-                if b in names:
-                    raise SystemExit(f"bit {b} has two names; run synth with rename first")
-                idx = nn.get("offset", 0) + (w - 1 - k if nn.get("upto", 0) else k)
-                names[b] = name if w == 1 else f"{name}[{idx}]"
+    names = {b: e["names"][0][0] for b, e in gen_faults.analyse(mod).items()}
 
     # sinks: (kind, owner, pin, index); kind is "cell" or "port"
     sinks: dict[int, list[tuple[str, str, str, int]]] = {}
@@ -59,10 +56,16 @@ def main() -> None:
         for br, (kind, owner, pin, k) in enumerate(lst):
             nb = next_bit
             next_bit += 1
-            if kind != "cell":
-                raise SystemExit(f"net {stem} drives output port {owner} and other sinks; "
-                                 "branching a port is not supported")
-            mod["cells"][owner]["connections"][pin][k] = nb
+            if kind == "cell":
+                mod["cells"][owner]["connections"][pin][k] = nb
+            else:
+                # Output port bit k moves to the branch net; the port's own
+                # netname entry must carry the same bits as the port.
+                mod["ports"][owner]["bits"][k] = nb
+                pn = mod["netnames"][owner]
+                if pn["bits"][k] != b:
+                    raise SystemExit(f"port {owner} bit {k} not aligned with its netname")
+                pn["bits"][k] = nb
             mod["netnames"][f"{stem}__br{br}"] = {"hide_name": 0, "bits": [nb], "attributes": {}}
             mod["cells"][f"brbuf_{nbuf}"] = {
                 "hide_name": 0, "type": "$_BUF_", "parameters": {}, "attributes": {},

@@ -50,23 +50,39 @@ def compile_tb(build_dir: Path, tb_text: str, sources: list[Path],
 class Result:
     samples: list[str]
     never_written: frozenset[int] = field(default_factory=frozenset)
+    early_detect: bool = False   # testbench stopped at a definite mismatch (+EARLY)
+    timeout: bool = False        # no END within the time limit (e.g. an oscillating loop)
 
 
 def run_vvp(vvp: Path, plusargs: list[str], fault_id: int | None = None,
-            deposits: dict[int, int] | None = None) -> Result:
+            deposits: dict[int, int] | None = None, timeout: float | None = None) -> Result:
     cmd = ["vvp", "-n", str(vvp), *plusargs]
     if fault_id is not None:
         cmd.append(f"+FAULT={fault_id}")
     for i, v in (deposits or {}).items():
         cmd.append(f"+PU{i}={v}")
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return Result(samples=[], timeout=True)
     lines = res.stdout.splitlines()
+    if "DET" in lines:
+        return Result(samples=[ln[2:] for ln in lines if ln.startswith("S ")], early_detect=True)
     if "END" not in lines:
         raise RuntimeError(f"simulation did not finish: {' '.join(cmd)}\n{res.stdout}{res.stderr}")
     return Result(
         samples=[ln[2:] for ln in lines if ln.startswith("S ")],
         never_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("NW ")),
     )
+
+
+def status(golden: list[str], r: Result) -> str:
+    """D / P / U, plus T for a run that timed out (counted as not detected)."""
+    if r.early_detect:
+        return "D"
+    if r.timeout:
+        return "T"
+    return classify(golden, r.samples)
 
 
 def classify(golden: list[str], faulty: list[str]) -> str:
@@ -87,8 +103,9 @@ def classify(golden: list[str], faulty: list[str]) -> str:
 _X: dict = {}
 
 
-def _init_exhaust(vvp: str, plusargs: dict, golden: dict, kmax: int) -> None:
-    _X.update(vvp=Path(vvp), plusargs=plusargs, golden=golden, kmax=kmax)
+def _init_exhaust(vvp: str, plusargs: dict, golden: dict, kmax: int,
+                  timeout: float | None = None) -> None:
+    _X.update(vvp=Path(vvp), plusargs=plusargs, golden=golden, kmax=kmax, timeout=timeout)
 
 
 def exhaust_fault(job: tuple[int, list[str], list[str]]) -> dict:
@@ -100,11 +117,18 @@ def exhaust_fault(job: tuple[int, list[str], list[str]]) -> dict:
     """
     fid, p_cfgs, d_cfgs = job
     vvp, pa, golden = _X["vvp"], _X["plusargs"], _X["golden"]
-    nw_per_cfg = {c: run_vvp(vvp, pa[c], fid).never_written for c in p_cfgs}
+    tmo = _X.get("timeout")
+    nw_per_cfg = {}
+    for c in p_cfgs:
+        r = run_vvp(vvp, [a for a in pa[c] if a != "+EARLY"], fid, timeout=tmo)
+        if r.timeout:
+            return {"id": fid, "elements": [], "k": None, "consistent": None,
+                    "p_configs": p_cfgs, "assignments": None, "timeout": True}
+        nw_per_cfg[c] = r.never_written
     elems = sorted(set().union(*nw_per_cfg.values())) if nw_per_cfg else []
     consistent = len({v for v in nw_per_cfg.values()}) <= 1
     out = {"id": fid, "elements": elems, "k": len(elems), "consistent": consistent,
-           "p_configs": p_cfgs, "assignments": None}
+           "p_configs": p_cfgs, "assignments": None, "timeout": False}
     if len(elems) > _X["kmax"]:
         return out
     det = []
@@ -112,8 +136,8 @@ def exhaust_fault(job: tuple[int, list[str], list[str]]) -> dict:
         dep = dict(zip(elems, bits))
         found = set(d_cfgs)
         for c in p_cfgs:
-            r = run_vvp(vvp, pa[c], fid, dep)
-            if classify(golden[c], r.samples) == "D":
+            r = run_vvp(vvp, pa[c], fid, dep, timeout=tmo)
+            if status(golden[c], r) == "D":
                 found.add(c)
         det.append(("".join(map(str, bits)), sorted(found)))
     out["assignments"] = det
@@ -121,9 +145,10 @@ def exhaust_fault(job: tuple[int, list[str], list[str]]) -> dict:
 
 
 def exhaust(vvp: Path, plusargs: dict[str, list[str]], golden: dict[str, list[str]],
-            jobs: list[tuple[int, list[str], list[str]]], kmax: int, workers: int) -> list[dict]:
+            jobs: list[tuple[int, list[str], list[str]]], kmax: int, workers: int,
+            timeout: float | None = None) -> list[dict]:
     with ProcessPoolExecutor(max_workers=workers, initializer=_init_exhaust,
-                             initargs=(str(vvp), plusargs, golden, kmax)) as ex:
+                             initargs=(str(vvp), plusargs, golden, kmax, timeout)) as ex:
         return list(ex.map(exhaust_fault, jobs))
 
 

@@ -89,6 +89,24 @@ def analyse(mod: dict) -> dict:
                     entry(b)["sinks"].append(label)
                 else:
                     raise SystemExit(f"{cname}.{pin}: inout not supported")
+    # A bit with several names is a port alias: a port-to-port pass-through
+    # (a tile's FrameData -> FrameData_O) or an output port and the
+    # flattened wrapper's wire behind it. Keep the driver-side name, the one
+    # write_verilog puts on the right of `assign <port> = ...;`: the input
+    # port if there is one, else the single non-port name. A force on it
+    # reaches the aliases.
+    inputs = {n for n, p in mod["ports"].items() if p["direction"] == "input"}
+    ports = set(mod["ports"])
+    for b, e in bits.items():
+        if len(e["names"]) > 1:
+            base = lambda nm: nm[0].split("[")[0]  # noqa: E731
+            pick = [nm for nm in e["names"] if base(nm) in inputs]
+            if not pick:
+                pick = [nm for nm in e["names"] if base(nm) not in ports]
+            if len(pick) != 1:
+                raise SystemExit(f"bit {b} has names {e['names']}; rerun synth with rename")
+            e["aliases"] = [nm[0] for nm in e["names"] if nm is not pick[0]]
+            e["names"] = pick
     return bits
 
 
