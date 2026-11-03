@@ -12,23 +12,33 @@
       whole config. Writes reports/<netlist>_matrix.csv, _coverage.csv,
       _undetected.txt.
 
+  python3 sim/run.py exhaust <netlist> [--configs ...] [--kmax 12]
+      For every fault with status P in some config: find the storage
+      elements never written under the fault, enumerate all 2^k initial
+      values of exactly those (everything else stays X), rerun the P configs.
+      Writes reports/<netlist>_exhaust[--suffix].csv / .json.
+
 Detection: D if some sample has 0/1 in both runs and they differ; P
 (potential) if the only differences involve X/Z; U otherwise.
+All runs use the reg-based latch/flop models of sim/seq_models.v (see
+sim/state.py); `check` also runs the original models for comparison.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
-import re
-import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "configs"))
+sys.path.insert(0, str(ROOT / "sim"))
 import configs as cfgmod  # noqa: E402
+import simcore  # noqa: E402
+import state  # noqa: E402
 
 BUILD = ROOT / "build"
 STIM_DIR = BUILD / "stim"
@@ -78,118 +88,32 @@ def load_faults(netlist: str) -> list[dict]:
     return list(csv.DictReader(path.open()))
 
 
-SIMCELL_REG_Q = re.compile(r"^(\s*)(output\s+reg\s+Q\s*;)\s*$", re.M)
-UDP_BLOCK = re.compile(r"^primitive\s+(\S+)\s*\(.*?^endprimitive", re.M | re.S)
-
-# Behavioral stand-ins for the sky130 sequential UDPs, power-up pass only.
-# The UDP tables turn a held 1 into x while GATE is still x at t = 0 and D has
-# already settled to 0, so an `initial` value would not survive. These models
-# act only on a defined enable / clock edge, like yosys simcells.
-SKY130_SEQ_UDP = {
-    "sky130_fd_sc_hd__udp_dlatch$P": (
-        "module sky130_fd_sc_hd__udp_dlatch$P (Q, D, GATE);\n"
-        "    output reg Q;\n    input D, GATE;\n"
-        "    initial Q = `PWRUP_INIT;\n"
-        "    always @* if (GATE === 1'b1) Q = D;\n"
-        "endmodule"
-    ),
-    "sky130_fd_sc_hd__udp_dff$P": (
-        "module sky130_fd_sc_hd__udp_dff$P (Q, D, CLK);\n"
-        "    output reg Q;\n    input D, CLK;\n"
-        "    initial Q = `PWRUP_INIT;\n"
-        "    always @(posedge CLK) Q <= D;\n"
-        "endmodule"
-    ),
-}
+def netlist_json(target: str) -> Path | None:
+    return None if target == "rtl" else ROOT / "synth" / f"netlist_{target}.json"
 
 
-def _pwrup_sky130(text: str) -> str:
-    def repl(m: re.Match) -> str:
-        name, body = m.group(1), m.group(0)
-        if name in SKY130_SEQ_UDP:
-            return SKY130_SEQ_UDP[name]
-        if re.search(r"^\s*reg\s+Q\s*;", body, re.M):
-            raise SystemExit(f"sequential UDP {name} has no power-up stand-in")
-        return body
-
-    new = UDP_BLOCK.sub(repl, text)
-    if new == text:
-        raise SystemExit("sky130_cells.v: no sequential UDP replaced")
-    return new
-
-
-def pwrup_sources(target: str, d: Path) -> list[Path]:
-    """Copies of the netlist's cell models where every latch and flop starts
-    at `PWRUP_INIT` instead of x (sky130: sequential UDPs replaced, see
-    SKY130_SEQ_UDP; generic: `initial Q` added to every `output reg Q`)."""
-    out = []
-    for s in TARGETS[target]:
-        src = ROOT / s
-        text = src.read_text()
-        if s.endswith("sky130_cells.v"):
-            text = _pwrup_sky130(text)
-        elif s.endswith("simcells.v"):
-            text, n = SIMCELL_REG_Q.subn(r"\1\2\n\1initial Q = `PWRUP_INIT;", text)
-            if n == 0:
-                raise SystemExit(f"{s}: no state element found to initialise")
-        else:
-            out.append(src)
-            continue
-        dst = d / src.name
-        dst.write_text(text)
-        out.append(dst)
-    return out
-
-
-def compile_target(target: str, faults: list[dict] | None, pwrup: int | None = None) -> Path:
-    d = BUILD / "sim" / (target if pwrup is None else f"{target}_pwrup{pwrup}")
-    d.mkdir(parents=True, exist_ok=True)
+def compile_target(target: str, faults: list[dict] | None, original_models: bool = False) -> Path:
     fd = [m.frame_data_bit for m in cfgmod.BITMAP]
     fs = [m.frame_strobe for m in cfgmod.BITMAP]
     tb = (ROOT / "sim" / "tb_template.v").read_text()
     for k, v in {"FD_HI": max(fd), "FD_LO": min(fd), "FS_HI": max(fs), "FS_LO": min(fs)}.items():
         tb = tb.replace(f"@{k}@", str(v))
-    (d / "tb.v").write_text(tb)
-    lines = []
-    if faults:
-        lines.append("        case (fault_id)")
-        for f in faults:
-            lines.append(f"            {f['id']}: force dut.{f['force_ref']} = 1'b{f['polarity']};")
-        lines.append("            default: ;")
-        lines.append("        endcase")
-    (d / "faults.vh").write_text("\n".join(lines) + "\n")
-    vvp = d / "sim.vvp"
-    cmd = ["iverilog", "-g2005", "-DUNIT_DELAY=", "-o", str(vvp), "-I", str(d), str(d / "tb.v")]
-    if pwrup is None:
-        cmd += [str(ROOT / s) for s in TARGETS[target]]
-    else:
-        cmd += [f"-DPWRUP_INIT=1'b{pwrup}"] + [str(p) for p in pwrup_sources(target, d)]
-    subprocess.run(cmd, check=True, cwd=ROOT)
-    return vvp
+    js = netlist_json(target)
+    elems = state.storage_elements(js) if js else []
+    d = BUILD / "sim" / (f"{target}_orig" if original_models else target)
+    return simcore.compile_tb(d, tb, [ROOT / s for s in TARGETS[target]], faults, elems,
+                              replace_models=not (original_models or target == "rtl"))
+
+
+def stim_args(stim: Path, nsteps: int) -> list[str]:
+    return [f"+STIM={stim}", f"+NSTEPS={nsteps}"]
 
 
 def run_vvp(vvp: Path, stim: Path, nsteps: int, fault_id: int | None = None) -> list[str]:
-    cmd = ["vvp", "-n", str(vvp), f"+STIM={stim}", f"+NSTEPS={nsteps}"]
-    if fault_id is not None:
-        cmd.append(f"+FAULT={fault_id}")
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    lines = res.stdout.splitlines()
-    if "END" not in lines:
-        raise RuntimeError(f"simulation did not finish: {' '.join(cmd)}\n{res.stdout}{res.stderr}")
-    return [ln[2:] for ln in lines if ln.startswith("S ")]
+    return simcore.run_vvp(vvp, stim_args(stim, nsteps), fault_id).samples
 
 
-def classify(golden: list[str], faulty: list[str]) -> str:
-    if len(golden) != len(faulty):
-        raise RuntimeError("sample count mismatch")
-    potential = False
-    for g, f in zip(golden, faulty):
-        for gb, fb in zip(g, f):
-            if gb in "01" and fb in "01" and gb != fb:
-                return "D"
-            if gb != fb:
-                potential = True
-    return "P" if potential else "U"
+classify = simcore.classify
 
 
 # ---------------------------------------------------------------- check
@@ -197,13 +121,15 @@ def classify(golden: list[str], faulty: list[str]) -> str:
 def cmd_check(args: argparse.Namespace) -> int:
     stims = write_stimuli(list(cfgmod.CONFIGS))
     ok = True
-    for target in TARGETS:
-        vvp = compile_target(target, None)
+    variants = [(t, False) for t in TARGETS] + [(t, True) for t in TARGETS if t != "rtl"]
+    for target, orig in variants:
+        vvp = compile_target(target, None, original_models=orig)
+        label = target + (" (orig models)" if orig else "")
         for name, (stim, n, exp) in stims.items():
             got = run_vvp(vvp, stim, n)
             status = "PASS" if got == exp else "FAIL"
             ok &= got == exp
-            print(f"{target:8s} {name:4s} {status} ({len(got)} samples)")
+            print(f"{label:24s} {name:4s} {status} ({len(got)} samples)")
             if got != exp:
                 for k, (g, e) in enumerate(zip(got, exp)):
                     if g != e:
@@ -309,59 +235,56 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---------------------------------------------------------------- xresolve
+# ---------------------------------------------------------------- exhaust
 
-def cmd_xresolve(args: argparse.Namespace) -> int:
-    """Rerun faults not detected (D) under all-0 and all-1 power-up states.
-
-    A real chip powers up with every latch and flop at 0 or 1, never X. A
-    fault counts as resolved when, for both all-0 and all-1, at least one
-    config of the set detects it. This is evidence for two states only, not
-    a proof over all 2^20 power-up states (see summary.md for the argument).
-    """
+def cmd_exhaust(args: argparse.Namespace) -> int:
     netlist = args.netlist
     matrix = list(csv.DictReader((REPORTS / f"{netlist}_matrix.csv").open()))
-    names = [c for c in matrix[0] if c not in ("id", "path", "polarity", "type", "any")]
-    todo = [r for r in matrix if r["any"] != "D"]
-    faults = {int(f["id"]): f for f in load_faults(netlist)}
+    all_cfgs = [c for c in matrix[0] if c not in ("id", "path", "polarity", "type", "any")]
+    names = args.configs or all_cfgs
     stims = write_stimuli(names)
-    stims_s = {k: (str(v[0]), v[1], v[2]) for k, v in stims.items()}
-
-    per_init: dict[int, dict[int, dict[str, str]]] = {}
-    for init in (0, 1):
-        vvp = compile_target(netlist, list(faults.values()), pwrup=init)
-        golden = {}
-        for name, (stim, n, exp) in stims.items():
-            g = run_vvp(vvp, stim, n)
-            if g != exp:
-                raise SystemExit(f"{netlist} pwrup{init} {name}: golden differs from model")
-            golden[name] = g
-        with ProcessPoolExecutor(
-            max_workers=args.jobs, initializer=_init_worker, initargs=(str(vvp), stims_s, golden)
-        ) as ex:
-            per_init[init] = dict(ex.map(_sim_fault, [int(r["id"]) for r in todo]))
-
-    out = REPORTS / f"{netlist}_xresolve.csv"
-    resolved = 0
-    with out.open("w", newline="") as f:
+    faults = load_faults(netlist)
+    vvp = compile_target(netlist, faults)
+    golden, pa = {}, {}
+    for name, (stim, n, exp) in stims.items():
+        pa[name] = stim_args(stim, n)
+        r = simcore.run_vvp(vvp, pa[name])
+        if r.samples != exp:
+            raise SystemExit(f"{netlist} {name}: golden differs from model")
+        if r.never_written:
+            raise SystemExit(f"{netlist} {name}: fault-free run leaves elements {sorted(r.never_written)} unwritten")
+        golden[name] = r.samples
+    jobs = []
+    for row in matrix:
+        p = [c for c in names if row[c] == "P"]
+        if p:
+            jobs.append((int(row["id"]), p, [c for c in names if row[c] == "D"]))
+    print(f"{netlist}: {len(jobs)} faults with P status in {names}")
+    elems = state.storage_elements(netlist_json(netlist))
+    recs = simcore.exhaust(vvp, pa, golden, jobs, args.kmax, args.jobs)
+    by_id = {r["id"]: r for r in matrix}
+    for rec in recs:
+        row = by_id[str(rec["id"])]
+        rec.update(path=row["path"], polarity=row["polarity"], type=row["type"],
+                   element_labels=[elems[i].label for i in rec["elements"]])
+    sfx = args.suffix
+    (REPORTS / f"{netlist}_exhaust{sfx}.json").write_text(json.dumps(
+        {"configs": names, "kmax": args.kmax, "faults": recs}, indent=1))
+    with (REPORTS / f"{netlist}_exhaust{sfx}.csv").open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["id", "path", "polarity", "status_3valued",
-                    "detecting_configs_pwrup0", "detecting_configs_pwrup1", "resolved"])
-        for r in todo:
-            fid = int(r["id"])
-            d0 = [n for n in names if per_init[0][fid][n] == "D"]
-            d1 = [n for n in names if per_init[1][fid][n] == "D"]
-            ok = bool(d0) and bool(d1)
-            resolved += ok
-            w.writerow([fid, r["path"], r["polarity"], r["any"], " ".join(d0), " ".join(d1),
-                        "yes" if ok else "no"])
-            print(f"  {r['path']:18s} SA{r['polarity']}  pwrup0: {' '.join(d0) or '-':14s} "
-                  f"pwrup1: {' '.join(d1) or '-':14s} {'resolved' if ok else 'NOT resolved'}")
-    total = len(matrix)
-    strict = total - len(todo)
-    print(f"{netlist}: strict {strict}/{total} = {100 * strict / total:.2f}%, "
-          f"with power-up resolution {strict + resolved}/{total} = "
-          f"{100 * (strict + resolved) / total:.2f}%")
+        w.writerow(["id", "path", "polarity", "type", "k", "elements", "consistent_across_configs",
+                    "assignments", "detected_for_all_assignments", "failing_assignments"])
+        for rec in recs:
+            if rec["assignments"] is None:
+                status, fails = f"not enumerated (k > {args.kmax})", ""
+            else:
+                bad = [a for a, found in rec["assignments"] if not set(found) & set(names)]
+                status, fails = ("yes" if not bad else "no"), " ".join(bad)
+            w.writerow([rec["id"], rec["path"], rec["polarity"], rec["type"], rec["k"],
+                        " ".join(rec["element_labels"]), rec["consistent"],
+                        2 ** rec["k"] if rec["assignments"] is not None else "", status, fails])
+            print(f"  {rec['path']:34s} SA{rec['polarity']} k={rec['k']:2d} -> {status}"
+                  + (f" fails {fails}" if fails else ""))
     return 0
 
 
@@ -369,14 +292,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
-    for cmd in ("faultsim", "xresolve"):
+    for cmd in ("faultsim", "exhaust"):
         p = sub.add_parser(cmd)
         p.add_argument("netlist", choices=NETLISTS)
         p.add_argument("--jobs", type=int, default=os.cpu_count())
-        if cmd == "faultsim":
-            p.add_argument("--configs", nargs="*")
+        p.add_argument("--configs", nargs="*")
+        if cmd == "exhaust":
+            p.add_argument("--kmax", type=int, default=12)
+            p.add_argument("--suffix", default="", help="output name suffix, e.g. _rec")
     args = ap.parse_args()
-    return {"check": cmd_check, "faultsim": cmd_faultsim, "xresolve": cmd_xresolve}[args.cmd](args)
+    return {"check": cmd_check, "faultsim": cmd_faultsim, "exhaust": cmd_exhaust}[args.cmd](args)
 
 
 if __name__ == "__main__":

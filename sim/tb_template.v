@@ -2,8 +2,11 @@
 // Applies one stimulus word per 10 ns step (see configs/configs.py for the
 // format), samples O/Co at 9 ns into flagged steps. Config latches are only
 // ever written through FrameData/FrameStrobe.
-// +STIM=<file> +NSTEPS=<n> [+FAULT=<id>]; faults.vh holds the force cases,
-// applied at t = 1 ns and held for the whole run.
+// +STIM=<file> +NSTEPS=<n> [+FAULT=<id>] [+PU<i>=<0|1> ...]
+// faults.vh holds the force cases, applied at t = 1 ns and held for the whole
+// run; deposit.vh sets selected storage elements at t = 2 ns (sim/state.py).
+// Stimulus steps start at t = 2 ns.
+// "NW <i>" lines at the end list elements never (possibly) written.
 `timescale 1ns / 1ps
 `default_nettype none
 
@@ -27,7 +30,8 @@ module tb;
         .Co(Co)
     );
 
-    integer fault_id, nsteps, k;
+    integer fault_id, nsteps, k, pu_v;
+`include "monitor.vh"
     reg [8*512-1:0] stimfile;
     reg [63:0] w;
 
@@ -49,6 +53,11 @@ module tb;
         // which a real stuck-at-1 clock never sees.
         #1;
 `include "faults.vh"
+        // Deposit one step later, once the fault's own transients (e.g. the
+        // 0 -> 1 of a stuck-at-1 clock) have settled; otherwise a flop can
+        // overwrite the deposit with a stale mux output in the same time step.
+        #1;
+`include "deposit.vh"
         for (k = 0; k < nsteps; k = k + 1) begin
             w = stim[k];
             FD = w[31:0];
@@ -62,6 +71,7 @@ module tb;
             if (w[60]) $display("S %b%b", O, Co);
             #1;
         end
+`include "report.vh"
         $display("END");
         $finish;
     end
