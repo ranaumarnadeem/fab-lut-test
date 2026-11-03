@@ -55,14 +55,19 @@ def undetected_class(row: dict, reg: dict, rec: dict | None) -> str:
     if rec is not None and rec["k"] == 0:
         return "X-only with no unwritten state (X from an unconfigured loop / X net)"
     if rec is not None and exh_ok(rec) is False:
+        if reg["class"] == "sm":
+            return ("X-only, fails for the power-up value equal to the routed value "
+                    "(routing bits are the same in every config)")
         return "X-only, fails for some power-up assignment"
     if st == "T":
         return "timeout (oscillation suspected)"
     d = reg["detail"]
+    if "branch into PORT" in d:
+        return "branch into a tile output that is not observed"
     if "pass-through" in d:
         return "pass-through wire, output not observed"
     if "MUX8" in d:
-        return "MUX8LUT (unused BEL)"
+        return "MUX8LUT or its config latches (BEL unused by the test)"
     if "config access" in d:
         return "config access port (FrameData / FrameStrobe)"
     if reg["class"] == "sm":
@@ -105,6 +110,28 @@ def main() -> None:
                "LUT outputs and Co[0]. All 8 LUTs get the same LUT config. Netlist G "
                "(generic gates, muxes decomposed) and G_br (plus one buffer per fanout "
                "branch), same yosys template as the cell.")
+    out.append("")
+    res = []
+    for n in NETLISTS:
+        if not (REPORTS / f"{n}_matrix.csv").exists():
+            continue
+        m, reg, ex = load(n)
+        rows = [r for r in m if reg[r["id"]]["class"] == "target"]
+        s = sum(r["any"] == "D" for r in rows)
+        e = s + sum(1 for r in rows if r["any"] != "D" and exh_ok(ex.get(r["id"])))
+        res.append(f"- {n}: LUT target {s}/{len(rows)} = {pct(s, len(rows))} strict, "
+                   f"**{e}/{len(rows)} = {pct(e, len(rows))}** exhaustive power-up; "
+                   f"{sum(r['any'] == 'T' for r in m)} runs timed out.")
+    out.append("## Results")
+    out.append("")
+    out += res
+    out.append("- Every target fault left X-only by strict simulation is a stuck "
+               "strobe branch into a LUT latch (k = 1), EN SA0 of a LUT (k = 1), "
+               "a UserCLK branch (k = 1) or the UserCLK stem (k = 8): all detected "
+               "for every power-up assignment.")
+    out.append("- The 20 stuck FrameStrobe stems leave 24 to 32 latches unwritten "
+               "(k > 12): reported, not enumerated or sampled. They are config "
+               "access faults, outside the target population.")
     out.append("")
     out.append("## Netlists and fault populations")
     out.append("")
