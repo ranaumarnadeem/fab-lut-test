@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
+PLAN_CONFIGS = ["A", "B", "A2", "C", "D0", "D1"]
 
 
 def load(netlist: str):
@@ -75,6 +76,7 @@ def exact(configs, strict, xres, model):
 
 
 def classify(path: str) -> str:
+    path = path.split("__br")[0]
     if path.startswith("FrameStrobe"):
         return "frame strobe stuck inactive: latches keep their power-up value (X in sim)"
     if path in ("EN", "UserCLK"):
@@ -86,7 +88,9 @@ def main(netlist: str) -> None:
     rows, configs, strict, xres = load(netlist)
     total = len(rows)
     by_id = {r["id"]: r for r in rows}
-    out = [f"# {netlist}: analysis\n", f"{total} stem faults, configs {', '.join(configs)}.\n"]
+    nbr = sum(r["type"] == "branch" for r in rows)
+    out = [f"# {netlist}: analysis\n",
+           f"{total} faults ({total - nbr} stem, {nbr} branch), configs {', '.join(configs)}.\n"]
 
     out.append("## Coverage per config (strict)\n")
     out.append("| config | detected | % | cumulative | cum % |")
@@ -125,18 +129,21 @@ def main(netlist: str) -> None:
             names = ", ".join(f"{by_id[f]['path']} SA{by_id[f]['polarity']}" for f in extra)
             out.append(f"- {c} beyond A+B: {len(extra)}" + (f" ({names})" if extra else ""))
 
+    pools = [("plan configs", [c for c in PLAN_CONFIGS if c in configs]), ("all configs", configs)]
     for model in ("strict", "pwrup"):
         out.append(f"\n## Set cover ({model})\n")
-        steps = greedy(configs, strict, xres, model)
-        out.append("Greedy: " + ", ".join(f"{c} (+{g}, {n})" for c, g, n in steps))
-        full, hits = exact(configs, strict, xres, model)
-        out.append(f"\nExact minimum for {full}/{total} = {100 * full / total:.2f}%: "
-                   + "; ".join("{" + ", ".join(h) + "}" for h in hits))
+        for label, pool in pools:
+            steps = greedy(pool, strict, xres, model)
+            full, hits = exact(pool, strict, xres, model)
+            out.append(f"- {label} ({', '.join(pool)}): max {full}/{total} = "
+                       f"{100 * full / total:.2f}%")
+            out.append("  - greedy: " + ", ".join(f"{c} (+{g}, {n})" for c, g, n in steps))
+            out.append("  - exact minimum: " + "; ".join("{" + ", ".join(h) + "}" for h in hits))
 
     (REPORTS / f"{netlist}_analysis.md").write_text("\n".join(out) + "\n")
     print("\n".join(out))
 
 
 if __name__ == "__main__":
-    for n in sys.argv[1:] or ["sky130", "generic"]:
+    for n in sys.argv[1:] or ["sky130", "generic", "sky130_br", "generic_br"]:
         main(n)

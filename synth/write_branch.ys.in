@@ -1,0 +1,7 @@
+# Round-trip a branch-buffered JSON netlist to Verilog (and canonical JSON).
+# The sky130 JSON already holds the liberty cells as blackboxes.
+read_json build/@NAME@_br_in.json
+hierarchy -top lut_cell_top
+check -assert
+write_verilog -noattr -noexpr -nohex -nodec synth/netlist_@NAME@_br.v
+write_json synth/netlist_@NAME@_br.json

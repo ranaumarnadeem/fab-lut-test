@@ -5,7 +5,8 @@
       RTL, netlist S and netlist G, fault free, every config: all samples
       must match the Python cell model (and therefore each other).
 
-  python3 sim/run.py faultsim sky130|generic [--jobs N] [--configs A B ...]
+  python3 sim/run.py faultsim <netlist> [--jobs N] [--configs A B ...]
+      netlist: sky130, generic, or sky130_br / generic_br (stem + branch)
       One vvp run per (fault, config). A fault is forced from t = 1 ns (before
       the first step, see tb_template.v) for the
       whole config. Writes reports/<netlist>_matrix.csv, _coverage.csv,
@@ -37,7 +38,11 @@ TARGETS = {
     "rtl": ["rtl/models_pack.v", "rtl/LUT4c_frame_config_dffesr.v", "rtl/lut_cell_top.v"],
     "sky130": ["synth/netlist_sky130.v", "synth/sky130_cells.v"],
     "generic": ["synth/netlist_generic.v", "synth/simcells.v"],
+    # Branch-fault variants (synth/insbuf_branches.py)
+    "sky130_br": ["synth/netlist_sky130_br.v", "synth/sky130_cells.v", "synth/branch_buf.v"],
+    "generic_br": ["synth/netlist_generic_br.v", "synth/simcells.v"],
 }
+NETLISTS = ["sky130", "generic", "sky130_br", "generic_br"]
 
 # One fault per config that the config is designed to catch.
 SANITY = {
@@ -47,6 +52,9 @@ SANITY = {
     "C": ("Ci", 0),              # I0 taken from Ci
     "D0": ("SR", 0),             # rv never loaded
     "D1": ("EN", 1),             # EN=0 hold fails
+    "BC": ("ConfigBits[0]", 0),  # XNOR bit 0 read at I=0000, Ci=0
+    "BC1": ("ConfigBits[0]", 0),
+    "D0C": ("SR", 0),
 }
 
 
@@ -67,7 +75,7 @@ def write_stimuli(names: list[str]) -> dict[str, tuple[Path, int, list[str]]]:
 
 def load_faults(netlist: str) -> list[dict]:
     path = ROOT / "faults" / f"{netlist}.csv"
-    return [r for r in csv.DictReader(path.open()) if r["type"] == "stem"]
+    return list(csv.DictReader(path.open()))
 
 
 SIMCELL_REG_Q = re.compile(r"^(\s*)(output\s+reg\s+Q\s*;)\s*$", re.M)
@@ -291,7 +299,7 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
                   f"cumulative {len(cum):4d} = {100 * len(cum) / total:6.2f}%")
 
     with (REPORTS / f"{netlist}_undetected.txt").open("w") as f:
-        f.write(f"# {netlist}: stem faults not detected by any of {names}\n")
+        f.write(f"# {netlist}: faults not detected by any of {names}\n")
         f.write("# id\tnet\tSA\tstatus (P = only X differences)\n")
         for flt in faults:
             r = results[int(flt["id"])]
@@ -363,7 +371,7 @@ def main() -> int:
     sub.add_parser("check")
     for cmd in ("faultsim", "xresolve"):
         p = sub.add_parser(cmd)
-        p.add_argument("netlist", choices=["sky130", "generic"])
+        p.add_argument("netlist", choices=NETLISTS)
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         if cmd == "faultsim":
             p.add_argument("--configs", nargs="*")

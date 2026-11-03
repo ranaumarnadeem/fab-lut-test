@@ -9,9 +9,9 @@ whole net (stem).
 Skipped: constant bits, nets with no sink (unused wrapper input bits such as
 FrameData[8]), and any net listed with --exclude (e.g. UserCLK).
 
-Branch faults (--branches): for each net with fanout > 1, one SA0/SA1 pair per
-sink pin. They need a netlist where each branch is its own net (see
-synth/insbuf_branches.py); here they are only listed.
+Branch faults: on a netlist from synth/insbuf_branches.py every fanout branch
+is its own net `<stem>__br<k>`; those nets are typed "branch", the rest
+"stem". On a plain netlist all faults are stems.
 """
 import argparse
 import csv
@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 SIMPLE_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+BRANCH_RE = re.compile(r"__br\d+$")
 
 
 def vref(name: str) -> str:
@@ -97,7 +98,6 @@ def main() -> None:
     ap.add_argument("--top")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--exclude", action="append", default=[], help="net name to skip")
-    ap.add_argument("--branches", action="store_true", help="also list branch faults")
     args = ap.parse_args()
 
     _, mod = load_top(args.netlist_json, args.top)
@@ -118,18 +118,13 @@ def main() -> None:
             continue
         if len(e["drivers"]) != 1:
             raise SystemExit(f"net {label} has drivers {e['drivers']}")
+        ftype = "branch" if BRANCH_RE.search(label) else "stem"
         for pol in (0, 1):
             rows.append({
-                "net": label, "force_ref": ref, "polarity": pol, "type": "stem",
-                "driver": e["drivers"][0], "fanout": len(e["sinks"]), "pin": "",
+                "net": label, "force_ref": ref, "polarity": pol, "type": ftype,
+                "driver": e["drivers"][0], "fanout": len(e["sinks"]),
+                "pin": e["sinks"][0] if ftype == "branch" else "",
             })
-        if args.branches and len(e["sinks"]) > 1:
-            for sink in e["sinks"]:
-                for pol in (0, 1):
-                    rows.append({
-                        "net": label, "force_ref": "", "polarity": pol, "type": "branch",
-                        "driver": e["drivers"][0], "fanout": len(e["sinks"]), "pin": sink,
-                    })
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fields = ["id", "path", "polarity", "type", "net", "force_ref", "driver", "fanout", "pin"]
