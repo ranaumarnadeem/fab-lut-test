@@ -2,7 +2,8 @@
 // Applies one stimulus word per 10 ns step (see configs/configs.py for the
 // format), samples O/Co at 9 ns into flagged steps. Config latches are only
 // ever written through FrameData/FrameStrobe.
-// +STIM=<file> +NSTEPS=<n> [+FAULT=<id>]; faults.vh holds the force cases.
+// +STIM=<file> +NSTEPS=<n> [+FAULT=<id>]; faults.vh holds the force cases,
+// applied at t = 1 ns and held for the whole run.
 `timescale 1ns / 1ps
 `default_nettype none
 
@@ -42,6 +43,11 @@ module tb;
         end
         if (!$value$plusargs("FAULT=%d", fault_id)) fault_id = -1;
         $readmemh(stimfile, stim, 0, nsteps - 1);
+        // Inject after the initial input values settle (EN = 0, UserCLK = 0)
+        // and before the first step. Forcing at t = 0 would turn x -> 1 on a
+        // clock net into a posedge while D is still x (sky130 dff UDP -> Q = x),
+        // which a real stuck-at-1 clock never sees.
+        #1;
 `include "faults.vh"
         for (k = 0; k < nsteps; k = k + 1) begin
             w = stim[k];

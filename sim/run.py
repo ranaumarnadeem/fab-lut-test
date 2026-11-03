@@ -6,7 +6,8 @@
       must match the Python cell model (and therefore each other).
 
   python3 sim/run.py faultsim sky130|generic [--jobs N] [--configs A B ...]
-      One vvp run per (fault, config). A fault is forced from time 0 for the
+      One vvp run per (fault, config). A fault is forced from t = 1 ns (before
+      the first step, see tb_template.v) for the
       whole config. Writes reports/<netlist>_matrix.csv, _coverage.csv,
       _undetected.txt.
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -68,8 +70,71 @@ def load_faults(netlist: str) -> list[dict]:
     return [r for r in csv.DictReader(path.open()) if r["type"] == "stem"]
 
 
-def compile_target(target: str, faults: list[dict] | None) -> Path:
-    d = BUILD / "sim" / target
+SIMCELL_REG_Q = re.compile(r"^(\s*)(output\s+reg\s+Q\s*;)\s*$", re.M)
+UDP_BLOCK = re.compile(r"^primitive\s+(\S+)\s*\(.*?^endprimitive", re.M | re.S)
+
+# Behavioral stand-ins for the sky130 sequential UDPs, power-up pass only.
+# The UDP tables turn a held 1 into x while GATE is still x at t = 0 and D has
+# already settled to 0, so an `initial` value would not survive. These models
+# act only on a defined enable / clock edge, like yosys simcells.
+SKY130_SEQ_UDP = {
+    "sky130_fd_sc_hd__udp_dlatch$P": (
+        "module sky130_fd_sc_hd__udp_dlatch$P (Q, D, GATE);\n"
+        "    output reg Q;\n    input D, GATE;\n"
+        "    initial Q = `PWRUP_INIT;\n"
+        "    always @* if (GATE === 1'b1) Q = D;\n"
+        "endmodule"
+    ),
+    "sky130_fd_sc_hd__udp_dff$P": (
+        "module sky130_fd_sc_hd__udp_dff$P (Q, D, CLK);\n"
+        "    output reg Q;\n    input D, CLK;\n"
+        "    initial Q = `PWRUP_INIT;\n"
+        "    always @(posedge CLK) Q <= D;\n"
+        "endmodule"
+    ),
+}
+
+
+def _pwrup_sky130(text: str) -> str:
+    def repl(m: re.Match) -> str:
+        name, body = m.group(1), m.group(0)
+        if name in SKY130_SEQ_UDP:
+            return SKY130_SEQ_UDP[name]
+        if re.search(r"^\s*reg\s+Q\s*;", body, re.M):
+            raise SystemExit(f"sequential UDP {name} has no power-up stand-in")
+        return body
+
+    new = UDP_BLOCK.sub(repl, text)
+    if new == text:
+        raise SystemExit("sky130_cells.v: no sequential UDP replaced")
+    return new
+
+
+def pwrup_sources(target: str, d: Path) -> list[Path]:
+    """Copies of the netlist's cell models where every latch and flop starts
+    at `PWRUP_INIT` instead of x (sky130: sequential UDPs replaced, see
+    SKY130_SEQ_UDP; generic: `initial Q` added to every `output reg Q`)."""
+    out = []
+    for s in TARGETS[target]:
+        src = ROOT / s
+        text = src.read_text()
+        if s.endswith("sky130_cells.v"):
+            text = _pwrup_sky130(text)
+        elif s.endswith("simcells.v"):
+            text, n = SIMCELL_REG_Q.subn(r"\1\2\n\1initial Q = `PWRUP_INIT;", text)
+            if n == 0:
+                raise SystemExit(f"{s}: no state element found to initialise")
+        else:
+            out.append(src)
+            continue
+        dst = d / src.name
+        dst.write_text(text)
+        out.append(dst)
+    return out
+
+
+def compile_target(target: str, faults: list[dict] | None, pwrup: int | None = None) -> Path:
+    d = BUILD / "sim" / (target if pwrup is None else f"{target}_pwrup{pwrup}")
     d.mkdir(parents=True, exist_ok=True)
     fd = [m.frame_data_bit for m in cfgmod.BITMAP]
     fs = [m.frame_strobe for m in cfgmod.BITMAP]
@@ -87,7 +152,10 @@ def compile_target(target: str, faults: list[dict] | None) -> Path:
     (d / "faults.vh").write_text("\n".join(lines) + "\n")
     vvp = d / "sim.vvp"
     cmd = ["iverilog", "-g2005", "-DUNIT_DELAY=", "-o", str(vvp), "-I", str(d), str(d / "tb.v")]
-    cmd += [str(ROOT / s) for s in TARGETS[target]]
+    if pwrup is None:
+        cmd += [str(ROOT / s) for s in TARGETS[target]]
+    else:
+        cmd += [f"-DPWRUP_INIT=1'b{pwrup}"] + [str(p) for p in pwrup_sources(target, d)]
     subprocess.run(cmd, check=True, cwd=ROOT)
     return vvp
 
@@ -233,16 +301,74 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- xresolve
+
+def cmd_xresolve(args: argparse.Namespace) -> int:
+    """Rerun faults not detected (D) under all-0 and all-1 power-up states.
+
+    A real chip powers up with every latch and flop at 0 or 1, never X. A
+    fault counts as resolved when, for both all-0 and all-1, at least one
+    config of the set detects it. This is evidence for two states only, not
+    a proof over all 2^20 power-up states (see summary.md for the argument).
+    """
+    netlist = args.netlist
+    matrix = list(csv.DictReader((REPORTS / f"{netlist}_matrix.csv").open()))
+    names = [c for c in matrix[0] if c not in ("id", "path", "polarity", "type", "any")]
+    todo = [r for r in matrix if r["any"] != "D"]
+    faults = {int(f["id"]): f for f in load_faults(netlist)}
+    stims = write_stimuli(names)
+    stims_s = {k: (str(v[0]), v[1], v[2]) for k, v in stims.items()}
+
+    per_init: dict[int, dict[int, dict[str, str]]] = {}
+    for init in (0, 1):
+        vvp = compile_target(netlist, list(faults.values()), pwrup=init)
+        golden = {}
+        for name, (stim, n, exp) in stims.items():
+            g = run_vvp(vvp, stim, n)
+            if g != exp:
+                raise SystemExit(f"{netlist} pwrup{init} {name}: golden differs from model")
+            golden[name] = g
+        with ProcessPoolExecutor(
+            max_workers=args.jobs, initializer=_init_worker, initargs=(str(vvp), stims_s, golden)
+        ) as ex:
+            per_init[init] = dict(ex.map(_sim_fault, [int(r["id"]) for r in todo]))
+
+    out = REPORTS / f"{netlist}_xresolve.csv"
+    resolved = 0
+    with out.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "path", "polarity", "status_3valued",
+                    "detecting_configs_pwrup0", "detecting_configs_pwrup1", "resolved"])
+        for r in todo:
+            fid = int(r["id"])
+            d0 = [n for n in names if per_init[0][fid][n] == "D"]
+            d1 = [n for n in names if per_init[1][fid][n] == "D"]
+            ok = bool(d0) and bool(d1)
+            resolved += ok
+            w.writerow([fid, r["path"], r["polarity"], r["any"], " ".join(d0), " ".join(d1),
+                        "yes" if ok else "no"])
+            print(f"  {r['path']:18s} SA{r['polarity']}  pwrup0: {' '.join(d0) or '-':14s} "
+                  f"pwrup1: {' '.join(d1) or '-':14s} {'resolved' if ok else 'NOT resolved'}")
+    total = len(matrix)
+    strict = total - len(todo)
+    print(f"{netlist}: strict {strict}/{total} = {100 * strict / total:.2f}%, "
+          f"with power-up resolution {strict + resolved}/{total} = "
+          f"{100 * (strict + resolved) / total:.2f}%")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
-    fs = sub.add_parser("faultsim")
-    fs.add_argument("netlist", choices=["sky130", "generic"])
-    fs.add_argument("--jobs", type=int, default=os.cpu_count())
-    fs.add_argument("--configs", nargs="*")
+    for cmd in ("faultsim", "xresolve"):
+        p = sub.add_parser(cmd)
+        p.add_argument("netlist", choices=["sky130", "generic"])
+        p.add_argument("--jobs", type=int, default=os.cpu_count())
+        if cmd == "faultsim":
+            p.add_argument("--configs", nargs="*")
     args = ap.parse_args()
-    return {"check": cmd_check, "faultsim": cmd_faultsim}[args.cmd](args)
+    return {"check": cmd_check, "faultsim": cmd_faultsim, "xresolve": cmd_xresolve}[args.cmd](args)
 
 
 if __name__ == "__main__":

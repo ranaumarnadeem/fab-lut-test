@@ -209,6 +209,13 @@ def cfg_c() -> Seq:
     return s
 
 
+def cfg_bc() -> Seq:
+    s = Seq("BC", "merge candidate for B + C: XNOR, I0 from Ci; sweep I and Ci")
+    _setup(s, make_bits(XNOR_TT, i0_from_ci=1))
+    _comb_sweep(s, ci_values=(0, 1))
+    return s
+
+
 def _seq_test(s: Seq, rv: int) -> None:
     """Registered output. LUT = XOR, Ci = 0, so LUT_out = parity(I).
 
@@ -269,8 +276,11 @@ def cfg_and() -> Seq:
     return s
 
 
-CONFIGS = {f().name: f for f in (cfg_a, cfg_b, cfg_a2, cfg_c, cfg_d0, cfg_d1, cfg_and)}
-TEST_CONFIGS = ["A", "B", "A2", "C", "D0", "D1"]
+CONFIGS = {
+    f().name: f for f in (cfg_a, cfg_b, cfg_a2, cfg_c, cfg_d0, cfg_d1, cfg_bc, cfg_and)
+}
+# Plan configs first, then merge candidates. AND is only the Phase 1 check.
+TEST_CONFIGS = ["A", "B", "A2", "C", "D0", "D1", "BC"]
 
 
 def main() -> None:
