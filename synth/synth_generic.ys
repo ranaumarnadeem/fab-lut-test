@@ -1,0 +1,24 @@
+# Netlist G: flattened lut_cell_top as generic yosys gates, no liberty, no abc.
+# Structure follows the RTL (cus_mux* trees stay mux trees). Every $_MUX_ is
+# then decomposed to Y = (A & ~S) | (B & S) so inverted selects and the
+# AND-OR decode become separate nets that can carry faults.
+
+read_verilog -defer rtl/models_pack.v rtl/LUT4c_frame_config_dffesr.v rtl/lut_cell_top.v
+hierarchy -check -top lut_cell_top
+proc
+flatten
+opt_expr
+opt_clean
+synth -top lut_cell_top -flatten -noabc
+
+techmap -map synth/mux_decompose.v t:$_MUX_
+opt_merge
+splitnets
+opt_clean -purge
+# Public names for every wire so JSON names match the Verilog for force
+rename -enumerate -pattern n%
+
+check -assert
+tee -o synth/netlist_generic.stat stat
+write_verilog -noattr -noexpr -nohex -nodec synth/netlist_generic.v
+write_json synth/netlist_generic.json

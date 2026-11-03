@@ -1,0 +1,34 @@
+# Netlist S: flattened lut_cell_top mapped to sky130_fd_sc_hd.
+# Approximates the LibreLane Classic synthesis that the FABulous tile GDS flow
+# runs (behavioral models_pack.v as RTL, PDK latch map, dfflibmap, abc with
+# the AREA 2 strategy script). See NOTES.md for the differences.
+# Run via synth/run_synth.sh from the repo root.
+
+# Cell port directions for check/stat (blackboxes, not written out)
+read_liberty -lib -ignore_miss_dir -setattr blackbox build/sky130_fd_sc_hd__tt_025C_1v80.lib
+read_verilog -defer rtl/models_pack.v rtl/LUT4c_frame_config_dffesr.v rtl/lut_cell_top.v
+hierarchy -check -top lut_cell_top
+proc
+flatten
+opt_expr
+opt_clean
+synth -top lut_cell_top -flatten -noabc
+
+# Config latches must stay latches: map $_DLATCH_P_ to sky130_fd_sc_hd__dlxtp_1
+techmap -map synth/sky130_latch_map.v
+simplemap
+
+dfflibmap -liberty build/sky130_fd_sc_hd__tt_025C_1v80.lib
+abc -liberty build/sky130_fd_sc_hd__tt_025C_1v80.lib -script synth/AREA_2.abc -showtmp
+setundef -zero
+hilomap -hicell sky130_fd_sc_hd__conb_1 HI -locell sky130_fd_sc_hd__conb_1 LO
+splitnets
+opt_clean -purge
+# Public names for every wire so JSON names match the Verilog for force
+rename -enumerate -pattern n%
+
+check -assert
+stat -liberty build/sky130_fd_sc_hd__tt_025C_1v80.lib
+tee -o synth/netlist_sky130.stat stat -liberty build/sky130_fd_sc_hd__tt_025C_1v80.lib
+write_verilog -noattr -noexpr -nohex -nodec synth/netlist_sky130.v
+write_json synth/netlist_sky130.json

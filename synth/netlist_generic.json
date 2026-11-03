@@ -1,0 +1,2365 @@
+{
+  "creator": "Yosys 0.66 (git sha1 86f2ddebc, ccache clang++  -O3 -fwasm-exceptions -mllvm) [yowasp/yosys at release-0.66]",
+  "modules": {
+    "lut_cell_top": {
+      "attributes": {
+        "hdlname": "lut_cell_top",
+        "top": "00000000000000000000000000000001",
+        "src": "rtl/lut_cell_top.v:8.1-184.10"
+      },
+      "ports": {
+        "FrameData": {
+          "direction": "input",
+          "offset": 2,
+          "bits": [ 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
+        },
+        "FrameStrobe": {
+          "direction": "input",
+          "offset": 14,
+          "bits": [ 16, 17, 18, 19, 20 ]
+        },
+        "I": {
+          "direction": "input",
+          "bits": [ 21, 22, 23, 24 ]
+        },
+        "Ci": {
+          "direction": "input",
+          "bits": [ 25 ]
+        },
+        "SR": {
+          "direction": "input",
+          "bits": [ 26 ]
+        },
+        "EN": {
+          "direction": "input",
+          "bits": [ 27 ]
+        },
+        "UserCLK": {
+          "direction": "input",
+          "bits": [ 28 ]
+        },
+        "O": {
+          "direction": "output",
+          "bits": [ 29 ]
+        },
+        "Co": {
+          "direction": "output",
+          "bits": [ 30 ]
+        }
+      },
+      "cells": {
+        "n100": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.46-113.57"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 22 ],
+            "B": [ 23 ],
+            "Y": [ 31 ]
+          }
+        },
+        "n101": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.17-113.42"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 32 ],
+            "B": [ 33 ],
+            "Y": [ 34 ]
+          }
+        },
+        "n102": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 35 ],
+            "B": [ 22 ],
+            "Y": [ 36 ]
+          }
+        },
+        "n103": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.32-113.41"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 25 ],
+            "B": [ 23 ],
+            "Y": [ 33 ]
+          }
+        },
+        "n104": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.18-113.27"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 25 ],
+            "B": [ 22 ],
+            "Y": [ 32 ]
+          }
+        },
+        "n105": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 37 ],
+            "Y": [ 38 ]
+          }
+        },
+        "n106": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 39 ],
+            "B": [ 40 ],
+            "Y": [ 41 ]
+          }
+        },
+        "n107": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 42 ],
+            "B": [ 43 ],
+            "Y": [ 44 ]
+          }
+        },
+        "n108": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 45 ],
+            "B": [ 23 ],
+            "Y": [ 46 ]
+          }
+        },
+        "n109": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "B": [ 47 ],
+            "Y": [ 48 ]
+          }
+        },
+        "n110": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 49 ],
+            "B": [ 50 ],
+            "Y": [ 51 ]
+          }
+        },
+        "n111": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 52 ],
+            "B": [ 53 ],
+            "Y": [ 54 ]
+          }
+        },
+        "n112": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 55 ],
+            "B": [ 23 ],
+            "Y": [ 50 ]
+          }
+        },
+        "n113": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 56 ],
+            "B": [ 40 ],
+            "Y": [ 57 ]
+          }
+        },
+        "n114": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 58 ],
+            "Y": [ 59 ]
+          }
+        },
+        "n115": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 11 ],
+            "E": [ 18 ],
+            "Q": [ 60 ]
+          }
+        },
+        "n116": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 3 ],
+            "E": [ 18 ],
+            "Q": [ 58 ]
+          }
+        },
+        "n117": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 7 ],
+            "E": [ 17 ],
+            "Q": [ 37 ]
+          }
+        },
+        "n118": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 3 ],
+            "E": [ 20 ],
+            "Q": [ 61 ]
+          }
+        },
+        "n119": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 4 ],
+            "E": [ 20 ],
+            "Q": [ 62 ]
+          }
+        },
+        "n120": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 5 ],
+            "E": [ 20 ],
+            "Q": [ 63 ]
+          }
+        },
+        "n121": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 6 ],
+            "E": [ 20 ],
+            "Q": [ 64 ]
+          }
+        },
+        "n122": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 7 ],
+            "E": [ 20 ],
+            "Q": [ 65 ]
+          }
+        },
+        "n123": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 9 ],
+            "E": [ 20 ],
+            "Q": [ 66 ]
+          }
+        },
+        "n124": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 10 ],
+            "E": [ 20 ],
+            "Q": [ 67 ]
+          }
+        },
+        "n125": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 11 ],
+            "E": [ 20 ],
+            "Q": [ 68 ]
+          }
+        },
+        "n126": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 15 ],
+            "E": [ 16 ],
+            "Q": [ 69 ]
+          }
+        },
+        "n127": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 2 ],
+            "E": [ 18 ],
+            "Q": [ 42 ]
+          }
+        },
+        "n128": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 3 ],
+            "E": [ 19 ],
+            "Q": [ 70 ]
+          }
+        },
+        "n129": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 4 ],
+            "E": [ 19 ],
+            "Q": [ 71 ]
+          }
+        },
+        "n130": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 6 ],
+            "E": [ 17 ],
+            "Q": [ 72 ]
+          }
+        },
+        "n131": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 5 ],
+            "E": [ 19 ],
+            "Q": [ 73 ]
+          }
+        },
+        "n132": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 6 ],
+            "E": [ 19 ],
+            "Q": [ 74 ]
+          }
+        },
+        "n133": {
+          "hide_name": 0,
+          "type": "$_DLATCH_P_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:12.5-17.8"
+          },
+          "port_directions": {
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "D": [ 7 ],
+            "E": [ 19 ],
+            "Q": [ 75 ]
+          }
+        },
+        "n48": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 76 ],
+            "B": [ 40 ],
+            "Y": [ 77 ]
+          }
+        },
+        "n49": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 78 ],
+            "B": [ 22 ],
+            "Y": [ 79 ]
+          }
+        },
+        "n50": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 77 ],
+            "B": [ 79 ],
+            "Y": [ 45 ]
+          }
+        },
+        "n51": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 64 ],
+            "B": [ 43 ],
+            "Y": [ 80 ]
+          }
+        },
+        "n52": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 63 ],
+            "B": [ 81 ],
+            "Y": [ 82 ]
+          }
+        },
+        "n53": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 80 ],
+            "B": [ 82 ],
+            "Y": [ 76 ]
+          }
+        },
+        "n54": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 62 ],
+            "B": [ 43 ],
+            "Y": [ 83 ]
+          }
+        },
+        "n55": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 61 ],
+            "B": [ 81 ],
+            "Y": [ 84 ]
+          }
+        },
+        "n56": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 83 ],
+            "B": [ 84 ],
+            "Y": [ 78 ]
+          }
+        },
+        "n57": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 75 ],
+            "B": [ 43 ],
+            "Y": [ 85 ]
+          }
+        },
+        "n58": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 74 ],
+            "B": [ 81 ],
+            "Y": [ 86 ]
+          }
+        },
+        "n59": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 85 ],
+            "B": [ 86 ],
+            "Y": [ 39 ]
+          }
+        },
+        "n60": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 21 ],
+            "B": [ 59 ],
+            "Y": [ 87 ]
+          }
+        },
+        "n61": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 25 ],
+            "B": [ 58 ],
+            "Y": [ 88 ]
+          }
+        },
+        "n62": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 87 ],
+            "B": [ 88 ],
+            "Y": [ 81 ]
+          }
+        },
+        "n63": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 69 ],
+            "B": [ 81 ],
+            "Y": [ 47 ]
+          }
+        },
+        "n64": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 54 ],
+            "B": [ 46 ],
+            "Y": [ 89 ]
+          }
+        },
+        "n65": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 90 ],
+            "B": [ 22 ],
+            "Y": [ 91 ]
+          }
+        },
+        "n66": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 70 ],
+            "B": [ 81 ],
+            "Y": [ 92 ]
+          }
+        },
+        "n67": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 57 ],
+            "B": [ 91 ],
+            "Y": [ 52 ]
+          }
+        },
+        "n68": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 81 ],
+            "Y": [ 43 ]
+          }
+        },
+        "n69": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 93 ],
+            "B": [ 94 ],
+            "Y": [ 95 ]
+          }
+        },
+        "n70": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 71 ],
+            "B": [ 43 ],
+            "Y": [ 96 ]
+          }
+        },
+        "n71": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 60 ],
+            "B": [ 26 ],
+            "Y": [ 97 ]
+          }
+        },
+        "n72": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 23 ],
+            "Y": [ 53 ]
+          }
+        },
+        "n73": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 22 ],
+            "Y": [ 40 ]
+          }
+        },
+        "n74": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 98 ],
+            "B": [ 99 ],
+            "Y": [ 55 ]
+          }
+        },
+        "n75": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 95 ],
+            "B": [ 97 ],
+            "Y": [ 100 ]
+          }
+        },
+        "n76": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 68 ],
+            "B": [ 43 ],
+            "Y": [ 101 ]
+          }
+        },
+        "n77": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 93 ],
+            "B": [ 38 ],
+            "Y": [ 102 ]
+          }
+        },
+        "n78": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 48 ],
+            "B": [ 22 ],
+            "Y": [ 99 ]
+          }
+        },
+        "n79": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 103 ],
+            "B": [ 37 ],
+            "Y": [ 104 ]
+          }
+        },
+        "n80": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 67 ],
+            "B": [ 81 ],
+            "Y": [ 105 ]
+          }
+        },
+        "n81": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 102 ],
+            "B": [ 104 ],
+            "Y": [ 29 ]
+          }
+        },
+        "n82": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 106 ],
+            "B": [ 40 ],
+            "Y": [ 98 ]
+          }
+        },
+        "n83": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 51 ],
+            "B": [ 107 ],
+            "Y": [ 108 ]
+          }
+        },
+        "n84": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 101 ],
+            "B": [ 105 ],
+            "Y": [ 56 ]
+          }
+        },
+        "n85": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 89 ],
+            "B": [ 24 ],
+            "Y": [ 109 ]
+          }
+        },
+        "n86": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 110 ],
+            "B": [ 111 ],
+            "Y": [ 35 ]
+          }
+        },
+        "n87": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 108 ],
+            "B": [ 109 ],
+            "Y": [ 93 ]
+          }
+        },
+        "n88": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 66 ],
+            "B": [ 43 ],
+            "Y": [ 112 ]
+          }
+        },
+        "n89": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 24 ],
+            "Y": [ 107 ]
+          }
+        },
+        "n90": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 72 ],
+            "B": [ 81 ],
+            "Y": [ 111 ]
+          }
+        },
+        "n91": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 113 ],
+            "B": [ 53 ],
+            "Y": [ 49 ]
+          }
+        },
+        "n92": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:7.13-7.44"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 65 ],
+            "B": [ 81 ],
+            "Y": [ 114 ]
+          }
+        },
+        "n93": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 112 ],
+            "B": [ 114 ],
+            "Y": [ 90 ]
+          }
+        },
+        "n94": {
+          "hide_name": 0,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:6.13-6.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 73 ],
+            "B": [ 43 ],
+            "Y": [ 110 ]
+          }
+        },
+        "n95": {
+          "hide_name": 0,
+          "type": "$_DFFE_PP_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:115.5-120.8"
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "E": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 28 ],
+            "D": [ 100 ],
+            "E": [ 27 ],
+            "Q": [ 103 ]
+          }
+        },
+        "n96": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 96 ],
+            "B": [ 92 ],
+            "Y": [ 106 ]
+          }
+        },
+        "n97": {
+          "hide_name": 0,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:5.13-5.32"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 26 ],
+            "Y": [ 94 ]
+          }
+        },
+        "n98": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:8.12-8.46"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 41 ],
+            "B": [ 36 ],
+            "Y": [ 113 ]
+          }
+        },
+        "n99": {
+          "hide_name": 0,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.17-113.58"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 34 ],
+            "B": [ 31 ],
+            "Y": [ 30 ]
+          }
+        }
+      },
+      "netnames": {
+        "Ci": {
+          "hide_name": 0,
+          "bits": [ 25 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:12.17-12.19"
+          }
+        },
+        "Co": {
+          "hide_name": 0,
+          "bits": [ 30 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:17.17-17.19"
+          }
+        },
+        "ConfigBits[0]": {
+          "hide_name": 0,
+          "bits": [ 75 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[10]": {
+          "hide_name": 0,
+          "bits": [ 66 ],
+          "offset": 10,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[11]": {
+          "hide_name": 0,
+          "bits": [ 65 ],
+          "offset": 11,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[12]": {
+          "hide_name": 0,
+          "bits": [ 64 ],
+          "offset": 12,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[13]": {
+          "hide_name": 0,
+          "bits": [ 63 ],
+          "offset": 13,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[14]": {
+          "hide_name": 0,
+          "bits": [ 62 ],
+          "offset": 14,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[15]": {
+          "hide_name": 0,
+          "bits": [ 61 ],
+          "offset": 15,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[16]": {
+          "hide_name": 0,
+          "bits": [ 37 ],
+          "offset": 16,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[17]": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "offset": 17,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[18]": {
+          "hide_name": 0,
+          "bits": [ 60 ],
+          "offset": 18,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[1]": {
+          "hide_name": 0,
+          "bits": [ 74 ],
+          "offset": 1,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[2]": {
+          "hide_name": 0,
+          "bits": [ 73 ],
+          "offset": 2,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[3]": {
+          "hide_name": 0,
+          "bits": [ 72 ],
+          "offset": 3,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[4]": {
+          "hide_name": 0,
+          "bits": [ 71 ],
+          "offset": 4,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[5]": {
+          "hide_name": 0,
+          "bits": [ 70 ],
+          "offset": 5,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[6]": {
+          "hide_name": 0,
+          "bits": [ 42 ],
+          "offset": 6,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[7]": {
+          "hide_name": 0,
+          "bits": [ 69 ],
+          "offset": 7,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[8]": {
+          "hide_name": 0,
+          "bits": [ 68 ],
+          "offset": 8,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "ConfigBits[9]": {
+          "hide_name": 0,
+          "bits": [ 67 ],
+          "offset": 9,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:19.17-19.27"
+          }
+        },
+        "EN": {
+          "hide_name": 0,
+          "bits": [ 27 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:14.17-14.19"
+          }
+        },
+        "FrameData": {
+          "hide_name": 0,
+          "bits": [ 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ],
+          "offset": 2,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:9.24-9.33"
+          }
+        },
+        "FrameStrobe": {
+          "hide_name": 0,
+          "bits": [ 16, 17, 18, 19, 20 ],
+          "offset": 14,
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:10.25-10.36"
+          }
+        },
+        "I": {
+          "hide_name": 0,
+          "bits": [ 21, 22, 23, 24 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:11.23-11.24"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.I0mux": {
+          "hide_name": 0,
+          "bits": [ 81 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr I0mux",
+            "src": "rtl/LUT4c_frame_config_dffesr.v:59.10-59.15"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.LUT_flop": {
+          "hide_name": 0,
+          "bits": [ 103 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr LUT_flop",
+            "src": "rtl/LUT4c_frame_config_dffesr.v:58.9-58.17"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.LUT_out": {
+          "hide_name": 0,
+          "bits": [ 93 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr LUT_out",
+            "src": "rtl/LUT4c_frame_config_dffesr.v:57.10-57.17"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst0.B0": {
+          "hide_name": 0,
+          "bits": [ 39 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst0 B0",
+            "src": "rtl/models_pack.v:59.10-59.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst0.B1": {
+          "hide_name": 0,
+          "bits": [ 35 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst0 B1",
+            "src": "rtl/models_pack.v:60.10-60.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst0.X": {
+          "hide_name": 0,
+          "bits": [ 113 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst0 X",
+            "src": "rtl/models_pack.v:57.17-57.18"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst1.B0": {
+          "hide_name": 0,
+          "bits": [ 106 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst1 B0",
+            "src": "rtl/models_pack.v:59.10-59.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst1.B1": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst1 B1",
+            "src": "rtl/models_pack.v:60.10-60.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst1.X": {
+          "hide_name": 0,
+          "bits": [ 55 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst1 X",
+            "src": "rtl/models_pack.v:57.17-57.18"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst2.B0": {
+          "hide_name": 0,
+          "bits": [ 56 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst2 B0",
+            "src": "rtl/models_pack.v:59.10-59.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst2.B1": {
+          "hide_name": 0,
+          "bits": [ 90 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst2 B1",
+            "src": "rtl/models_pack.v:60.10-60.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst2.X": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst2 X",
+            "src": "rtl/models_pack.v:57.17-57.18"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst3.B0": {
+          "hide_name": 0,
+          "bits": [ 76 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst3 B0",
+            "src": "rtl/models_pack.v:59.10-59.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst3.B1": {
+          "hide_name": 0,
+          "bits": [ 78 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst3 B1",
+            "src": "rtl/models_pack.v:60.10-60.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst3.X": {
+          "hide_name": 0,
+          "bits": [ 45 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst3 X",
+            "src": "rtl/models_pack.v:57.17-57.18"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst4.B0": {
+          "hide_name": 0,
+          "bits": [ 51 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst4 B0",
+            "src": "rtl/models_pack.v:59.10-59.12"
+          }
+        },
+        "Inst_LA_LUT4c_frame_config_dffesr.inst_cus_mux161.cus_mux41_inst4.B1": {
+          "hide_name": 0,
+          "bits": [ 89 ],
+          "attributes": {
+            "hdlname": "Inst_LA_LUT4c_frame_config_dffesr inst_cus_mux161 cus_mux41_inst4 B1",
+            "src": "rtl/models_pack.v:60.10-60.12"
+          }
+        },
+        "O": {
+          "hide_name": 0,
+          "bits": [ 29 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:16.17-16.18"
+          }
+        },
+        "SR": {
+          "hide_name": 0,
+          "bits": [ 26 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:13.17-13.19"
+          }
+        },
+        "UserCLK": {
+          "hide_name": 0,
+          "bits": [ 28 ],
+          "attributes": {
+            "src": "rtl/lut_cell_top.v:15.17-15.24"
+          }
+        },
+        "n0": {
+          "hide_name": 0,
+          "bits": [ 104 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n1": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n10": {
+          "hide_name": 0,
+          "bits": [ 114 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n11": {
+          "hide_name": 0,
+          "bits": [ 105 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n12": {
+          "hide_name": 0,
+          "bits": [ 101 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n13": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n14": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n15": {
+          "hide_name": 0,
+          "bits": [ 111 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n16": {
+          "hide_name": 0,
+          "bits": [ 110 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n17": {
+          "hide_name": 0,
+          "bits": [ 85 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n18": {
+          "hide_name": 0,
+          "bits": [ 86 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n19": {
+          "hide_name": 0,
+          "bits": [ 112 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n2": {
+          "hide_name": 0,
+          "bits": [ 38 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n20": {
+          "hide_name": 0,
+          "bits": [ 77 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n21": {
+          "hide_name": 0,
+          "bits": [ 80 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n22": {
+          "hide_name": 0,
+          "bits": [ 36 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n23": {
+          "hide_name": 0,
+          "bits": [ 41 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n24": {
+          "hide_name": 0,
+          "bits": [ 100 ],
+          "attributes": {
+          }
+        },
+        "n25": {
+          "hide_name": 0,
+          "bits": [ 31 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.46-113.57"
+          }
+        },
+        "n26": {
+          "hide_name": 0,
+          "bits": [ 34 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.17-113.42"
+          }
+        },
+        "n27": {
+          "hide_name": 0,
+          "bits": [ 33 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.32-113.41"
+          }
+        },
+        "n28": {
+          "hide_name": 0,
+          "bits": [ 32 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:113.18-113.27"
+          }
+        },
+        "n29": {
+          "hide_name": 0,
+          "bits": [ 40 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n3": {
+          "hide_name": 0,
+          "bits": [ 82 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n30": {
+          "hide_name": 0,
+          "bits": [ 47 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n31": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n32": {
+          "hide_name": 0,
+          "bits": [ 83 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n33": {
+          "hide_name": 0,
+          "bits": [ 59 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n34": {
+          "hide_name": 0,
+          "bits": [ 50 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n35": {
+          "hide_name": 0,
+          "bits": [ 49 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n36": {
+          "hide_name": 0,
+          "bits": [ 53 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n37": {
+          "hide_name": 0,
+          "bits": [ 87 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n38": {
+          "hide_name": 0,
+          "bits": [ 88 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:70.16-70.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n39": {
+          "hide_name": 0,
+          "bits": [ 84 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:60.15-60.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n4": {
+          "hide_name": 0,
+          "bits": [ 79 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n40": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n41": {
+          "hide_name": 0,
+          "bits": [ 109 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n42": {
+          "hide_name": 0,
+          "bits": [ 108 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n43": {
+          "hide_name": 0,
+          "bits": [ 107 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n44": {
+          "hide_name": 0,
+          "bits": [ 96 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n45": {
+          "hide_name": 0,
+          "bits": [ 43 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:59.15-59.27|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n46": {
+          "hide_name": 0,
+          "bits": [ 91 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n47": {
+          "hide_name": 0,
+          "bits": [ 57 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n5": {
+          "hide_name": 0,
+          "bits": [ 99 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n6": {
+          "hide_name": 0,
+          "bits": [ 97 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:4.21-4.26"
+          }
+        },
+        "n7": {
+          "hide_name": 0,
+          "bits": [ 95 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:4.14-4.19"
+          }
+        },
+        "n8": {
+          "hide_name": 0,
+          "bits": [ 94 ],
+          "attributes": {
+            "src": "rtl/LUT4c_frame_config_dffesr.v:117.17-117.19|rtl/LUT4c_frame_config_dffesr.v:117.13-118.38|synth/mux_decompose.v:4.10-4.12"
+          }
+        },
+        "n9": {
+          "hide_name": 0,
+          "bits": [ 98 ],
+          "attributes": {
+            "src": "rtl/models_pack.v:61.16-61.28|synth/mux_decompose.v:4.14-4.19"
+          }
+        }
+      }
+    }
+  }
+}
