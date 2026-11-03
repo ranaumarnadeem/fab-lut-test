@@ -145,7 +145,14 @@ def deposit_vh(elems: list[Element]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def report_vh(elems: list[Element]) -> str:
+def report_vh(elems: list[Element], dump: bool = True) -> str:
+    """End of run: never-written elements, and with +DUMPSTATE every state
+    (`dump` False for the original UDP models, whose state is unreachable)."""
     n = len(elems)
-    return (f"        for (k = 0; k < {n}; k = k + 1) "
-            "if (!se_wr[k]) $display(\"NW %0d\", k);\n")
+    lines = [f"        for (k = 0; k < {n}; k = k + 1) "
+             "if (!se_wr[k]) $display(\"NW %0d\", k);"]
+    if elems and dump:
+        lines.append("        if ($test$plusargs(\"DUMPSTATE\")) begin")
+        lines += [f"            $display(\"ST {e.index} %b\", dut.{e.state_ref});" for e in elems]
+        lines.append("        end")
+    return "\n".join(lines) + "\n"

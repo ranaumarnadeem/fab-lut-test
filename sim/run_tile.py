@@ -248,6 +248,12 @@ def cmd_faultsim(args) -> int:
     netlist = args.netlist
     stims = write_stimuli()
     faults = load_faults(netlist)
+    old_rows = None
+    if args.only:
+        # Rerun only the faults on matching nets and merge into the matrix.
+        pat = re.compile(args.only)
+        old_rows = {r["id"]: r for r in csv.DictReader((REPORTS / f"{netlist}_matrix.csv").open())}
+        faults = [f for f in faults if pat.search(f["net"])]
     where = compile_chunks(netlist, faults)
     vvp0 = where[int(faults[0]["id"])]
     golden = golden_runs(vvp0, stims)
@@ -267,15 +273,33 @@ def cmd_faultsim(args) -> int:
                 print(f"  {k + 1}/{len(faults)}  {el / 60:.1f} min, eta {el / (k + 1) * (len(faults) - k - 1) / 60:.1f} min",
                       flush=True)
     REPORTS.mkdir(exist_ok=True)
+    rows = {}
+    for flt in faults:
+        r = results[int(flt["id"])]
+        v = set(r.values())
+        anyd = "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
+        rows[flt["id"]] = {"id": flt["id"], "path": flt["path"], "polarity": flt["polarity"],
+                           "type": flt["type"], **r, "any": anyd}
+    if old_rows is not None:
+        changes = [(old_rows[i], rows[i]) for i in rows
+                   if any(old_rows[i][c] != rows[i][c] for c in CONFIGS + ["any"])]
+        with (REPORTS / f"{netlist}_rerun_changes.csv").open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "path", "polarity", "type",
+                        *[f"old_{c}" for c in CONFIGS + ["any"]], *[f"new_{c}" for c in CONFIGS + ["any"]]])
+            for o, n in changes:
+                w.writerow([n["id"], n["path"], n["polarity"], n["type"],
+                            *[o[c] for c in CONFIGS + ["any"]], *[n[c] for c in CONFIGS + ["any"]]])
+        print(f"{netlist}: reran {len(rows)} faults, {len(changes)} changed "
+              f"(reports/{netlist}_rerun_changes.csv)")
+        old_rows.update(rows)
+        rows = old_rows
     with (REPORTS / f"{netlist}_matrix.csv").open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "path", "polarity", "type", *CONFIGS, "any"])
-        for flt in faults:
-            r = results[int(flt["id"])]
-            v = set(r.values())
-            anyd = "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
-            w.writerow([flt["id"], flt["path"], flt["polarity"], flt["type"],
-                        *[r[c] for c in CONFIGS], anyd])
+        for i in sorted(rows, key=int):
+            r = rows[i]
+            w.writerow([r["id"], r["path"], r["polarity"], r["type"], *[r[c] for c in CONFIGS], r["any"]])
     print(f"{netlist}: done in {(time.time() - t0) / 60:.1f} min")
     return 0
 
@@ -318,6 +342,8 @@ def main() -> int:
         p = sub.add_parser(cmd)
         p.add_argument("netlist", choices=NETLISTS)
         p.add_argument("--jobs", type=int, default=os.cpu_count())
+        if cmd == "faultsim":
+            p.add_argument("--only", help="regex on the fault net: rerun those, merge into the matrix")
         if cmd == "estimate":
             p.add_argument("--n", type=int, default=40)
         if cmd == "exhaust":

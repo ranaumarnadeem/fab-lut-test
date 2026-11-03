@@ -118,7 +118,10 @@ class Seq:
             self.step(fd=data, fs=0, note=f"frame{frame} data")
             self.step(fs=1 << frame, note=f"frame{frame} strobe")
             self.step(fs=0, note=f"frame{frame} release")
-        self.step(fd=0)
+        # Configuration done. As in FABulous (Frame_Select / Frame_Data_Reg, see
+        # NOTES.md): FrameStrobe idles at 0 and FrameData keeps the last frame
+        # word written (Frame_Data_Reg is never cleared).
+        self.step(fs=0, note="config idle")
 
     def clock(self, sample: bool = True, note: str = "") -> None:
         self.step(clk=1, note=note)

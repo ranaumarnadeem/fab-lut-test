@@ -110,7 +110,10 @@ class TileSeq:
             self.step(fd=word, fs=0, note=f"frame{f} data")
             self.step(fs=1 << f, note=f"frame{f} strobe")
             self.step(fs=0, note=f"frame{f} release")
-        self.step(fd=0)
+        # Configuration done. As in FABulous (Frame_Select / Frame_Data_Reg, see
+        # NOTES.md): FrameStrobe idles at 0 and FrameData keeps the last frame
+        # word written (Frame_Data_Reg is never cleared).
+        self.step(fs=0, note="config idle")
 
     def clock(self, sample: bool = True, note: str = "") -> None:
         self.step(clk=1, note=note)

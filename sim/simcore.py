@@ -37,7 +37,7 @@ def compile_tb(build_dir: Path, tb_text: str, sources: list[Path],
     (build_dir / "monitor.vh").write_text(state.monitor_vh(elems))
     # The original UDP state is not reachable, so no deposits with those models.
     (build_dir / "deposit.vh").write_text(state.deposit_vh(elems) if replace_models else "\n")
-    (build_dir / "report.vh").write_text(state.report_vh(elems))
+    (build_dir / "report.vh").write_text(state.report_vh(elems, dump=replace_models))
     srcs = state.model_sources(sources, build_dir / "models") if replace_models else sources
     vvp = build_dir / "sim.vvp"
     cmd = ["iverilog", "-g2005", "-DUNIT_DELAY=", *(defines or []), "-o", str(vvp),
@@ -50,6 +50,7 @@ def compile_tb(build_dir: Path, tb_text: str, sources: list[Path],
 class Result:
     samples: list[str]
     never_written: frozenset[int] = field(default_factory=frozenset)
+    state: dict[int, str] = field(default_factory=dict)  # +DUMPSTATE: element -> value
     early_detect: bool = False   # testbench stopped at a definite mismatch (+EARLY)
     timeout: bool = False        # no END within the time limit (e.g. an oscillating loop)
 
@@ -73,6 +74,7 @@ def run_vvp(vvp: Path, plusargs: list[str], fault_id: int | None = None,
     return Result(
         samples=[ln[2:] for ln in lines if ln.startswith("S ")],
         never_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("NW ")),
+        state={int(ln.split()[1]): ln.split()[2] for ln in lines if ln.startswith("ST ")},
     )
 
 
