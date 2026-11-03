@@ -131,7 +131,11 @@ def verdict_for(job: tuple[int, list[str], list[str], int]) -> dict:
         r = simcore.run_vvp(t.vvp, t.pa_early[c], fid, dep, timeout=30)
         return r.samples
 
-    rec = cs.decide(run, t.golden, p_cfgs, groups, pos, max_group)
+    elem_pos = {e: {out_bits[b] for b in cs.group_outputs(g, cones[e], set(out_bits))} for e in U}
+    rec = cs.decide(run, t.golden, p_cfgs, groups, pos, max_group, elem_pos)
+    if "detecting_output" in rec:
+        rec["detecting_output"] = t.obs[rec["detecting_output"]]
+        rec["detecting_elements"] = [t.elems[e].label for e in rec["detecting_elements"]]
     rec.update(id=fid, k=len(U), groups=[[t.elems[e].label for e in grp] for grp in groups],
                group_outputs=[sorted(t.obs[p] for p in ps) for ps in pos])
     if rec["verdict"] == "escapes":

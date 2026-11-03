@@ -220,30 +220,65 @@ def mismatch_on(golden: list[str], faulty: list[str], positions: set[int]) -> bo
     return False
 
 
+def _no_escape(run, golden, p_cfgs, elems: list[int], pos: set[int]):
+    """First assignment of `elems` (others at X) with no mismatch on `pos`, or None."""
+    runs = 0
+    for bits in itertools.product((0, 1), repeat=len(elems)):
+        dep = dict(zip(elems, bits))
+        hit = False
+        for c in (p_cfgs if pos else []):
+            runs += 1
+            if mismatch_on(golden[c], run(c, dep), pos):
+                hit = True
+                break
+        if not hit:
+            return dep, runs
+    return None, runs
+
+
 def decide(run, golden: dict[str, list[str]], p_cfgs: list[str], groups: list[list[int]],
-           group_pos: list[set[int]], max_group: int = 16) -> dict:
-    """run(cfg, deposits) -> samples. One escaping local assignment decides a
-    group; the fault is detected iff some group has none."""
+           group_pos: list[set[int]], max_group: int = 16,
+           elem_pos: dict[int, set[int]] | None = None) -> dict:
+    """run(cfg, deposits) -> samples.
+
+    1. Groups (smallest first): one escaping local assignment decides a group;
+       the fault is detected iff some group has none.
+    2. If a group is larger than max_group and no small group decided it:
+       per observed output o, S_o = elements whose cone reaches o (the rest of
+       U cannot affect o). If |S_o| <= max_group and every assignment of S_o
+       mismatches on o in some config, the fault is detected (exact, a
+       sufficient condition only; it cannot prove an escape).
+    3. Otherwise: "group too large", reported, never sampled.
+    """
     sizes = [len(x) for x in groups]
-    big = [n for n in sizes if n > max_group]
-    if big:
-        return {"verdict": "group too large", "group_sizes": sizes, "too_large": max(big)}
     witness: dict[int, int] = {}
     runs = 0
-    for grp, pos in zip(groups, group_pos):
-        escape = None
-        for bits in itertools.product((0, 1), repeat=len(grp)):
-            dep = dict(zip(grp, bits))
-            hit = False
-            for c in (p_cfgs if pos else []):
-                runs += 1
-                if mismatch_on(golden[c], run(c, dep), pos):
-                    hit = True
-                    break
-            if not hit:
-                escape = dep
-                break
-        if escape is None:
-            return {"verdict": "detected", "group_sizes": sizes, "detecting_group": grp, "runs": runs}
-        witness.update(escape)
-    return {"verdict": "escapes", "group_sizes": sizes, "witness": witness, "runs": runs}
+    big = False
+    for grp, pos in sorted(zip(groups, group_pos), key=lambda gp: len(gp[0])):
+        if len(grp) > max_group:
+            big = True
+            continue
+        esc, r = _no_escape(run, golden, p_cfgs, grp, pos)
+        runs += r
+        if esc is None:
+            return {"verdict": "detected", "method": "group", "group_sizes": sizes,
+                    "detecting_group": grp, "runs": runs}
+        witness.update(esc)
+    if not big:
+        return {"verdict": "escapes", "group_sizes": sizes, "witness": witness, "runs": runs}
+    if elem_pos:
+        outs = sorted({p for ps in elem_pos.values() for p in ps})
+        tried = []
+        for o in outs:
+            s_o = sorted(e for e, ps in elem_pos.items() if o in ps)
+            tried.append(len(s_o))
+            if len(s_o) > max_group:
+                continue
+            esc, r = _no_escape(run, golden, p_cfgs, s_o, {o})
+            runs += r
+            if esc is None:
+                return {"verdict": "detected", "method": "output", "group_sizes": sizes,
+                        "detecting_output": o, "detecting_elements": s_o, "runs": runs}
+        return {"verdict": "group too large", "group_sizes": sizes, "too_large": max(sizes),
+                "output_set_sizes": tried, "runs": runs}
+    return {"verdict": "group too large", "group_sizes": sizes, "too_large": max(sizes), "runs": runs}
