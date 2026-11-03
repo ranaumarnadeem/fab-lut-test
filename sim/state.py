@@ -9,9 +9,12 @@ Shared by the cell runner (sim/run.py) and the tile runner (sim/run_tile.py).
   X-pessimistic, UDP-faithful). Used for every simulation.
 - `monitor_vh(...)`: per-element "possibly written" flags. An element is
   written when its enable is not 0 (latch), or when its clock has a possible
-  rising edge while its enable is not 0 (flop), at any time from t = 1 ns.
-- `deposit_vh(...)`: `+PU<i>=<0|1>` plusargs deposit a value into element i
-  at t = 2 ns with force/release, 1 ns after the fault is applied.
+  rising edge while its enable is not 0 (flop), at any time from t = 2 ns.
+  Events at 1 ns are the fault being applied (e.g. the 0 -> 1 of a
+  stuck-at-1 clock) and are not writes: the real fault was there from power
+  up. A latch whose enable is not 0 at 2 ns (stuck-at-1 strobe) is written.
+- `deposit_vh(...)`: that 2 ns check, then `+PU<i>=<0|1>` plusargs deposit a
+  value into element i with force/release.
 """
 from __future__ import annotations
 
@@ -114,24 +117,25 @@ def model_sources(sources: list[Path], out_dir: Path) -> list[Path]:
 
 
 def monitor_vh(elems: list[Element]) -> str:
-    """Module-level code: `se_wr[i]` = element i possibly written after 1 ns."""
+    """Module-level code: `se_wr[i]` = element i possibly written from 2 ns."""
     n = max(len(elems), 1)
     lines = [f"    reg [{n - 1}:0] se_wr;", "    initial se_wr = 0;"]
     for e in elems:
         en = f"dut.{e.en_ref}"
         if e.kind == "latch":
-            lines.append(f"    always @({en}) if ($time >= 1 && {en} !== 1'b0) se_wr[{e.index}] = 1'b1;")
+            lines.append(f"    always @({en}) if ($time >= 2 && {en} !== 1'b0) se_wr[{e.index}] = 1'b1;")
         else:
             clk = f"dut.{e.clk_ref}"
             lines.append(
-                f"    always @({clk}) if ($time >= 1 && {clk} !== 1'b0 && {en} !== 1'b0) "
+                f"    always @({clk}) if ($time >= 2 && {clk} !== 1'b0 && {en} !== 1'b0) "
                 f"se_wr[{e.index}] = 1'b1;"
             )
     return "\n".join(lines) + "\n"
 
 
 def deposit_vh(elems: list[Element]) -> str:
-    lines = []
+    lines = [f"        if (dut.{e.en_ref} !== 1'b0) se_wr[{e.index}] = 1'b1;"
+             for e in elems if e.kind == "latch"]
     for e in elems:
         s = f"dut.{e.state_ref}"
         lines.append(
