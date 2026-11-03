@@ -36,6 +36,8 @@ def load(netlist: str):
     cp = REPORTS / f"{netlist}_conesplit.json"
     if cp.exists():
         for r in json.loads(cp.read_text()):
+            if r.get("reason"):
+                continue   # strict D or U in every config: nothing to add
             rec = ex.setdefault(str(r["id"]), {"k": r.get("k"), "assignments": None})
             rec["cone"] = r
     # Faults that create a combinational loop reaching an observed output.
@@ -186,12 +188,17 @@ def main() -> None:
                 cells.append("-")
                 continue
             v = r["verdict"]
+            meth = r.get("method")
+            gs = r.get("group_sizes") or []
             how = (f" (output {r['detecting_output']}, {len(r['detecting_elements'])} elements)"
-                   if r.get("method") == "output" else
-                   f" (group of {len(r['detecting_group'])})" if v == "detected" else
-                   f" (largest group {max(r['group_sizes'])})" if v == "group too large" else
+                   if meth == "output" else
+                   f" (case split on {r['split_on'].split('.')[-1]})" if meth == "case split" else
+                   f" (group of {len(r['detecting_group'])})" if meth == "group" else
+                   f" ({r['reason']})" if r.get("reason") else
+                   f" (largest group {max(gs)})" if v == "group too large" else
                    " (witness confirmed)" if r.get("witness_check") == "escapes" else "")
-            cells.append(f"{v}{how}, k = {r.get('k')}")
+            sizes = f"; groups {len(gs)}, largest {max(gs)}" if gs else ""
+            cells.append(f"{v}{how}, k = {r.get('k')}{sizes}")
         out.append(f"| {f} | {desc} | " + " | ".join(cells) + " |")
     nloop = 0
     for n in NETLISTS:
