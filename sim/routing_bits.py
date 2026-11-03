@@ -40,13 +40,21 @@ def latch_bits(netlist: str) -> dict[int, int]:
     _, mod = gen_faults.load_top(js, None)
     bits = gen_faults.analyse(mod)
     pos2bit = {v: b for b, v in tc.TILE.configmem.items()}
+    def stem_name(b) -> str:
+        """Net name, looking back through branch buffers ($_BUF_) to the stem."""
+        drv = bits[b]["drivers"][0] if bits[b]["drivers"] else ""
+        cname = drv.rsplit(".", 1)[0]
+        if cname in mod["cells"] and mod["cells"][cname]["type"] == "$_BUF_":
+            return stem_name(mod["cells"][cname]["connections"]["A"][0])
+        return bits[b]["names"][0][0]
+
     out = {}
     for e in state.storage_elements(js):
         if e.kind != "latch":
             continue
-        d = bits[mod["cells"][e.cell]["connections"]["D"][0]]["names"][0][0]
-        f = int(e.en_ref.strip("\\ ")[len("FrameStrobe["):-1])
-        out[e.index] = pos2bit[(f, int(d[len("FrameData["):-1]))]
+        conn = mod["cells"][e.cell]["connections"]
+        d, en = stem_name(conn["D"][0]), stem_name(conn["E"][0])
+        out[e.index] = pos2bit[(int(en[len("FrameStrobe["):-1]), int(d[len("FrameData["):-1]))]
     return out
 
 

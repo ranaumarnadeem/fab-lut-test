@@ -136,12 +136,35 @@ endmodule
 """
 
 
+_LOOP_CHECKER = None
+
+
+def assert_loop_free(name: str, seq) -> None:
+    """Gate: refuse to simulate a fault-free config with a combinational loop.
+
+    Every config word the sequence writes is checked (sim/loop_check.py) on
+    the stem tile netlist; a loop is printed and the run stops.
+    """
+    global _LOOP_CHECKER
+    import loop_check
+    if _LOOP_CHECKER is None:
+        _LOOP_CHECKER = loop_check.Checker("tile_generic")
+    for k, cfg in enumerate(seq.configs_written):
+        loops, _ = _LOOP_CHECKER.check_config(cfg)
+        if loops:
+            for lp in loops:
+                print(f"LOOP in {name} (config write {k}): {lp['cells']} cells, "
+                      f"reaches {lp['outputs'] or 'no observed output'}: {' '.join(lp['nets'])}")
+            raise SystemExit(f"{name}: combinational loop in a fault-free config; not simulating")
+
+
 def write_stimuli() -> dict[str, tuple[Path, int, list[str], Path]]:
     d = BUILD / "tile_stim"
     d.mkdir(parents=True, exist_ok=True)
     out = {}
     for name, f in tc.TILE_CONFIGS.items():
         seq = f()
+        assert_loop_free(name, seq)
         stim, expf = d / f"{name}.stim", d / f"{name}.expected"
         seq.write_stim(stim)
         exp = tc.tile_model(seq)
