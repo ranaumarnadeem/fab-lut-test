@@ -49,7 +49,8 @@ def compile_tb(build_dir: Path, tb_text: str, sources: list[Path],
 @dataclass
 class Result:
     samples: list[str]
-    never_written: frozenset[int] = field(default_factory=frozenset)
+    never_written: frozenset[int] = field(default_factory=frozenset)       # never possibly written
+    never_def_written: frozenset[int] = field(default_factory=frozenset)   # never definitely written
     state: dict[int, str] = field(default_factory=dict)  # +DUMPSTATE: element -> value
     early_detect: bool = False   # testbench stopped at a definite mismatch (+EARLY)
     timeout: bool = False        # no END within the time limit (e.g. an oscillating loop)
@@ -74,6 +75,7 @@ def run_vvp(vvp: Path, plusargs: list[str], fault_id: int | None = None,
     return Result(
         samples=[ln[2:] for ln in lines if ln.startswith("S ")],
         never_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("NW ")),
+        never_def_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("ND ")),
         state={int(ln.split()[1]): ln.split()[2] for ln in lines if ln.startswith("ST ")},
     )
 

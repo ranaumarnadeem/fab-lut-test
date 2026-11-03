@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Cone-split power-up verdicts for cell and tile netlists (sim/conesplit.py).
 
+U (the unwritten elements): `validate` uses "never possibly written", the
+same U as the full enumerator; `run` uses "never definitely written" (enable
+exactly 1 / clean 0 -> 1 edge with enable 1), which also catches elements
+whose enable is X only because other state is X (see NOTES.md).
+
   python3 sim/run_conesplit.py validate <netlist> [--jobs N]
       Every fault the full enumerator handled (k <= 12, reports/<n>_exhaust.json):
       cone-split verdict must equal the full verdict. Escape witnesses are
@@ -85,7 +90,8 @@ class Target:
 _T: dict = {}
 
 
-def _init(target: "Target", faults: list[dict]):
+def _init(target: "Target", faults: list[dict], udef: bool):
+    _T["udef"] = udef
     _T["t"] = target
     _T["g"] = cs.load_graph(ROOT / "synth" / f"netlist_{target.netlist}.json")
     _T["faults"] = {int(f["id"]): f for f in faults}
@@ -103,41 +109,59 @@ def verdict_for(job: tuple[int, list[str], list[str], int]) -> dict:
     if not p_cfgs:
         return {"id": fid, "verdict": "escapes", "reason": "U in every config", "witness": {}}
     U, consts = set(), []
+    branchable = None  # elements never possibly written in every P config
     out_bits = {g.port_bits[o]: k for k, o in enumerate(t.obs)}
     stuck = {g.net_bit[f["net"]]: int(f["polarity"])}
     for c in p_cfgs:
         r = t.sim(c, fid, dump=True)
         if r.timeout:
             return {"id": fid, "verdict": "timeout"}
-        U |= set(r.never_written)
+        u_c = set(r.never_def_written if _T.get("udef") else r.never_written)
+        U |= u_c
+        branchable = set(r.never_written) if branchable is None else branchable & set(r.never_written)
         if not t.prune_ok[c]:
             consts.append(dict(stuck))
             continue
         const = dict(stuck)
         for e in t.elems:
             v = r.state.get(e.index)
-            if e.kind == "latch" and v in ("0", "1") and e.index not in r.never_written:
+            if e.kind == "latch" and v in ("0", "1") and e.index not in u_c:
                 const[g.cells[e.cell]["out"]] = int(v)
         for n in t.held0:
             const[g.port_bits[n]] = 0
         consts.append(const)
     U = sorted(U)
     elem_cells = {e.index: e.cell for e in t.elems}
-    groups, cones = cs.groups_for(g, elem_cells, U, consts, set(out_bits))
-    pos = [{out_bits[b] for b in cs.group_outputs(g, set().union(*(cones[e] for e in grp)), set(out_bits))}
-           for grp in groups]
+
+    def regroup(fixed: dict[int, int]):
+        cs_ = []
+        for const in consts:
+            c2 = dict(const)
+            for e, v in fixed.items():
+                c2[g.cells[elem_cells[e]]["out"]] = v
+            cs_.append(c2)
+        rest = [e for e in U if e not in fixed]
+        groups, cones = cs.groups_for(g, elem_cells, rest, cs_, set(out_bits))
+        gpos = [{out_bits[b] for b in cs.group_outputs(g, set().union(*(cones[e] for e in grp)), set(out_bits))}
+                for grp in groups]
+        epos = {e: {out_bits[b] for b in cs.group_outputs(g, cones[e], set(out_bits))} for e in rest}
+        return groups, gpos, epos
 
     def run(c, dep):
         r = simcore.run_vvp(t.vvp, t.pa_early[c], fid, dep, timeout=30)
         return r.samples
 
-    elem_pos = {e: {out_bits[b] for b in cs.group_outputs(g, cones[e], set(out_bits))} for e in U}
-    rec = cs.decide(run, t.golden, p_cfgs, groups, pos, max_group, elem_pos)
+    rec = cs.decide(run, t.golden, p_cfgs, regroup, branchable, max_group)
+    groups = regroup({})[0]
     if "detecting_output" in rec:
         rec["detecting_output"] = t.obs[rec["detecting_output"]]
         rec["detecting_elements"] = [t.elems[e].label for e in rec["detecting_elements"]]
-    rec.update(id=fid, k=len(U), groups=[[t.elems[e].label for e in grp] for grp in groups],
-               group_outputs=[sorted(t.obs[p] for p in ps) for ps in pos])
+    for key in ("fixed",):
+        if key in rec:
+            rec[key] = {t.elems[e].label: v for e, v in rec[key].items()}
+    if "split_on" in rec:
+        rec["split_on"] = t.elems[rec["split_on"]].label
+    rec.update(id=fid, k=len(U), groups=[[t.elems[e].label for e in grp] for grp in groups])
     if rec["verdict"] == "escapes":
         full = {}
         for e in U:
@@ -165,11 +189,11 @@ def configs_of(netlist: str) -> list[str]:
     return [c for c in m if c not in ("id", "path", "polarity", "type", "any")]
 
 
-def run_jobs(netlist, jobs, workers):
+def run_jobs(netlist, jobs, workers, udef: bool):
     ids = {j[0] for j in jobs}
     faults = [f for f in load_faults(netlist) if int(f["id"]) in ids]
     target = Target(netlist, faults)   # compiles once, here
-    with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(target, faults)) as ex:
+    with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(target, faults, udef)) as ex:
         return list(ex.map(verdict_for, jobs))
 
 
@@ -183,7 +207,8 @@ def cmd_validate(args) -> int:
     # The full enumerator only reran P configs and counted strict D; drop D
     # here so that cone-split decides from the P configs alone, like it.
     jobs = [(fid, p, [], mg) if not d else (fid, p, d, mg) for fid, p, d, mg in jobs]
-    recs = run_jobs(n, jobs, args.jobs)
+    # Same U as the full enumerator (never possibly written), for a like-for-like check.
+    recs = run_jobs(n, jobs, args.jobs, udef=False)
     agree = mismatch = bad_witness = 0
     rows = []
     for r in recs:
@@ -211,7 +236,7 @@ def cmd_run(args) -> int:
            (args.pol is None or f["polarity"] == str(args.pol)) and
            (not args.stem or f["type"] == "stem")}
     jobs = matrix_jobs(n, ids, configs_of(n), args.max_group)
-    recs = run_jobs(n, jobs, args.jobs)
+    recs = run_jobs(n, jobs, args.jobs, udef=not args.u_possible)
     byid = {int(f["id"]): f for f in load_faults(n)}
     for r in recs:
         r["path"] = byid[r["id"]]["path"]
@@ -235,6 +260,8 @@ def main() -> int:
             p.add_argument("--only", required=True)
             p.add_argument("--pol", type=int)
             p.add_argument("--stem", action="store_true")
+            p.add_argument("--u-possible", action="store_true",
+                           help="U = never possibly written (default: never definitely written)")
     args = ap.parse_args()
     return {"validate": cmd_validate, "run": cmd_run}[args.cmd](args)
 

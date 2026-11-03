@@ -236,49 +236,74 @@ def _no_escape(run, golden, p_cfgs, elems: list[int], pos: set[int]):
     return None, runs
 
 
-def decide(run, golden: dict[str, list[str]], p_cfgs: list[str], groups: list[list[int]],
-           group_pos: list[set[int]], max_group: int = 16,
-           elem_pos: dict[int, set[int]] | None = None) -> dict:
-    """run(cfg, deposits) -> samples.
+def decide(run, golden: dict[str, list[str]], p_cfgs: list[str], regroup,
+           branchable: set[int], max_group: int = 16, max_depth: int = 8,
+           fixed: dict[int, int] | None = None) -> dict:
+    """run(cfg, deposits) -> samples; regroup(fixed) -> (groups, group_pos, elem_pos)
+    for the elements not in `fixed`, with the fixed ones pinned as constants.
 
     1. Groups (smallest first): one escaping local assignment decides a group;
        the fault is detected iff some group has none.
-    2. If a group is larger than max_group and no small group decided it:
-       per observed output o, S_o = elements whose cone reaches o (the rest of
-       U cannot affect o). If |S_o| <= max_group and every assignment of S_o
-       mismatches on o in some config, the fault is detected (exact, a
-       sufficient condition only; it cannot prove an escape).
-    3. Otherwise: "group too large", reported, never sampled.
+    2. A group is larger than max_group and no small group decided: per
+       observed output o, S_o = elements whose cone reaches o (the rest
+       cannot affect o); if |S_o| <= max_group and every assignment of S_o
+       mismatches on o in some config, detected (a sufficient condition).
+    3. Still undecided: case split (Shannon expansion) on one element of the
+       largest group that is never possibly written in any config (it holds
+       its power-up value for the whole test, so pinning it is exact):
+       detected iff both values give detected; an escape in either value is
+       an escape with that value in the witness.
+    4. Depth or branchable elements exhausted: "group too large".
     """
+    fixed = dict(fixed or {})
+    groups, group_pos, elem_pos = regroup(fixed)
     sizes = [len(x) for x in groups]
-    witness: dict[int, int] = {}
+
+    def wrap(run_dep):
+        return lambda c, dep: run(c, {**fixed, **dep})
+
+    r_run = wrap(run)
+    witness: dict[int, int] = dict(fixed)
     runs = 0
-    big = False
+    big = []
     for grp, pos in sorted(zip(groups, group_pos), key=lambda gp: len(gp[0])):
         if len(grp) > max_group:
-            big = True
+            big.append(grp)
             continue
-        esc, r = _no_escape(run, golden, p_cfgs, grp, pos)
-        runs += r
+        esc, n = _no_escape(r_run, golden, p_cfgs, grp, pos)
+        runs += n
         if esc is None:
             return {"verdict": "detected", "method": "group", "group_sizes": sizes,
-                    "detecting_group": grp, "runs": runs}
+                    "detecting_group": grp, "runs": runs, "fixed": fixed}
         witness.update(esc)
     if not big:
-        return {"verdict": "escapes", "group_sizes": sizes, "witness": witness, "runs": runs}
-    if elem_pos:
-        outs = sorted({p for ps in elem_pos.values() for p in ps})
-        tried = []
-        for o in outs:
-            s_o = sorted(e for e, ps in elem_pos.items() if o in ps)
-            tried.append(len(s_o))
-            if len(s_o) > max_group:
-                continue
-            esc, r = _no_escape(run, golden, p_cfgs, s_o, {o})
-            runs += r
-            if esc is None:
-                return {"verdict": "detected", "method": "output", "group_sizes": sizes,
-                        "detecting_output": o, "detecting_elements": s_o, "runs": runs}
+        return {"verdict": "escapes", "group_sizes": sizes, "witness": witness, "runs": runs,
+                "fixed": fixed}
+    outs = sorted({p for ps in elem_pos.values() for p in ps})
+    tried = []
+    for o in outs:
+        s_o = sorted(e for e, ps in elem_pos.items() if o in ps)
+        tried.append(len(s_o))
+        if len(s_o) > max_group:
+            continue
+        esc, n = _no_escape(r_run, golden, p_cfgs, s_o, {o})
+        runs += n
+        if esc is None:
+            return {"verdict": "detected", "method": "output", "group_sizes": sizes,
+                    "detecting_output": o, "detecting_elements": s_o, "runs": runs, "fixed": fixed}
+    cand = [e for e in max(big, key=len) if e in branchable]
+    if len(fixed) >= max_depth or not cand:
         return {"verdict": "group too large", "group_sizes": sizes, "too_large": max(sizes),
-                "output_set_sizes": tried, "runs": runs}
-    return {"verdict": "group too large", "group_sizes": sizes, "too_large": max(sizes), "runs": runs}
+                "output_set_sizes": tried, "runs": runs, "fixed": fixed}
+    # branch on the candidate reaching the most outputs (most likely to split the group)
+    e = max(cand, key=lambda x: (len(elem_pos.get(x, ())), -x))
+    branches = []
+    for v in (0, 1):
+        r = decide(run, golden, p_cfgs, regroup, branchable, max_group, max_depth, {**fixed, e: v})
+        runs += r["runs"]
+        branches.append(r)
+        if r["verdict"] != "detected":
+            return {**r, "runs": runs, "split_on": e}
+    return {"verdict": "detected", "method": "case split", "split_on": e,
+            "group_sizes": sizes, "runs": runs, "fixed": fixed,
+            "branch_methods": [b.get("method") for b in branches]}

@@ -117,25 +117,44 @@ def model_sources(sources: list[Path], out_dir: Path) -> list[Path]:
 
 
 def monitor_vh(elems: list[Element]) -> str:
-    """Module-level code: `se_wr[i]` = element i possibly written from 2 ns."""
+    """Module-level code, from 2 ns:
+
+    `se_wr[i]`: element i possibly written (enable not 0 / a possible rising
+    clock edge with enable not 0).
+    `se_dw[i]`: element i definitely written (enable exactly 1 / a 0 -> 1
+    clock edge with enable exactly 1).
+    "Never possibly written" is the U of the full enumerator (Part A);
+    "never definitely written" is the U of the cone-split enumerator. The
+    second is a superset and still sound: no element is written before 2 ns,
+    so any value deposited there is a power-up state.
+    """
     n = max(len(elems), 1)
-    lines = [f"    reg [{n - 1}:0] se_wr;", "    initial se_wr = 0;"]
+    lines = [f"    reg [{n - 1}:0] se_wr, se_dw, se_ck;",
+             "    initial begin se_wr = 0; se_dw = 0; se_ck = {" + str(n) + "{1'bx}}; end"]
     for e in elems:
         en = f"dut.{e.en_ref}"
+        i = e.index
         if e.kind == "latch":
-            lines.append(f"    always @({en}) if ($time >= 2 && {en} !== 1'b0) se_wr[{e.index}] = 1'b1;")
+            lines.append(f"    always @({en}) if ($time >= 2) begin "
+                         f"if ({en} !== 1'b0) se_wr[{i}] = 1'b1; "
+                         f"if ({en} === 1'b1) se_dw[{i}] = 1'b1; end")
         else:
             clk = f"dut.{e.clk_ref}"
             lines.append(
-                f"    always @({clk}) if ($time >= 2 && {clk} !== 1'b0 && {en} !== 1'b0) "
-                f"se_wr[{e.index}] = 1'b1;"
+                f"    always @({clk}) begin if ($time >= 2) begin "
+                f"if ({clk} !== 1'b0 && {en} !== 1'b0) se_wr[{i}] = 1'b1; "
+                f"if (se_ck[{i}] === 1'b0 && {clk} === 1'b1 && {en} === 1'b1) se_dw[{i}] = 1'b1; end "
+                f"se_ck[{i}] = {clk}; end"
             )
     return "\n".join(lines) + "\n"
 
 
 def deposit_vh(elems: list[Element]) -> str:
-    lines = [f"        if (dut.{e.en_ref} !== 1'b0) se_wr[{e.index}] = 1'b1;"
-             for e in elems if e.kind == "latch"]
+    lines = []
+    for e in elems:
+        if e.kind == "latch":
+            lines.append(f"        if (dut.{e.en_ref} !== 1'b0) se_wr[{e.index}] = 1'b1;")
+            lines.append(f"        if (dut.{e.en_ref} === 1'b1) se_dw[{e.index}] = 1'b1;")
     for e in elems:
         s = f"dut.{e.state_ref}"
         lines.append(
@@ -149,8 +168,9 @@ def report_vh(elems: list[Element], dump: bool = True) -> str:
     """End of run: never-written elements, and with +DUMPSTATE every state
     (`dump` False for the original UDP models, whose state is unreachable)."""
     n = len(elems)
-    lines = [f"        for (k = 0; k < {n}; k = k + 1) "
-             "if (!se_wr[k]) $display(\"NW %0d\", k);"]
+    lines = [f"        for (k = 0; k < {n}; k = k + 1) begin "
+             "if (!se_wr[k]) $display(\"NW %0d\", k); "
+             "if (!se_dw[k]) $display(\"ND %0d\", k); end"]
     if elems and dump:
         lines.append("        if ($test$plusargs(\"DUMPSTATE\")) begin")
         lines += [f"            $display(\"ST {e.index} %b\", dut.{e.state_ref});" for e in elems]
