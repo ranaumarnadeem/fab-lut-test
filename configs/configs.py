@@ -216,8 +216,10 @@ def cfg_bc() -> Seq:
     return s
 
 
-def _seq_test(s: Seq, rv: int) -> None:
-    """Registered output. LUT = XOR, Ci = 0, so LUT_out = parity(I).
+def _seq_test(s: Seq, rv: int, ci: int = 0) -> None:
+    """Registered output. LUT = XOR, I0 from I[0], so LUT_out = parity(I).
+
+    `ci` is held on Ci for the whole test (the unselected I0 mux input).
 
     Every hold/priority check starts from a flop value that differs from the
     value the faulty behaviour would load, so the fault shows on O.
@@ -226,7 +228,7 @@ def _seq_test(s: Seq, rv: int) -> None:
     v_nrv = 0b0001 if nrv else 0b0000  # input with LUT_out = not rv
     _setup(s, make_bits(XOR_TT, ff=1, reset_value=rv))
     # Load the reset value with LUT_out opposite to it.
-    s.step(sr=1, en=1, i=v_nrv)
+    s.step(sr=1, en=1, i=v_nrv, ci=ci)
     s.clock(note="SR=1 EN=1 -> rv")
     s.step(sr=0)
     # Capture LUT_out for every input with EN=1.
@@ -263,6 +265,19 @@ def cfg_d0() -> Seq:
     return s
 
 
+def cfg_d0c() -> Seq:
+    s = Seq("D0C", "D0 with Ci = 1: unselected I0 mux input opposite to I[0] = 0")
+    _seq_test(s, 0, ci=1)
+    return s
+
+
+def cfg_bc1() -> Seq:
+    s = Seq("BC1", "BC with reset value 1: flop holds 1 while the output is comb")
+    _setup(s, make_bits(XNOR_TT, i0_from_ci=1, reset_value=1))
+    _comb_sweep(s, ci_values=(0, 1))
+    return s
+
+
 def cfg_d1() -> Seq:
     s = Seq("D1", "registered output, reset value 1; SR/EN/clock checks")
     _seq_test(s, 1)
@@ -277,10 +292,11 @@ def cfg_and() -> Seq:
 
 
 CONFIGS = {
-    f().name: f for f in (cfg_a, cfg_b, cfg_a2, cfg_c, cfg_d0, cfg_d1, cfg_bc, cfg_and)
+    f().name: f
+    for f in (cfg_a, cfg_b, cfg_a2, cfg_c, cfg_d0, cfg_d1, cfg_bc, cfg_bc1, cfg_d0c, cfg_and)
 }
 # Plan configs first, then merge candidates. AND is only the Phase 1 check.
-TEST_CONFIGS = ["A", "B", "A2", "C", "D0", "D1", "BC"]
+TEST_CONFIGS = ["A", "B", "A2", "C", "D0", "D1", "BC", "BC1", "D0C"]
 
 
 def main() -> None:
