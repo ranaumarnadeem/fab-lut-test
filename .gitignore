@@ -1,3 +1,7 @@
 build/
 __pycache__/
 *.pyc
+# Internal docs and results: kept locally, not published
+NOTES.md
+PLAN.md
+reports/
