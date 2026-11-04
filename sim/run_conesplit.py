@@ -40,6 +40,7 @@ import state  # noqa: E402
 REPORTS = ROOT / "reports"
 SEQUENCE: list[str] | None = None   # --sequence: sequence-mode matrix and stimulus
 TAG = ""                            # "_seq" in sequence mode (file names)
+SUITE = "lut"                       # --suite sm: switch-matrix configs (sim/run_sm.py)
 
 
 class Target:
@@ -52,7 +53,24 @@ class Target:
         tag = "_seq" if sequence else ""
         js = ROOT / "synth" / f"netlist_{netlist}.json"
         self.elems = state.storage_elements(js)
-        if self.tile:
+        if self.tile and SUITE == "sm":
+            import run_sm
+            import run_tile as rt
+            import sm_configs as sc
+            run_sm._setup()
+            if sequence:
+                names = [] if sequence == ["ALL"] else sequence
+                run_sm.CONFIG_FUNCS = {"SEQ_SM": (lambda: sc.sequence(names or list(sc.BASE_SM_CONFIGS)))}
+            self.configs = list(run_sm.CONFIG_FUNCS)
+            stims = run_sm.write_stimuli()
+            self.vvp, _ = rt.compile_netlist(netlist, faults, tag=f"_cone{os.getpid()}")
+            self.golden = run_sm.golden_runs(self.vvp, stims)
+            self.pa = {c: [f"+STIM={s}", f"+NSTEPS={n}"] for c, (s, n, _, _) in stims.items()}
+            self.pa_early = rt.plusargs(stims, True)
+            self.seqs = {c: f() for c, f in run_sm.CONFIG_FUNCS.items()}
+            self.obs = list(sc.OUTPUTS)
+            self.held0 = []
+        elif self.tile:
             import run_tile as rt
             import tile_configs as tc
             if sequence:
@@ -347,6 +365,8 @@ def cmd_run(args) -> int:
            (args.pol is None or f["polarity"] == str(args.pol)) and
            (not args.stem or f["type"] == "stem")}
     jobs = matrix_jobs(n, ids, configs_of(n), args.max_group)
+    if args.xonly:   # only faults some config leaves X-only and none detects
+        jobs = [j for j in jobs if j[1] and not j[2]]
     recs = run_jobs(n, jobs, args.jobs, udef=not args.u_possible)
     byid = {int(f["id"]): f for f in load_faults(n)}
     for r in recs:
@@ -368,7 +388,10 @@ def main() -> int:
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         p.add_argument("--max-group", type=int, default=16)
         p.add_argument("--sequence", nargs="+", metavar="CONFIG",
-                       help="sequence mode (reports/<netlist>_seq_matrix.csv)")
+                       help="sequence mode (reports/<netlist>_seq_matrix.csv); "
+                            "with --suite sm, ALL = SM00..SM15 in order")
+        p.add_argument("--suite", choices=["lut", "sm"], default="lut",
+                       help="sm: switch-matrix baseline configs (reports/<netlist>_sm_*)")
         if c == "validate":
             p.add_argument("--u-definite", action="store_true",
                            help="validate the new rule: full vs cone-split, both with "
@@ -378,12 +401,17 @@ def main() -> int:
             p.add_argument("--only", required=True)
             p.add_argument("--pol", type=int)
             p.add_argument("--stem", action="store_true")
+            p.add_argument("--xonly", action="store_true",
+                           help="only faults with P in some config and D in none")
             p.add_argument("--u-possible", action="store_true",
                            help="U = never possibly written (default: never definitely written)")
     args = ap.parse_args()
-    global SEQUENCE, TAG
+    global SEQUENCE, TAG, SUITE
+    SUITE = args.suite
     if args.sequence:
         SEQUENCE, TAG = args.sequence, "_seq"
+    if SUITE == "sm":
+        TAG = "_sm" + TAG
     return {"validate": cmd_validate, "run": cmd_run}[args.cmd](args)
 
 

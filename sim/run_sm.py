@@ -100,10 +100,13 @@ endmodule
 """
 
 
+CONFIG_FUNCS = dict(sc.BASE_SM_CONFIGS)   # name -> SMSeq factory (one sequence in sequence mode)
+
+
 def write_stimuli() -> dict[str, tuple[Path, int, list[str], Path]]:
     STIM_DIR.mkdir(parents=True, exist_ok=True)
     out = {}
-    for name, f in sc.SM_CONFIGS.items():
+    for name, f in CONFIG_FUNCS.items():
         seq = f()
         rt.assert_loop_free(name, seq)
         stim, expf = STIM_DIR / f"{name}.stim", STIM_DIR / f"{name}.expected"
@@ -160,36 +163,25 @@ FLOPS = _flops()
 
 
 def main() -> int:
+    global CONFIG_FUNCS
     _setup()
     argv = sys.argv[1:]
     if "--sequence" in argv:
-        # run_tile's --sequence replaces TILE_CONFIGS with tc.sequence(); use ours
+        # sequence mode: SM configs as one run from one power-up (default: all, in order)
         k = argv.index("--sequence")
-        names = [a for a in argv[k + 1:] if not a.startswith("--")]
-        names = names or list(sc.SM_CONFIGS)
-        seqname = "SEQ_SM"
-        sc.SM_CONFIGS_SEQ = {seqname: (lambda: sc.sequence(names))}
-        argv = argv[:k] + argv[k + 1 + len([a for a in argv[k + 1:] if not a.startswith("--")]):]
-        rt.tc.TILE_CONFIGS = sc.SM_CONFIGS_SEQ
-        rt.CONFIGS, rt.RUN_ORDER, rt.TAG = [seqname], [seqname], "_sm_seq"
-        globals()["_SEQ"] = sc.SM_CONFIGS_SEQ
+        rest = argv[k + 1:]
+        names = []
+        for a in rest:
+            if a not in sc.BASE_SM_CONFIGS:
+                break
+            names.append(a)
+        argv = argv[:k] + rest[len(names):]
+        names = names or list(sc.BASE_SM_CONFIGS)
+        CONFIG_FUNCS = {"SEQ_SM": (lambda: sc.sequence(names))}
+        rt.tc.TILE_CONFIGS = dict(CONFIG_FUNCS)
+        rt.CONFIGS, rt.RUN_ORDER, rt.TAG = ["SEQ_SM"], ["SEQ_SM"], "_sm_seq"
     sys.argv = [sys.argv[0]] + argv
     return rt.main()
-
-
-_SEQ: dict | None = None
-_write_stimuli_all = write_stimuli
-
-
-def write_stimuli() -> dict[str, tuple[Path, int, list[str], Path]]:  # noqa: F811
-    if _SEQ is None:
-        return _write_stimuli_all()
-    saved = sc.SM_CONFIGS
-    sc.SM_CONFIGS = _SEQ
-    try:
-        return _write_stimuli_all()
-    finally:
-        sc.SM_CONFIGS = saved
 
 
 if __name__ == "__main__":

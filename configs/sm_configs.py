@@ -345,13 +345,15 @@ def make_seq(c: int) -> SMSeq:
 
 
 SM_CONFIGS = {name_of(c): (lambda c=c: make_seq(c)) for c in range(F)}
+# Fixed copy: runners may replace SM_CONFIGS with a sequence.
+BASE_SM_CONFIGS = dict(SM_CONFIGS)
 
 
 def sequence(names: list[str]) -> SMSeq:
     """Sequence mode: the configs as one run from a single power-up."""
     s = SMSeq("SEQ_SM", "sequence " + " -> ".join(names))
     for n in names:
-        sub = SM_CONFIGS[n]()
+        sub = BASE_SM_CONFIGS[n]()
         base = len(s.selects)
         s.steps += sub.steps
         s.selects += sub.selects
