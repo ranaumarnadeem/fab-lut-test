@@ -24,11 +24,12 @@ from __future__ import annotations
 import argparse
 import itertools
 import csv
+import hashlib
 import json
 import os
 import re
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -236,11 +237,37 @@ def configs_of(netlist: str) -> list[str]:
 
 
 def run_jobs(netlist, jobs, workers, udef: bool):
-    ids = {j[0] for j in jobs}
-    faults = [f for f in load_faults(netlist) if int(f["id"]) in ids]
-    target = Target(netlist, faults, SEQUENCE)   # compiles once, here
-    with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(target, faults, udef)) as ex:
-        return list(ex.map(verdict_for, jobs))
+    """Cone-split verdicts for `jobs`, checkpointed: each record is appended to
+    a partial file named by netlist, suite, mode, U rule and a hash of the
+    matrix; a rerun skips the faults already there."""
+    h = hashlib.sha1(f"{netlist}{TAG}{SUITE}{SEQUENCE}{udef}".encode())
+    h.update((REPORTS / f"{netlist}{TAG}_matrix.csv").read_bytes())
+    part = ROOT / "build" / "partial" / f"cone_{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    done = {}
+    if part.exists():
+        for ln in part.read_text().splitlines():
+            try:
+                r = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            done[r["id"]] = r
+    todo = [j for j in jobs if j[0] not in done]
+    if done:
+        print(f"resuming: {len(done)} records from {part.name}, {len(todo)} to run", flush=True)
+    if todo:
+        ids = {j[0] for j in todo}
+        faults = [f for f in load_faults(netlist) if int(f["id"]) in ids]
+        target = Target(netlist, faults, SEQUENCE)   # compiles once, here
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init,
+                                 initargs=(target, faults, udef)) as ex, part.open("a") as pf:
+            futs = [ex.submit(verdict_for, j) for j in todo]
+            for fu in as_completed(futs):
+                r = fu.result()
+                done[r["id"]] = r
+                pf.write(json.dumps(r) + "\n")
+                pf.flush()
+    return [done[j[0]] for j in jobs]
 
 
 def full_and_cone(job) -> dict:

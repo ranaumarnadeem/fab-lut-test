@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import random
@@ -46,7 +47,7 @@ CONFIGS = list(tc.TILE_CONFIGS)
 # for the configs not run); undetected faults always get all three.
 RUN_ORDER = ["D1", "D0C", "BC1"]
 TAG = ""   # "_seq" in sequence mode (--sequence): file names
-TIMEOUT_S = 30.0
+TIMEOUT_S = float(os.environ.get("SIM_TIMEOUT", "30"))   # seconds per run
 CHUNK = 1000  # faults per compiled testbench (the force case grows the run time)
 
 
@@ -274,11 +275,17 @@ def cmd_faultsim(args) -> int:
     stims = write_stimuli()
     faults = load_faults(netlist)
     old_rows = None
-    if args.only:
-        # Rerun only the faults on matching nets and merge into the matrix.
-        pat = re.compile(args.only)
+    if args.only or args.rerun_status:
+        # Rerun only the faults on matching nets (or with that status) and merge into the matrix.
         old_rows = {r["id"]: r for r in csv.DictReader((REPORTS / f"{netlist}{TAG}_matrix.csv").open())}
-        faults = [f for f in faults if pat.search(f["net"])]
+        if args.only:
+            pat = re.compile(args.only)
+            faults = [f for f in faults if pat.search(f["net"])]
+        if args.rerun_status:
+            faults = [f for f in faults if old_rows[f["id"]]["any"] == args.rerun_status]
+        if not faults:
+            print(f"{netlist}: nothing to rerun")
+            return 0
     where = compile_chunks(netlist, faults)
     vvp0 = where[int(faults[0]["id"])]
     golden = golden_runs(vvp0, stims)
@@ -288,14 +295,33 @@ def cmd_faultsim(args) -> int:
     print(f"{netlist}: golden OK; {len(faults)} faults, {len(set(where.values()))} chunks", flush=True)
     results: dict[int, dict[str, str]] = {}
     t0 = time.time()
-    jobs = [(str(where[int(f["id"])]), int(f["id"])) for f in faults]
+    # Checkpoint: every result is appended to a partial file named by the
+    # netlist, tag and a hash of the stimuli; a rerun after an interruption
+    # (e.g. a container restart) skips the faults already there.
+    h = hashlib.sha1(f"{netlist}{TAG}{CONFIGS}{TIMEOUT_S}".encode())
+    for s, *_ in stims.values():
+        h.update(Path(s).read_bytes())
+    part = BUILD / "partial" / f"{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    if part.exists():
+        for ln in part.read_text().splitlines():
+            try:
+                fid, res = json.loads(ln)
+            except json.JSONDecodeError:
+                continue   # a line cut by the interruption
+            results[int(fid)] = res
+    jobs = [(str(where[int(f["id"])]), int(f["id"])) for f in faults if int(f["id"]) not in results]
+    if results:
+        print(f"{netlist}: resuming, {len(results)} faults from {part.name}, {len(jobs)} to run", flush=True)
     with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init,
-                             initargs=(plusargs(stims, True), golden)) as ex:
+                             initargs=(plusargs(stims, True), golden)) as ex, part.open("a") as pf:
         for k, (fid, res) in enumerate(ex.map(_sim, jobs, chunksize=16)):
             results[fid] = res
+            pf.write(json.dumps([fid, res]) + "\n")
+            pf.flush()
             if (k + 1) % 1000 == 0:
                 el = time.time() - t0
-                print(f"  {k + 1}/{len(faults)}  {el / 60:.1f} min, eta {el / (k + 1) * (len(faults) - k - 1) / 60:.1f} min",
+                print(f"  {k + 1}/{len(jobs)}  {el / 60:.1f} min, eta {el / (k + 1) * (len(jobs) - k - 1) / 60:.1f} min",
                       flush=True)
     REPORTS.mkdir(exist_ok=True)
     rows = {}
@@ -369,6 +395,9 @@ def main() -> int:
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         if cmd == "faultsim":
             p.add_argument("--only", help="regex on the fault net: rerun those, merge into the matrix")
+            p.add_argument("--rerun-status", metavar="S",
+                           help="rerun the faults whose 'any' status is S (e.g. T with a longer "
+                                "SIM_TIMEOUT), merge into the matrix")
         if cmd in ("faultsim", "estimate"):
             p.add_argument("--sequence", nargs="+", metavar="CONFIG",
                            help="sequence mode: the configs as one run from one power-up "
