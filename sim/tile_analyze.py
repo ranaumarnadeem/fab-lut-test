@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import itertools
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -175,8 +176,9 @@ def main() -> None:
         cp = REPORTS / f"{n}_conesplit.json"
         if cp.exists():
             for r in json.loads(cp.read_text()):
-                if r["path"].startswith("FrameStrobe[") and r["polarity"] == "0":
-                    cone[(n, int(r["path"][12:-1]))] = r
+                m = re.fullmatch(r"FrameStrobe\[(\d+)\]", r["path"])
+                if m and r["polarity"] == "0":
+                    cone[(n, int(m.group(1)))] = r
     for f in sorted(holds):
         own = sorted(holds[f])
         luts = [o for o in own if o.startswith("L")]
