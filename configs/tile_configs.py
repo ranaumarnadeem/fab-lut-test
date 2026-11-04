@@ -50,7 +50,10 @@ LUT_BITS = {x: list(range(*TILE.bels[f"Inst_L{x}_LUT4c_frame_config_dffesr"])) +
 # Frame write order (Phase 8, 0a): see configs.py. "rotated" ends each config
 # on LAST_FRAME[name] (different per config); "natural" is 0..19.
 FRAME_ORDER_MODE = "rotated"
-LAST_FRAME = {"BC1": 19, "D0C": 12, "D1": 6}
+# Chosen by the same prediction over all 6840 triples of distinct last frames
+# (NOTES.md, 0a.5): keeps all 152 LUT-latch strobe branches detected and
+# catches 19 of 20 stuck-at-1 stems and the most transparent latches (263).
+LAST_FRAME = {"BC1": 7, "D0C": 18, "D1": 3}
 
 
 def frame_order(name: str) -> list[int]:
@@ -205,13 +208,15 @@ def tcfg_d1() -> TileSeq:
 
 
 TILE_CONFIGS = {f().name: f for f in (tcfg_bc1, tcfg_d0c, tcfg_d1)}
+# Fixed copy: runners replace TILE_CONFIGS with a sequence in sequence mode.
+BASE_TILE_CONFIGS = dict(TILE_CONFIGS)
 
 
 def sequence(names: list[str]) -> TileSeq:
     """Sequence mode: the configs as one run from a single power-up."""
     s = TileSeq("SEQ_" + "_".join(names), "sequence " + " -> ".join(names))
     for n in names:
-        sub = TILE_CONFIGS[n]()
+        sub = BASE_TILE_CONFIGS[n]()
         s.steps += sub.steps
         s.configs_written += sub.configs_written
         s.frame_orders += sub.frame_orders

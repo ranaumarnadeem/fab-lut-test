@@ -58,8 +58,13 @@ FRAMES = sorted({m.frame_strobe for m in BITMAP})
 # configs of the recommended sets. "natural": increasing order (the
 # fabulous_bit_gen order), kept for comparison.
 FRAME_ORDER_MODE = "rotated"
-LAST_FRAME = {"A": 18, "B": 17, "A2": 16, "C": 15, "D0": 14, "D1": 18,
-              "BC": 17, "BC1": 16, "D0C": 15, "AND": 18}
+# {BC1, D0C, D1} ends on 15, 17, 14: chosen by predicting, for every choice of
+# three distinct last frames, which stuck-transparent latches end on a wrong
+# and observable value (a latch takes the last frame's bit at its own
+# FrameData position); this one catches all 19 strobe branches and all 5
+# stems (NOTES.md, 0a.5). The other configs are spread over the five frames.
+LAST_FRAME = {"A": 18, "B": 16, "A2": 18, "C": 16, "D0": 18, "D1": 14,
+              "BC": 17, "BC1": 15, "D0C": 17, "AND": 18}
 
 
 def rotated(frames: list[int], last: int) -> list[int]:
