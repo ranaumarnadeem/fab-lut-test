@@ -29,6 +29,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BITMAP_CSV = HERE / "la_bitmap.csv"
 N_CONFIG_BITS = 19
+# FrameData after configuration: "last" = keeps the last frame word (FABulous
+# Frame_Data_Reg, see NOTES.md); "zero" = the old testbench, for tracing only.
+IDLE_FD = "last"
 FF_BIT, I0MUX_BIT, RV_BIT = 16, 17, 18
 
 
@@ -47,6 +50,27 @@ def load_bitmap(path: Path = BITMAP_CSV) -> list[LatchMap]:
 
 BITMAP = load_bitmap()
 FRAMES = sorted({m.frame_strobe for m in BITMAP})
+
+# Frame write order (Phase 8, 0a). ConfigFSM addresses every frame explicitly
+# (NOTES.md), so the order is a free choice of the bitstream. "rotated": each
+# config writes its frames in increasing order but rotated so that the frame
+# written last is LAST_FRAME[name]; the last frame differs between the
+# configs of the recommended sets. "natural": increasing order (the
+# fabulous_bit_gen order), kept for comparison.
+FRAME_ORDER_MODE = "rotated"
+LAST_FRAME = {"A": 18, "B": 17, "A2": 16, "C": 15, "D0": 14, "D1": 18,
+              "BC": 17, "BC1": 16, "D0C": 15, "AND": 18}
+
+
+def rotated(frames: list[int], last: int) -> list[int]:
+    k = frames.index(last)
+    return frames[k + 1:] + frames[:k + 1]
+
+
+def frame_order(name: str) -> list[int]:
+    if FRAME_ORDER_MODE == "natural" or name not in LAST_FRAME:
+        return list(FRAMES)
+    return rotated(FRAMES, LAST_FRAME[name])
 
 
 def make_bits(truth_table: int, ff: int = 0, i0_from_ci: int = 0, reset_value: int = 0) -> int:
@@ -99,6 +123,8 @@ class Seq:
     description: str
     steps: list[Step] = field(default_factory=list)
     _cur: Step = field(default_factory=Step)
+    frame_orders: list[list[int]] = field(default_factory=list)
+    seg_ends: list[int] = field(default_factory=list)   # sequence mode: last step of each config
 
     def step(self, sample: bool = False, note: str = "", **kw: int) -> None:
         for k, v in kw.items():
@@ -108,9 +134,14 @@ class Seq:
         s = Step(**{**self._cur.__dict__, "sample": int(sample), "note": note})
         self.steps.append(s)
 
-    def write_config(self, bits: int) -> None:
-        """Write every frame that holds a bit of this cell: data, strobe, release."""
-        for frame in FRAMES:
+    def write_config(self, bits: int, order: list[int] | None = None) -> None:
+        """Write every frame that holds a bit of this cell: data, strobe, release,
+        in `order` (default: frame_order(self.name))."""
+        order = list(order) if order is not None else frame_order(self.name)
+        if sorted(order) != FRAMES:
+            raise ValueError(f"order {order} is not a permutation of {FRAMES}")
+        self.frame_orders.append(order)
+        for frame in order:
             data = 0
             for b, m in enumerate(BITMAP):
                 if m.frame_strobe == frame and (bits >> b) & 1:
@@ -121,7 +152,10 @@ class Seq:
         # Configuration done. As in FABulous (Frame_Select / Frame_Data_Reg, see
         # NOTES.md): FrameStrobe idles at 0 and FrameData keeps the last frame
         # word written (Frame_Data_Reg is never cleared).
-        self.step(fs=0, note="config idle")
+        if IDLE_FD == "zero":   # pre-fix testbench behaviour, kept for tracing only
+            self.step(fd=0, fs=0, note="config idle (FrameData 0)")
+        else:
+            self.step(fs=0, note="config idle")
 
     def clock(self, sample: bool = True, note: str = "") -> None:
         self.step(clk=1, note=note)
@@ -129,6 +163,9 @@ class Seq:
 
     def write_stim(self, path: Path) -> None:
         path.write_text("".join(s.encode() + "\n" for s in self.steps))
+        # frame order of each config write, next to the stimulus
+        path.with_suffix(".order").write_text(
+            "".join(" ".join(map(str, o)) + "\n" for o in self.frame_orders))
 
 
 def cell_model(seq: Seq) -> list[tuple[int | None, int | None]]:
@@ -300,6 +337,24 @@ CONFIGS = {
 }
 # Plan configs first, then merge candidates. AND is only the Phase 1 check.
 TEST_CONFIGS = ["A", "B", "A2", "C", "D0", "D1", "BC", "BC1", "D0C"]
+
+
+def sequence(names: list[str]) -> Seq:
+    """Sequence mode (Phase 8, 0a.6): the configs as one continuous run from a
+    single power-up, each writing over the previous one (as on silicon)."""
+    s = Seq("SEQ_" + "_".join(names), "sequence " + " -> ".join(names))
+    for n in names:
+        sub = CONFIGS[n]()
+        s.steps += sub.steps
+        s.frame_orders += sub.frame_orders
+        s.seg_ends.append(len(s.steps) - 1)
+    return s
+
+
+def register_sequence(names: list[str]) -> str:
+    name = "SEQ_" + "_".join(names)
+    CONFIGS[name] = lambda: sequence(names)
+    return name
 
 
 def main() -> None:

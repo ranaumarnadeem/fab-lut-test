@@ -37,11 +37,27 @@ import configs as cell  # noqa: E402
 import tile_parse as tp  # noqa: E402
 
 LUTS = "ABCDEFGH"
+# FrameData after configuration: "last" = keeps the last frame word (FABulous
+# Frame_Data_Reg, see NOTES.md); "zero" = the old testbench, for tracing only.
+IDLE_FD = "last"
 TILE = tp.parse_tile(ROOT / "rtl", "LUT4AB")
 ROUTING = json.loads((ROOT / "configs" / "tile_routing.json").read_text())
 N_FRAMES = 1 + max(f for f, _ in TILE.configmem.values())
 LUT_BITS = {x: list(range(*TILE.bels[f"Inst_L{x}_LUT4c_frame_config_dffesr"])) +
             [TILE.bels[f"Inst_L{x}_LUT4c_frame_config_dffesr"][1]] for x in LUTS}
+
+
+# Frame write order (Phase 8, 0a): see configs.py. "rotated" ends each config
+# on LAST_FRAME[name] (different per config); "natural" is 0..19.
+FRAME_ORDER_MODE = "rotated"
+LAST_FRAME = {"BC1": 19, "D0C": 12, "D1": 6}
+
+
+def frame_order(name: str) -> list[int]:
+    frames = list(range(N_FRAMES))
+    if FRAME_ORDER_MODE == "natural" or name not in LAST_FRAME:
+        return frames
+    return cell.rotated(frames, LAST_FRAME[name])
 
 
 def tile_config(cell_bits: int) -> dict[int, int]:
@@ -93,6 +109,8 @@ class TileSeq:
     steps: list[TStep] = field(default_factory=list)
     _cur: TStep = field(default_factory=TStep)
     configs_written: list[dict[int, int]] = field(default_factory=list)
+    frame_orders: list[list[int]] = field(default_factory=list)
+    seg_ends: list[int] = field(default_factory=list)   # sequence mode: last step of each config
 
     def step(self, sample: bool = False, note: str = "", **kw) -> None:
         if "i" in kw and isinstance(kw["i"], int):
@@ -103,17 +121,27 @@ class TileSeq:
             setattr(self._cur, k, tuple(v) if k == "i" else v)
         self.steps.append(TStep(**{**self._cur.__dict__, "sample": int(sample), "note": note}))
 
-    def write_config(self, bits: int) -> None:
+    def write_config(self, bits: int, order: list[int] | None = None) -> None:
+        """All frames, in `order` (default: frame_order(self.name))."""
+        order = list(order) if order is not None else frame_order(self.name)
+        if sorted(order) != list(range(N_FRAMES)):
+            raise ValueError(f"order {order} is not a permutation of the {N_FRAMES} frames")
         cfg = tile_config(bits)
         self.configs_written.append(cfg)
-        for f, word in enumerate(frame_words(cfg)):
+        self.frame_orders.append(order)
+        words = frame_words(cfg)
+        for f in order:
+            word = words[f]
             self.step(fd=word, fs=0, note=f"frame{f} data")
             self.step(fs=1 << f, note=f"frame{f} strobe")
             self.step(fs=0, note=f"frame{f} release")
         # Configuration done. As in FABulous (Frame_Select / Frame_Data_Reg, see
         # NOTES.md): FrameStrobe idles at 0 and FrameData keeps the last frame
         # word written (Frame_Data_Reg is never cleared).
-        self.step(fs=0, note="config idle")
+        if IDLE_FD == "zero":   # pre-fix testbench behaviour, kept for tracing only
+            self.step(fd=0, fs=0, note="config idle (FrameData 0)")
+        else:
+            self.step(fs=0, note="config idle")
 
     def clock(self, sample: bool = True, note: str = "") -> None:
         self.step(clk=1, note=note)
@@ -121,6 +149,8 @@ class TileSeq:
 
     def write_stim(self, path: Path) -> None:
         path.write_text("".join(s.encode() + "\n" for s in self.steps))
+        path.with_suffix(".order").write_text(
+            "".join(" ".join(map(str, o)) + "\n" for o in self.frame_orders))
 
 
 def maj(a: int, b: int, c: int) -> int:
@@ -175,6 +205,18 @@ def tcfg_d1() -> TileSeq:
 
 
 TILE_CONFIGS = {f().name: f for f in (tcfg_bc1, tcfg_d0c, tcfg_d1)}
+
+
+def sequence(names: list[str]) -> TileSeq:
+    """Sequence mode: the configs as one run from a single power-up."""
+    s = TileSeq("SEQ_" + "_".join(names), "sequence " + " -> ".join(names))
+    for n in names:
+        sub = TILE_CONFIGS[n]()
+        s.steps += sub.steps
+        s.configs_written += sub.configs_written
+        s.frame_orders += sub.frame_orders
+        s.seg_ends.append(len(s.steps) - 1)
+    return s
 
 
 # ---------------------------------------------------------------- model

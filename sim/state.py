@@ -129,7 +129,11 @@ def monitor_vh(elems: list[Element]) -> str:
     so any value deposited there is a power-up state.
     """
     n = max(len(elems), 1)
-    lines = [f"    reg [{n - 1}:0] se_wr, se_dw, se_ck;",
+    lines = ["    integer " + ", ".join(f"se_e{j}" for j in range(8)) + ";",
+             "    initial begin"]
+    lines += [f"        if (!$value$plusargs(\"SEGEND{j}=%d\", se_e{j})) se_e{j} = -1;" for j in range(8)]
+    lines += ["    end",
+              f"    reg [{n - 1}:0] se_wr, se_dw, se_ck;",
              "    initial begin se_wr = 0; se_dw = 0; se_ck = {" + str(n) + "{1'bx}}; end"]
     for e in elems:
         en = f"dut.{e.en_ref}"
@@ -175,4 +179,17 @@ def report_vh(elems: list[Element], dump: bool = True) -> str:
         lines.append("        if ($test$plusargs(\"DUMPSTATE\")) begin")
         lines += [f"            $display(\"ST {e.index} %b\", dut.{e.state_ref});" for e in elems]
         lines.append("        end")
+    return "\n".join(lines) + "\n"
+
+
+def segdump_vh(elems: list[Element], dump: bool = True) -> str:
+    """In the step loop: at step +SEGEND<j>=<k> (j < 8), print every element's
+    state as "SG <j> <i> <v>" (sequence mode: state at the end of segment j)."""
+    if not (elems and dump):
+        return "\n"
+    lines = []
+    for j in range(8):
+        lines.append(f"            if (k == se_e{j}) begin")
+        lines += [f"                $display(\"SG {j} {e.index} %b\", dut.{e.state_ref});" for e in elems]
+        lines.append("            end")
     return "\n".join(lines) + "\n"

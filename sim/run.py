@@ -12,6 +12,11 @@
       whole config. Writes reports/<netlist>_matrix.csv, _coverage.csv,
       _undetected.txt.
 
+  python3 sim/run.py faultsim <netlist> --sequence BC1 D0C D1
+      Sequence mode: the configs as one continuous run from a single power-up,
+      each writing over the previous one; matrix column SEQ_BC1_D0C_D1, files
+      reports/<netlist>_seq_*.
+
   python3 sim/run.py exhaust <netlist> [--configs ...] [--kmax 12]
       For every fault with status P in some config: find the storage
       elements never written under the fault, enumerate all 2^k initial
@@ -158,6 +163,10 @@ def _sim_fault(fault_id: int) -> tuple[int, dict[str, str]]:
 def cmd_faultsim(args: argparse.Namespace) -> int:
     netlist = args.netlist
     names = args.configs or cfgmod.TEST_CONFIGS
+    tag = ""
+    if args.sequence:
+        names = [cfgmod.register_sequence(args.sequence)]
+        tag = "_seq"
     stims = write_stimuli(names)
     faults = load_faults(netlist)
     vvp = compile_target(netlist, faults)
@@ -200,7 +209,7 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
         raise SystemExit("sanity check failed")
 
     REPORTS.mkdir(exist_ok=True)
-    with (REPORTS / f"{netlist}_matrix.csv").open("w", newline="") as f:
+    with (REPORTS / f"{netlist}{tag}_matrix.csv").open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "path", "polarity", "type", *names, "any"])
         for flt in faults:
@@ -211,7 +220,7 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
 
     total = len(faults)
     cum: set[int] = set()
-    with (REPORTS / f"{netlist}_coverage.csv").open("w", newline="") as f:
+    with (REPORTS / f"{netlist}{tag}_coverage.csv").open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["config", "detected", "potential", "total", "coverage_pct",
                     "cumulative_detected", "cumulative_pct"])
@@ -224,7 +233,7 @@ def cmd_faultsim(args: argparse.Namespace) -> int:
             print(f"  {n:3s} {len(det):4d}/{total} = {100 * len(det) / total:6.2f}%   "
                   f"cumulative {len(cum):4d} = {100 * len(cum) / total:6.2f}%")
 
-    with (REPORTS / f"{netlist}_undetected.txt").open("w") as f:
+    with (REPORTS / f"{netlist}{tag}_undetected.txt").open("w") as f:
         f.write(f"# {netlist}: faults not detected by any of {names}\n")
         f.write("# id\tnet\tSA\tstatus (P = only X differences)\n")
         for flt in faults:
@@ -297,6 +306,9 @@ def main() -> int:
         p.add_argument("netlist", choices=NETLISTS)
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         p.add_argument("--configs", nargs="*")
+        p.add_argument("--sequence", nargs="+", metavar="CONFIG",
+                       help="sequence mode: these configs as one run from one power-up "
+                            "(reports/<netlist>_seq_*)")
         if cmd == "exhaust":
             p.add_argument("--kmax", type=int, default=12)
             p.add_argument("--suffix", default="", help="output name suffix, e.g. _rec")

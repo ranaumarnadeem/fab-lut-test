@@ -69,6 +69,7 @@ module tb;
             CLK = w[59];
             #9;
             if (w[60]) $display("S %b%b", O, Co);
+`include "segdump.vh"
             #1;
         end
 `include "report.vh"

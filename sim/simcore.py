@@ -4,6 +4,7 @@ A testbench (cell or tile) must:
   - `include "monitor.vh"` at module scope,
   - in its main initial block, after applying initial input values and
     `#1`, `include "faults.vh"`, then `#1` and `include "deposit.vh"`,
+  - in the step loop after sampling, `include "segdump.vh"` (needs `k`),
   - before `$display("END")`, `include "report.vh"`,
   - declare `integer fault_id, pu_v, k;` and print samples as `S <bits>`.
 """
@@ -38,6 +39,7 @@ def compile_tb(build_dir: Path, tb_text: str, sources: list[Path],
     # The original UDP state is not reachable, so no deposits with those models.
     (build_dir / "deposit.vh").write_text(state.deposit_vh(elems) if replace_models else "\n")
     (build_dir / "report.vh").write_text(state.report_vh(elems, dump=replace_models))
+    (build_dir / "segdump.vh").write_text(state.segdump_vh(elems, dump=replace_models))
     srcs = state.model_sources(sources, build_dir / "models") if replace_models else sources
     vvp = build_dir / "sim.vvp"
     cmd = ["iverilog", "-g2005", "-DUNIT_DELAY=", *(defines or []), "-o", str(vvp),
@@ -52,6 +54,7 @@ class Result:
     never_written: frozenset[int] = field(default_factory=frozenset)       # never possibly written
     never_def_written: frozenset[int] = field(default_factory=frozenset)   # never definitely written
     state: dict[int, str] = field(default_factory=dict)  # +DUMPSTATE: element -> value
+    seg_state: dict[int, dict[int, str]] = field(default_factory=dict)  # +SEGEND<j>: j -> element -> value
     early_detect: bool = False   # testbench stopped at a definite mismatch (+EARLY)
     timeout: bool = False        # no END within the time limit (e.g. an oscillating loop)
 
@@ -77,7 +80,17 @@ def run_vvp(vvp: Path, plusargs: list[str], fault_id: int | None = None,
         never_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("NW ")),
         never_def_written=frozenset(int(ln[3:]) for ln in lines if ln.startswith("ND ")),
         state={int(ln.split()[1]): ln.split()[2] for ln in lines if ln.startswith("ST ")},
+        seg_state=_seg(lines),
     )
+
+
+def _seg(lines: list[str]) -> dict[int, dict[int, str]]:
+    out: dict[int, dict[int, str]] = {}
+    for ln in lines:
+        if ln.startswith("SG "):
+            _, j, i, v = ln.split()
+            out.setdefault(int(j), {})[int(i)] = v
+    return out
 
 
 def status(golden: list[str], r: Result) -> str:

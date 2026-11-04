@@ -133,12 +133,14 @@ def propagate(g: Graph, const: dict[int, int]) -> dict[int, int]:
     return val
 
 
-def cone(g: Graph, val: dict[int, int], start_bit: int, out_bits: set[int],
+def cone(g: Graph, val: dict[int, int], start_bit, out_bits: set[int],
          back_live: set[str]) -> set[str]:
-    """Live cells reachable from start_bit that can reach an observed output."""
+    """Live cells reachable from start_bit (one bit or a set of bits) that can
+    reach an observed output."""
+    seeds = set(start_bit) if isinstance(start_bit, (set, frozenset, list)) else {start_bit}
     seen: set[str] = set()
-    q = deque([start_bit])
-    vis_bits = {start_bit}
+    q = deque(seeds)
+    vis_bits = set(seeds)
     while q:
         b = q.popleft()
         for c in g.readers.get(b, ()):
@@ -172,19 +174,28 @@ def backward_live(g: Graph, val: dict[int, int], out_bits: set[int]) -> set[str]
 
 
 def groups_for(g: Graph, elem_cells: dict[int, str], U: list[int],
-               consts_per_cfg: list[dict[int, int] | None], out_bits: set[int]) -> tuple[list[list[int]], dict[int, set[str]]]:
-    """Union-find groups of U by shared cone cells (union over configs)."""
+               consts_per_cfg: list[dict[int, int] | None], out_bits: set[int],
+               carry: set[str] | None = None) -> tuple[list[list[int]], dict[int, set[str]]]:
+    """Union-find groups of U by shared cone cells (union over configs).
+
+    carry (sequence mode): the entries of consts_per_cfg are the consecutive
+    segments of one run. A flop (cell in `carry`) reached by an element's cone
+    in one segment can hold a value that depends on the element into the
+    next segments, so its output also seeds the element's cone there.
+    """
     cones: dict[int, set[str]] = {e: set() for e in U}
+    seeds = {e: {g.cells[elem_cells[e]]["out"]} for e in U}
     for const in consts_per_cfg:
         val = propagate(g, const or {})
         back = backward_live(g, val, out_bits)
         for e in U:
-            qbit = g.cells[elem_cells[e]]["out"]
-            c = cone(g, val, qbit, out_bits, back)
+            c = cone(g, val, seeds[e], out_bits, back)
             cell_e = elem_cells[e]
             if cell_e in back:
                 c.add(cell_e)
             cones[e] |= c
+            if carry:
+                seeds[e] |= {g.cells[x]["out"] for x in c if x in carry}
     parent = {e: e for e in U}
 
     def find(x):

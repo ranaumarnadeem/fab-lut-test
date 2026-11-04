@@ -3,7 +3,7 @@
 
   python3 sim/run_tile.py check
   python3 sim/run_tile.py estimate <netlist> [--n 40]
-  python3 sim/run_tile.py faultsim <netlist> [--jobs N]
+  python3 sim/run_tile.py faultsim <netlist> [--jobs N] [--sequence BC1 D0C D1]
   python3 sim/run_tile.py exhaust <netlist> [--kmax 12]
 
 netlist: tile_generic or tile_generic_br. Stimulus enters only through tile
@@ -45,6 +45,7 @@ CONFIGS = list(tc.TILE_CONFIGS)
 # faultsim tries configs in this order and stops at the first D (status "-"
 # for the configs not run); undetected faults always get all three.
 RUN_ORDER = ["D1", "D0C", "BC1"]
+TAG = ""   # "_seq" in sequence mode (--sequence): file names
 TIMEOUT_S = 30.0
 CHUNK = 1000  # faults per compiled testbench (the force case grows the run time)
 
@@ -126,6 +127,7 @@ module tb;
                 end
                 ns = ns + 1;
             end
+`include "segdump.vh"
             #1;
         end
 `include "report.vh"
@@ -275,7 +277,7 @@ def cmd_faultsim(args) -> int:
     if args.only:
         # Rerun only the faults on matching nets and merge into the matrix.
         pat = re.compile(args.only)
-        old_rows = {r["id"]: r for r in csv.DictReader((REPORTS / f"{netlist}_matrix.csv").open())}
+        old_rows = {r["id"]: r for r in csv.DictReader((REPORTS / f"{netlist}{TAG}_matrix.csv").open())}
         faults = [f for f in faults if pat.search(f["net"])]
     where = compile_chunks(netlist, faults)
     vvp0 = where[int(faults[0]["id"])]
@@ -306,7 +308,7 @@ def cmd_faultsim(args) -> int:
     if old_rows is not None:
         changes = [(old_rows[i], rows[i]) for i in rows
                    if any(old_rows[i][c] != rows[i][c] for c in CONFIGS + ["any"])]
-        with (REPORTS / f"{netlist}_rerun_changes.csv").open("w", newline="") as f:
+        with (REPORTS / f"{netlist}{TAG}_rerun_changes.csv").open("w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["id", "path", "polarity", "type",
                         *[f"old_{c}" for c in CONFIGS + ["any"]], *[f"new_{c}" for c in CONFIGS + ["any"]]])
@@ -317,7 +319,7 @@ def cmd_faultsim(args) -> int:
               f"(reports/{netlist}_rerun_changes.csv)")
         old_rows.update(rows)
         rows = old_rows
-    with (REPORTS / f"{netlist}_matrix.csv").open("w", newline="") as f:
+    with (REPORTS / f"{netlist}{TAG}_matrix.csv").open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "path", "polarity", "type", *CONFIGS, "any"])
         for i in sorted(rows, key=int):
@@ -329,7 +331,7 @@ def cmd_faultsim(args) -> int:
 
 def cmd_exhaust(args) -> int:
     netlist = args.netlist
-    matrix = list(csv.DictReader((REPORTS / f"{netlist}_matrix.csv").open()))
+    matrix = list(csv.DictReader((REPORTS / f"{netlist}{TAG}_matrix.csv").open()))
     stims = write_stimuli()
     jobs = []
     for row in matrix:
@@ -367,11 +369,21 @@ def main() -> int:
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         if cmd == "faultsim":
             p.add_argument("--only", help="regex on the fault net: rerun those, merge into the matrix")
+        if cmd in ("faultsim", "estimate"):
+            p.add_argument("--sequence", nargs="+", metavar="CONFIG",
+                           help="sequence mode: the configs as one run from one power-up "
+                                "(reports/<netlist>_seq_*)")
         if cmd == "estimate":
             p.add_argument("--n", type=int, default=40)
         if cmd == "exhaust":
             p.add_argument("--kmax", type=int, default=12)
     args = ap.parse_args()
+    if getattr(args, "sequence", None):
+        global CONFIGS, RUN_ORDER, TAG
+        names = args.sequence
+        seqname = "SEQ_" + "_".join(names)
+        tc.TILE_CONFIGS = {seqname: (lambda: tc.sequence(names))}
+        CONFIGS, RUN_ORDER, TAG = [seqname], [seqname], "_seq"
     return {"check": cmd_check, "estimate": cmd_estimate, "faultsim": cmd_faultsim,
             "exhaust": cmd_exhaust}[args.cmd](args)
 
