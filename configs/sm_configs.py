@@ -26,6 +26,7 @@ import argparse
 import math
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -349,18 +350,91 @@ SM_CONFIGS = {name_of(c): (lambda c=c: make_seq(c)) for c in range(F)}
 BASE_SM_CONFIGS = dict(SM_CONFIGS)
 
 
+def decode_selects(state: dict[int, int]) -> dict[str, int]:
+    return {o: m.decode(state) for o, m in MUXES.items() if m.model != "direct"}
+
+
+def transition_order(prev: dict[int, int], c: int) -> tuple[list[int], int]:
+    """Frame order from config word `prev` to config c with no combinational
+    loop in any intermediate state (the tile model).
+
+    Writing frames one at a time passes through mixes of the two configs; a
+    mix can close a loop (in zero-delay simulation a fault can then make it
+    oscillate forever). Greedy: take the frames in frame_order(c), keeping
+    its last frame last (0a rule), and write the first remaining frame that
+    leaves the state loop free (depth-first, bounded). If no order ends on
+    that frame, a spare frame (no config's LAST_FRAME) is used as the last
+    one. Returns the order and the number of intermediate states that still
+    have a loop (0 unless no choice exists).""" 
+    want = config_word(SELECTS[c])
+    by_frame = defaultdict(list)
+    for b, (f, _d) in TILE.configmem.items():
+        by_frame[f].append(b)
+    def ok(st: dict[int, int], f: int) -> dict[int, int] | None:
+        trial = dict(st)
+        for b in by_frame[f]:
+            trial[b] = want[b]
+        return None if cycles(decode_selects(trial)) else trial
+
+    # depth-first, frames tried in frame_order(c) order; bounded search
+    budget = [5000]
+
+    def dfs(st: dict[int, int], left: list[int]) -> list[int] | None:
+        if not left:
+            return []
+        for f in left:
+            budget[0] -= 1
+            if budget[0] < 0:
+                return None
+            nxt = ok(st, f)
+            if nxt is not None:
+                rest = dfs(nxt, [x for x in left if x != f])
+                if rest is not None:
+                    return [f] + rest
+        return None
+
+    # The 0a last frame first; if no loop-free order ends on it, a spare frame
+    # (one that is no config's LAST_FRAME), so last frames stay distinct.
+    spare = [f for f in range(N_FRAMES) if f not in LAST_FRAME.values()]
+    for last in [LAST_FRAME[c]] + spare:
+        base = cell.rotated(list(range(N_FRAMES)), last)
+        budget[0] = 5000
+        found = dfs(dict(prev), base[:-1])
+        if found is not None:
+            return found + [last], 0
+    # fallback: greedy, counting the intermediate states left with a loop
+    base = frame_order(c)
+    last, todo, state, order, bad = base[-1], base[:-1], dict(prev), [], 0
+    while todo:
+        pick = next((f for f in todo if ok(state, f) is not None), None)
+        if pick is None:
+            pick, bad = todo[0], bad + 1
+        for b in by_frame[pick]:
+            state[b] = want[b]
+        order.append(pick)
+        todo.remove(pick)
+    return order + [last], bad
+
+
 def sequence(names: list[str]) -> SMSeq:
-    """Sequence mode: the configs as one run from a single power-up."""
+    """Sequence mode: the configs as one run from a single power-up.
+
+    The first config is written as in per-config mode (from power-up, all
+    latches X); every later one in a loop-free transition order."""
     s = SMSeq("SEQ_SM", "sequence " + " -> ".join(names))
+    s.transition_bad = []
+    prev = None
     for n in names:
-        sub = BASE_SM_CONFIGS[n]()
-        base = len(s.selects)
-        s.steps += sub.steps
-        s.selects += sub.selects
-        s.configs_written += sub.configs_written
-        s.frame_orders += sub.frame_orders
-        s.sample_sel += [base + k for k in sub.sample_sel]
+        c = int(n[2:])
+        if prev is None:
+            order, bad = frame_order(c), 0
+        else:
+            order, bad = transition_order(prev, c)
+        s.transition_bad.append(bad)
+        s.write_config(SELECTS[c], order)
+        s.vectors()
         s.seg_ends.append(len(s.steps) - 1)
+        prev = s.configs_written[-1]
     return s
 
 

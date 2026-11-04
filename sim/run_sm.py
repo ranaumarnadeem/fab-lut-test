@@ -109,6 +109,9 @@ def write_stimuli() -> dict[str, tuple[Path, int, list[str], Path]]:
     for name, f in CONFIG_FUNCS.items():
         seq = f()
         rt.assert_loop_free(name, seq)
+        if any(getattr(seq, "transition_bad", ())):
+            raise SystemExit(f"{name}: a reconfiguration passes through a loop "
+                             f"({seq.transition_bad}); not simulating")
         stim, expf = STIM_DIR / f"{name}.stim", STIM_DIR / f"{name}.expected"
         seq.write_stim(stim)
         exp = sc.expected(seq)
