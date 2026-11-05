@@ -110,8 +110,7 @@ def coverage(nets: list[Net]) -> list[str]:
     out.append("")
     out.append("The FrameStrobe stem SA0 faults (20 per netlist, config access) were left out of the "
                "SM cone-split (`--exclude`): with 16 configs and all outputs live each takes hours, and "
-               "the LUT run decides them (reports/tile_summary.md). The 10 tile_generic stems enumerated "
-               "before that are kept (8 detected, 2 timed out); the others count as not detected in the "
+               "the LUT run decides them (reports/tile_summary.md). They count as not detected in the "
                "exhaustive columns above.")
     out.append("")
     for t in nets:
@@ -119,6 +118,10 @@ def coverage(nets: list[Net]) -> list[str]:
         b = {i for i in t.ids if t.smq_exh(i)}
         sa = {i for i in t.ids if t.sm_strict(i)}
         sb = {i for i in t.ids if t.smq_strict(i)}
+        tp = sum(r["any"] == "T" for r in t.sm.values())
+        tq = sum(r["any"] == "T" for r in t.smq.values())
+        out.append(f"- {t.n}: runs timed out (oscillation under the fault, rechecked at 120 s; counted as "
+                   f"not detected): {tp} per-config, {tq} sequence.")
         out.append(f"- {t.n}: per-config vs sequence, strict: {len(sa - sb)} only per-config, "
                    f"{len(sb - sa)} only sequence; exhaustive: {len(a - b)} only per-config, "
                    f"{len(b - a)} only sequence.")
