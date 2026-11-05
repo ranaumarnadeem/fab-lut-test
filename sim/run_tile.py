@@ -315,7 +315,8 @@ def cmd_faultsim(args) -> int:
         print(f"{netlist}: resuming, {len(results)} faults from {part.name}, {len(jobs)} to run", flush=True)
     with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init,
                              initargs=(plusargs(stims, True), golden)) as ex, part.open("a") as pf:
-        for k, (fid, res) in enumerate(ex.map(_sim, jobs, chunksize=16)):
+        chunk = max(1, min(16, len(jobs) // (8 * args.jobs)))   # small job lists: spread over workers
+        for k, (fid, res) in enumerate(ex.map(_sim, jobs, chunksize=chunk)):
             results[fid] = res
             pf.write(json.dumps([fid, res]) + "\n")
             pf.flush()
