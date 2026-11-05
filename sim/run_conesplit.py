@@ -120,6 +120,8 @@ class Target:
                 ok.append(first_clk > last_fs)
             self.seg_prune[c] = ok
             if len(ends) > 1:
+                if len(ends) > state.MAX_SEGMENTS:
+                    raise SystemExit(f"{c}: {len(ends)} segments, state dumps support {state.MAX_SEGMENTS}")
                 seg = [f"+SEGEND{j}={e}" for j, e in enumerate(ends)]
                 self.pa[c] = self.pa[c] + seg
                 self.pa_early[c] = self.pa_early[c] + seg
@@ -394,6 +396,12 @@ def cmd_run(args) -> int:
     jobs = matrix_jobs(n, ids, configs_of(n), args.max_group)
     if args.xonly:   # only faults some config leaves X-only and none detects
         jobs = [j for j in jobs if j[1] and not j[2]]
+    if args.exclude:  # e.g. the FrameStrobe stems, decided by an earlier run
+        pat_x = re.compile(args.exclude)
+        paths = {int(f["id"]): f["path"] for f in load_faults(n)}
+        skipped = [j for j in jobs if pat_x.fullmatch(paths[j[0]])]
+        jobs = [j for j in jobs if not pat_x.fullmatch(paths[j[0]])]
+        print(f"excluded {len(skipped)} faults matching {args.exclude}", flush=True)
     recs = run_jobs(n, jobs, args.jobs, udef=not args.u_possible)
     byid = {int(f["id"]): f for f in load_faults(n)}
     for r in recs:
@@ -428,6 +436,8 @@ def main() -> int:
             p.add_argument("--only", required=True)
             p.add_argument("--pol", type=int)
             p.add_argument("--stem", action="store_true")
+            p.add_argument("--exclude", metavar="REGEX",
+                           help="leave out faults whose path fully matches REGEX")
             p.add_argument("--xonly", action="store_true",
                            help="only faults with P in some config and D in none")
             p.add_argument("--u-possible", action="store_true",

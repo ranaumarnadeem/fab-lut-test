@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "faults"))
 import gen_faults  # noqa: E402
 
 SEQ_MODELS = ROOT / "sim" / "seq_models.v"
+MAX_SEGMENTS = 16   # sequence mode: state dumps per config segment (+SEGEND<j>)
 
 # cell type -> (kind, enable pin, clock pin or None, state path below the cell)
 STORAGE_TYPES = {
@@ -129,9 +130,9 @@ def monitor_vh(elems: list[Element]) -> str:
     so any value deposited there is a power-up state.
     """
     n = max(len(elems), 1)
-    lines = ["    integer " + ", ".join(f"se_e{j}" for j in range(8)) + ";",
+    lines = ["    integer " + ", ".join(f"se_e{j}" for j in range(MAX_SEGMENTS)) + ";",
              "    initial begin"]
-    lines += [f"        if (!$value$plusargs(\"SEGEND{j}=%d\", se_e{j})) se_e{j} = -1;" for j in range(8)]
+    lines += [f"        if (!$value$plusargs(\"SEGEND{j}=%d\", se_e{j})) se_e{j} = -1;" for j in range(MAX_SEGMENTS)]
     lines += ["    end",
               f"    reg [{n - 1}:0] se_wr, se_dw, se_ck;",
              "    initial begin se_wr = 0; se_dw = 0; se_ck = {" + str(n) + "{1'bx}}; end"]
@@ -183,12 +184,12 @@ def report_vh(elems: list[Element], dump: bool = True) -> str:
 
 
 def segdump_vh(elems: list[Element], dump: bool = True) -> str:
-    """In the step loop: at step +SEGEND<j>=<k> (j < 8), print every element's
+    """In the step loop: at step +SEGEND<j>=<k> (j < MAX_SEGMENTS), print every element's
     state as "SG <j> <i> <v>" (sequence mode: state at the end of segment j)."""
     if not (elems and dump):
         return "\n"
     lines = []
-    for j in range(8):
+    for j in range(MAX_SEGMENTS):
         lines.append(f"            if (k == se_e{j}) begin")
         lines += [f"                $display(\"SG {j} {e.index} %b\", dut.{e.state_ref});" for e in elems]
         lines.append("            end")
