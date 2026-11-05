@@ -43,8 +43,16 @@ LUT_LO = {x: TILE.bels[f"Inst_L{x}_LUT4c_frame_config_dffesr"][0] for x in LUTS}
 MUX8_LO = TILE.bels["Inst_MUX8LUT_frame_config_mux"][0]
 CELL_BITS = cell.make_bits(cell.XOR_TT, ff=0, i0_from_ci=0, reset_value=0)
 
-INPUTS = sorted(TILE.tile_inputs, key=lambda n: (re.sub(r"\[\d+\]", "", n), int(re.search(r"\d+", n).group())))
-OUTPUTS = sorted(TILE.tile_outputs, key=lambda n: (re.sub(r"\[\d+\]", "", n), int(re.search(r"\d+", n).group())))
+def _port_key(n: str) -> tuple[str, int]:
+    """(port, bit index): a total order, independent of set iteration (hash seed)."""
+    m = re.fullmatch(r"(\w+)\[(\d+)\]", n)
+    return (m.group(1), int(m.group(2))) if m else (n, -1)
+
+
+INPUTS = sorted(TILE.tile_inputs, key=_port_key)
+OUTPUTS = sorted(TILE.tile_outputs, key=_port_key)
+if len({_port_key(n) for n in INPUTS}) != len(INPUTS) or len({_port_key(n) for n in OUTPUTS}) != len(OUTPUTS):
+    raise SystemExit("port order: two ports share a key")
 W = math.ceil(math.log2(len(INPUTS) + 2))
 F = max(m.fan_in for m in MUXES.values())
 # Last frame written per config: distinct for all configs (0a rule).

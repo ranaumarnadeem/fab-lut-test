@@ -292,6 +292,9 @@ def cmd_faultsim(args) -> int:
     for v in sorted(set(where.values())):
         if any(simcore.run_vvp(v, plusargs(stims, False)[c], -1).samples != golden[c] for c in CONFIGS):
             raise SystemExit(f"{v}: FAULT=-1 run differs from golden")
+        # the +EARLY compare against the expected files must not fire fault free
+        if any(simcore.run_vvp(v, plusargs(stims, True)[c], -1).early_detect for c in CONFIGS):
+            raise SystemExit(f"{v}: fault-free +EARLY run reports a mismatch (expected file vs testbench)")
     print(f"{netlist}: golden OK; {len(faults)} faults, {len(set(where.values()))} chunks", flush=True)
     results: dict[int, dict[str, str]] = {}
     t0 = time.time()
@@ -300,6 +303,7 @@ def cmd_faultsim(args) -> int:
     # (e.g. a container restart) skips the faults already there.
     h = hashlib.sha1(f"{netlist}{TAG}{CONFIGS}{TIMEOUT_S}".encode())
     h.update((ROOT / "faults" / f"{netlist}.csv").read_bytes())   # a changed fault list invalidates it
+    h.update(gen_tb().encode())   # the testbench fixes which port gets which stimulus bit
     for s, *_ in stims.values():
         h.update(Path(s).read_bytes())
     part = BUILD / "partial" / f"{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"
