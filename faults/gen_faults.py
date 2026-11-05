@@ -120,6 +120,15 @@ def main() -> None:
 
     _, mod = load_top(args.netlist_json, args.top)
     bits = analyse(mod)
+    # analyse() assumes write_verilog writes `assign <port> = <name>;`. When it
+    # writes the reverse (`assign <name> = <port>;`, the port driven directly
+    # by a cell), a force on <name> reaches nothing: force the right-hand side.
+    alias_src = {}
+    vfile = args.netlist_json.with_suffix(".v")
+    if vfile.exists():
+        for lhs, rhs in re.findall(r"^\s*assign\s+(\\\S+|[\w$]+(?:\[\d+\])?)\s*=\s*(\\\S+|[\w$]+(?:\[\d+\])?)\s*;",
+                                   vfile.read_text(), re.M):
+            alias_src[lhs.strip()] = rhs.strip()
 
     rows = []
     skipped = {"no_sink": [], "excluded": []}
@@ -136,6 +145,9 @@ def main() -> None:
             continue
         if len(e["drivers"]) != 1:
             raise SystemExit(f"net {label} has drivers {e['drivers']}")
+        if ref.strip() in alias_src:
+            src = alias_src[ref.strip()]
+            ref = src + " " if src.startswith("\\") else src
         ftype = "branch" if BRANCH_RE.search(label) else "stem"
         for pol in (0, 1):
             rows.append({

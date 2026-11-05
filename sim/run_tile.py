@@ -299,6 +299,7 @@ def cmd_faultsim(args) -> int:
     # netlist, tag and a hash of the stimuli; a rerun after an interruption
     # (e.g. a container restart) skips the faults already there.
     h = hashlib.sha1(f"{netlist}{TAG}{CONFIGS}{TIMEOUT_S}".encode())
+    h.update((ROOT / "faults" / f"{netlist}.csv").read_bytes())   # a changed fault list invalidates it
     for s, *_ in stims.values():
         h.update(Path(s).read_bytes())
     part = BUILD / "partial" / f"{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"

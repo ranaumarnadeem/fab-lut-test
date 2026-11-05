@@ -108,6 +108,12 @@ def coverage(nets: list[Net]) -> list[str]:
             out.append(f"| {t.n} | {lab} | {len(ids)} | " +
                        " | ".join(f"{v} = {pct(v, len(ids))}" for v in row) + " |")
     out.append("")
+    out.append("The FrameStrobe stem SA0 faults (20 per netlist, config access) were left out of the "
+               "SM cone-split (`--exclude`): with 16 configs and all outputs live each takes hours, and "
+               "the LUT run decides them (reports/tile_summary.md). The 10 tile_generic stems enumerated "
+               "before that are kept (8 detected, 2 timed out); the others count as not detected in the "
+               "exhaustive columns above.")
+    out.append("")
     for t in nets:
         a = {i for i in t.ids if t.sm_exh(i)}
         b = {i for i in t.ids if t.smq_exh(i)}
@@ -116,6 +122,24 @@ def coverage(nets: list[Net]) -> list[str]:
         out.append(f"- {t.n}: per-config vs sequence, strict: {len(sa - sb)} only per-config, "
                    f"{len(sb - sa)} only sequence; exhaustive: {len(a - b)} only per-config, "
                    f"{len(b - a)} only sequence.")
+    out.append("")
+    return out
+
+
+def combined(nets: list[Net]) -> list[str]:
+    out = ["## Coverage, SM baseline + {BC1, D0C, D1} (19 configs, per-config, exhaustive)", "",
+           "A fault counts when either suite detects it for every power-up state (a lower bound: "
+           "states caught by one suite and not the other are not combined).", "",
+           "| netlist | population | faults | SM baseline | {BC1, D0C, D1} | both |",
+           "|---|---|---|---|---|---|"]
+    for t in nets:
+        for p in POPS + ["all"]:
+            ids = [i for i in t.ids if p == "all" or t.pop(i) == p]
+            a = sum(t.sm_exh(i) for i in ids)
+            b = sum(t.lut_exh(i) for i in ids)
+            c = sum(t.sm_exh(i) or t.lut_exh(i) for i in ids)
+            out.append(f"| {t.n} | {POP_LABEL.get(p, 'all')} | {len(ids)} | {a} = {pct(a, len(ids))} | "
+                       f"{b} = {pct(b, len(ids))} | {c} = {pct(c, len(ids))} |")
     out.append("")
     return out
 
@@ -238,7 +262,8 @@ def config_memory() -> list[str]:
 
 def frame_stems(nets: list[Net]) -> list[str]:
     out = ["## FrameStrobe / FrameData stems: SM baseline vs LUT configs", "",
-           "Exhaustive verdict per stem (D = detected, - = not). LUT = {BC1, D0C, D1} "
+           "Exhaustive verdict per stem (D = detected, - = not, skip = X-only and left out of the SM "
+           "cone-split). LUT = {BC1, D0C, D1} "
            "(reports/tile_summary.md).", ""]
     for t in nets:
         out.append(f"{t.n}:")
@@ -253,7 +278,9 @@ def frame_stems(nets: list[Net]) -> list[str]:
                 if i is None:
                     cells += ["-", "-"]
                     continue
-                cells += ["D" if t.lut_exh(i) else "-", "D" if t.sm_exh(i) else "-"]
+                sm = "D" if t.sm_exh(i) else ("-" if (i in t.sm_cs or t.sm.get(i, {}).get("any") != "P")
+                                                else "skip")
+                cells += ["D" if t.lut_exh(i) else "-", sm]
             mark = " **(SM-only frame)**" if name in ("FrameStrobe[0]", "FrameStrobe[1]", "FrameStrobe[2]",
                                                       "FrameStrobe[4]", "FrameStrobe[19]") else ""
             out.append(f"| {name}{mark} | {cells[0]} | {cells[1]} | {cells[2]} | {cells[3]} |")
@@ -311,7 +338,12 @@ def undetected(nets: list[Net], owners: dict) -> list[str]:
             if t.sm_exh(i):
                 continue
             p = t.pop(i)
-            k = klass(t, i) if p == "sm" else f"{p}: " + t.reg[i]["detail"]
+            if p == "sm":
+                k = klass(t, i)
+            elif p == "target":
+                k = _target_kind(t.faults[i]["path"]) + (" (detected by {BC1, D0C, D1})" if t.lut_exh(i) else "")
+            else:
+                k = f"{p}: " + t.reg[i]["detail"]
             cnt[(p, k)] += 1
             ex[(p, k)].append(f"{t.faults[i]['path']} SA{t.faults[i]['polarity']}")
         out.append(f"{t.n}:")
@@ -403,6 +435,7 @@ def main() -> None:
            "sample. **Tile-level observability is an upper bound** (in a fabric the outputs reach "
            "a tester only through neighbouring tiles).", ""]
     out += coverage(nets)
+    out += combined(nets)
     out += by_mux(nets, owners)
     out += lut_target(nets)
     out += config_memory()
