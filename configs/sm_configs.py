@@ -23,7 +23,9 @@ Sample string: OUTPUTS[0] first.
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import os
 import re
 import sys
 from collections import defaultdict
@@ -55,8 +57,16 @@ if len({_port_key(n) for n in INPUTS}) != len(INPUTS) or len({_port_key(n) for n
     raise SystemExit("port order: two ports share a key")
 W = math.ceil(math.log2(len(INPUTS) + 2))
 F = max(m.fan_in for m in MUXES.values())
-# Last frame written per config: distinct for all configs (0a rule).
-LAST_FRAME = {c: N_FRAMES - 1 - c for c in range(F)}
+# Config suite: "baseline" (this file) or "router" (configs/sm_router.py,
+# selects in configs/sm_router.json), from the SM_SUITE environment variable.
+SUITE = os.environ.get("SM_SUITE", "baseline")
+if SUITE not in ("baseline", "router"):
+    raise SystemExit(f"SM_SUITE={SUITE}: baseline or router")
+ROUTER_JSON = ROOT / "configs" / "sm_router.json"
+N_CFG = len(json.loads(ROUTER_JSON.read_text())["configs"]) if SUITE == "router" else F
+# Last frame written per config: distinct for all configs (0a rule) while
+# there are at most N_FRAMES configs.
+LAST_FRAME = {c: (N_FRAMES - 1 - c) % N_FRAMES for c in range(max(F, N_CFG))}
 
 
 def _pass_through() -> dict[str, str]:
@@ -338,22 +348,31 @@ def build_configs() -> tuple[dict[int, dict[str, int]], dict[int, list]]:
     return sels, logs
 
 
-SELECTS, LOOP_LOG = build_configs()
+BASE_SELECTS, LOOP_LOG = build_configs()
+if SUITE == "router":
+    SELECTS = dict(enumerate(json.loads(ROUTER_JSON.read_text())["configs"]))
+    for _c, _sel in SELECTS.items():
+        if set(_sel) != set(BASE_SELECTS[0]) or cycles(_sel):
+            raise SystemExit(f"{ROUTER_JSON.name}: config {_c} incomplete or with a loop")
+else:
+    SELECTS = BASE_SELECTS
+PREFIX = "RT" if SUITE == "router" else "SM"
 
 
 def name_of(c: int) -> str:
-    return f"SM{c:02d}"
+    return f"{PREFIX}{c:02d}"
 
 
 def make_seq(c: int) -> SMSeq:
-    s = SMSeq(name_of(c), f"switch-matrix baseline {c}: every mux on input {c} mod fan-in")
+    what = "routed (configs/sm_router.py)" if SUITE == "router" else f"every mux on input {c} mod fan-in"
+    s = SMSeq(name_of(c), f"switch-matrix {SUITE} {c}: {what}")
     s.write_config(SELECTS[c], frame_order(c))
     s.vectors()
     s.seg_ends.append(len(s.steps) - 1)
     return s
 
 
-SM_CONFIGS = {name_of(c): (lambda c=c: make_seq(c)) for c in range(F)}
+SM_CONFIGS = {name_of(c): (lambda c=c: make_seq(c)) for c in range(len(SELECTS))}
 # Fixed copy: runners may replace SM_CONFIGS with a sequence.
 BASE_SM_CONFIGS = dict(SM_CONFIGS)
 
@@ -463,7 +482,7 @@ def main() -> None:
     a.out.mkdir(parents=True, exist_ok=True)
     print(f"M = {len(INPUTS)} inputs, w = {W}, {2 * W} vectors per config, "
           f"{len(OUTPUTS)} outputs, F = {F} configs")
-    for c in range(F):
+    for c in range(F if SUITE == "baseline" else 0):
         for o, old, new, comp in LOOP_LOG[c]:
             what = comp[0] if comp[0] in ("recovered code", "swap for recovered code") \
                 else f"loop through {len(comp)} nets"

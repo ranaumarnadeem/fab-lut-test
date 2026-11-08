@@ -47,6 +47,23 @@ Most of what the baseline misses is structural: a mux code is selected only in c
 where that mux's output is not observed, and 22 muxes (the LUT SR / EN muxes, J_SR /
 J_EN and the MUX8LUT selects) are never observable in a combinational baseline.
 
+### Switch matrix: routed configs
+
+`configs/sm_router.py` routes every mux code to an observed tile output (greedy, Dijkstra
+over free muxes, loop-free, exact model grading, PathFinder-style history, compaction).
+**16 configs** (the fan-in lower bound) show every code at 0 and 1 and against every
+input one select bit away. Strict (all storage X at power-up):
+
+| netlist | switch-matrix faults | baseline | router | router + {BC1, D0C, D1} |
+|---|---|---|---|---|
+| tile, generic | 8244 | 89.9% | **97.7%** | 98.8% |
+| tile, generic, branch faults | 17276 | 83.1% | **94.7%** | 95.8% |
+
+On the generic tile every 4:1, 8:1 and 16:1 mux fault is detected. What is left has no
+gate-only path to an output: the LUT SR / EN muxes and the flop logic (they need clocked
+configs) and, in the branch netlist, FrameStrobe branches into config latches (power-up
+dependent). Details: `reports/rt_summary.md` (local).
+
 ### Findings about FABulous
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
@@ -111,6 +128,15 @@ python3 sim/run_conesplit.py run tile_generic --suite sm --only . --xonly --excl
 python3 sim/sm_analyze.py
 ```
 
+Tile, routed switch-matrix configs:
+
+```bash
+python3 configs/sm_router.py
+python3 sim/run_sm.py --suite router faultsim tile_generic --jobs 4
+python3 sim/run_sm.py --suite router faultsim tile_generic --sequence --jobs 4
+python3 sim/rt_analyze.py
+```
+
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
 by default (about 1 s for all 20,890 `tile_generic_br` faults on the 16 SM configs, 4
 threads) and runs 20 random faults through Icarus as a reference check (`--check N`, 0
@@ -132,14 +158,13 @@ python3 faults/tile_regions.py tile_generic
 | `rtl/` | FABulous LUT4AB tile files, cell and tile wrappers, `tile_parse.py` |
 | `synth/` | Yosys scripts and the synthesized netlists (sky130 cells, generic gates, branch variants) |
 | `faults/` | fault list generator, fault lists, tile fault regions |
-| `configs/` | config models: cell (`configs.py`), tile LUT configs (`tile_configs.py`), test routing, switch-matrix model (`sm_model.py`) and baseline (`sm_configs.py`) |
+| `configs/` | config models: cell (`configs.py`), tile LUT configs (`tile_configs.py`), test routing, switch-matrix model (`sm_model.py`), baseline (`sm_configs.py`) and router (`sm_router.py`, `sm_router.json`) |
 | `sim/` | runners (`run.py`, `run_tile.py`, `run_sm.py`), exhaustive power-up (`run_conesplit.py`), loop check, analysis |
 
 ## Not covered yet
 
-Configs that select and observe each switch-matrix path in the same config, registered
-and MUX8LUT configs for the muxes a combinational test cannot observe, multi-tile and
-full-fabric tests, an exact minimum config set, bridging faults and timing.
+Clocked configs for the LUT SR / EN muxes and flop logic, the power-up proof in the
+fast kernel, multi-tile and full-fabric tests, bridging faults and timing.
 
 ## License
 

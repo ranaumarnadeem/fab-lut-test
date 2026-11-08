@@ -54,14 +54,14 @@ class Target:
         tag = "_seq" if sequence else ""
         js = ROOT / "synth" / f"netlist_{netlist}.json"
         self.elems = state.storage_elements(js)
-        if self.tile and SUITE == "sm":
+        if self.tile and SUITE in ("sm", "router"):
             import run_sm
             import run_tile as rt
             import sm_configs as sc
             run_sm._setup()
             if sequence:
                 names = [] if sequence == ["ALL"] else sequence
-                run_sm.CONFIG_FUNCS = {"SEQ_SM": (lambda: sc.sequence(names or list(sc.BASE_SM_CONFIGS)))}
+                run_sm.CONFIG_FUNCS = {run_sm.SEQ: (lambda: sc.sequence(names or list(sc.BASE_SM_CONFIGS)))}
             self.configs = list(run_sm.CONFIG_FUNCS)
             stims = run_sm.write_stimuli()
             self.vvp, _ = rt.compile_netlist(netlist, faults, tag=f"_cone{os.getpid()}")
@@ -425,8 +425,9 @@ def main() -> int:
         p.add_argument("--sequence", nargs="+", metavar="CONFIG",
                        help="sequence mode (reports/<netlist>_seq_matrix.csv); "
                             "with --suite sm, ALL = SM00..SM15 in order")
-        p.add_argument("--suite", choices=["lut", "sm"], default="lut",
-                       help="sm: switch-matrix baseline configs (reports/<netlist>_sm_*)")
+        p.add_argument("--suite", choices=["lut", "sm", "router"], default="lut",
+                       help="sm: switch-matrix baseline configs (reports/<netlist>_sm_*); "
+                            "router: routed configs (reports/<netlist>_rt_*)")
         if c == "validate":
             p.add_argument("--u-definite", action="store_true",
                            help="validate the new rule: full vs cone-split, both with "
@@ -449,6 +450,9 @@ def main() -> int:
         SEQUENCE, TAG = args.sequence, "_seq"
     if SUITE == "sm":
         TAG = "_sm" + TAG
+    elif SUITE == "router":
+        os.environ["SM_SUITE"] = "router"   # read by sm_configs on import
+        TAG = "_rt" + TAG
     return {"validate": cmd_validate, "run": cmd_run}[args.cmd](args)
 
 

@@ -118,7 +118,7 @@ def observable(c: int, net: str) -> int:
 
 
 def selfcheck() -> None:
-    for c in range(sc.F):
+    for c in range(len(sc.SELECTS)):
         exp = sc.expected(sc.make_seq(c))
         vals = net_values(c)
         for j, o in enumerate(sc.OUTPUTS):
@@ -134,7 +134,7 @@ def code_tests(o: str) -> dict:
     m = MUXES[o]
     t0, t1 = [False] * m.fan_in, [False] * m.fan_in
     selb = {}
-    for c in range(sc.F):
+    for c in range(len(sc.SELECTS)):
         k = sc.SELECTS[c][o]
         vals = net_values(c)
         ob = observable(c, m.net)

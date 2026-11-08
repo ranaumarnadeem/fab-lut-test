@@ -5,6 +5,8 @@
   python3 sim/run_sm.py estimate <netlist> [--n 40]
   python3 sim/run_sm.py faultsim <netlist> [--jobs N] [--sequence SM00 ...]
   python3 sim/run_sm.py exhaust <netlist>
+  --suite router (any command): the routed configs of configs/sm_router.py
+  (reports/<netlist>_rt_matrix.csv, _rt_seq_)
 
 Same machinery as sim/run_tile.py (chunked fault simulation, strict
 3-valued D / P / U / T, +EARLY, time limit, monitors, deposits), with the
@@ -16,8 +18,14 @@ Reports: reports/<netlist>_sm_matrix.csv (sequence mode: _sm_seq_).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+if "--suite" in sys.argv:   # before sm_configs is imported: it reads SM_SUITE
+    _k = sys.argv.index("--suite")
+    os.environ["SM_SUITE"] = sys.argv[_k + 1]
+    del sys.argv[_k:_k + 2]
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "sim"), str(ROOT / "configs")]
@@ -100,7 +108,9 @@ endmodule
 """
 
 
-CONFIG_FUNCS = dict(sc.BASE_SM_CONFIGS)   # name -> SMSeq factory (one sequence in sequence mode)
+CONFIG_FUNCS = dict(sc.BASE_SM_CONFIGS)
+TAG = "_rt" if sc.SUITE == "router" else "_sm"
+SEQ = "SEQ_RT" if sc.SUITE == "router" else "SEQ_SM"   # name -> SMSeq factory (one sequence in sequence mode)
 
 
 def write_stimuli() -> dict[str, tuple[Path, int, list[str], Path]]:
@@ -143,10 +153,10 @@ def _setup() -> None:
     rt.gen_tb = gen_tb
     rt.write_stimuli = write_stimuli
     rt.golden_runs = golden_runs
-    rt.BUILD = ROOT / "build" / "sm"
+    rt.BUILD = ROOT / "build" / ("rt" if sc.SUITE == "router" else "sm")
     rt.CONFIGS = list(sc.SM_CONFIGS)
     rt.RUN_ORDER = list(sc.SM_CONFIGS)
-    rt.TAG = "_sm"
+    rt.TAG = TAG
     rt.tc.TILE_CONFIGS = dict(sc.SM_CONFIGS)
     import loop_check
     ch = loop_check.Checker("tile_generic")
@@ -180,9 +190,9 @@ def main() -> int:
             names.append(a)
         argv = argv[:k] + rest[len(names):]
         names = names or list(sc.BASE_SM_CONFIGS)
-        CONFIG_FUNCS = {"SEQ_SM": (lambda: sc.sequence(names))}
+        CONFIG_FUNCS = {SEQ: (lambda: sc.sequence(names))}
         rt.tc.TILE_CONFIGS = dict(CONFIG_FUNCS)
-        rt.CONFIGS, rt.RUN_ORDER, rt.TAG = ["SEQ_SM"], ["SEQ_SM"], "_sm_seq"
+        rt.CONFIGS, rt.RUN_ORDER, rt.TAG = [SEQ], [SEQ], TAG + "_seq"
     sys.argv = [sys.argv[0]] + argv
     return rt.main()
 
