@@ -24,7 +24,6 @@ import os
 import subprocess
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -112,9 +111,11 @@ class Netlist:
         succ = lambda i: rd[cells[i][4]]  # noqa: E731
         comps = tarjan(list(range(self.n_cells)), succ)   # reverse topological order
         rank = np.zeros(self.n_cells, dtype=np.int32)
-        for r, comp in enumerate(reversed(comps)):
-            for i in comp:
-                rank[i] = r + 1
+        r = 1
+        for comp in reversed(comps):
+            for i in (self._order_component(comp, succ) if len(comp) > 1 else comp):
+                rank[i] = r
+                r += 1
         for i, (t, *_) in enumerate(cells):
             if t == TYPES["$_DFFE_PP_"]:
                 rank[i] = 0
@@ -133,6 +134,37 @@ class Netlist:
         self.driver = driver
 
 
+    @staticmethod
+    def _order_component(comp: list[int], succ) -> list[int]:
+        """Cells of a cyclic component in reverse DFS post-order, started from
+        the cells with predecessors outside the component: most edges then go
+        forward, only feedback edges go back (fewer re-evaluations)."""
+        inside = set(comp)
+        preds = {i: 0 for i in comp}
+        for i in comp:
+            for j in succ(i):
+                if j in inside:
+                    preds[j] += 1
+        roots = sorted(comp, key=lambda i: (preds[i], i))
+        seen, post = set(), []
+        for root in roots:
+            if root in seen:
+                continue
+            seen.add(root)
+            stack = [(root, iter(succ(root)))]
+            while stack:
+                v, it = stack[-1]
+                for w in it:
+                    if w in inside and w not in seen:
+                        seen.add(w)
+                        stack.append((w, iter(succ(w))))
+                        break
+                else:
+                    stack.pop()
+                    post.append(v)
+        return post[::-1]
+
+
 # ---------------------------------------------------------------- stimulus
 
 class Stim:
@@ -143,44 +175,53 @@ class Stim:
         self.out_names, self.expected = out_names, expected
 
 
-def sm_stims(sequence: bool) -> list[Stim]:
+def sm_stim(q) -> Stim:
+    """Stimulus of one switch-matrix sequence (configs/sm_configs.SMSeq)."""
     import sm_configs as sc
-    seqs = [sc.sequence(list(sc.BASE_SM_CONFIGS))] if sequence else [f() for f in sc.BASE_SM_CONFIGS.values()]
-    out = []
     in_names = [f"FrameData[{k}]" for k in range(32)] + [f"FrameStrobe[{k}]" for k in range(20)] \
         + list(sc.INPUTS) + ["UserCLK"]
-    for q in seqs:
-        rows = np.zeros((len(q.steps), len(in_names)), dtype=np.uint8)
-        for t, s in enumerate(q.steps):
-            v = [(s.fd >> k) & 1 for k in range(32)] + [(s.fs >> k) & 1 for k in range(20)] \
-                + [(s.inp >> j) & 1 for j in range(len(sc.INPUTS))] + [s.clk & 1]
-            rows[t] = v
-        sample = np.array([s.sample for s in q.steps], dtype=np.uint8)
-        out.append(Stim(q.name, in_names, rows, sample, list(sc.OUTPUTS), sc.expected(q)))
-    return out
+    rows = np.zeros((len(q.steps), len(in_names)), dtype=np.uint8)
+    for t, s in enumerate(q.steps):
+        rows[t] = [(s.fd >> k) & 1 for k in range(32)] + [(s.fs >> k) & 1 for k in range(20)] \
+            + [(s.inp >> j) & 1 for j in range(len(sc.INPUTS))] + [s.clk & 1]
+    sample = np.array([s.sample for s in q.steps], dtype=np.uint8)
+    return Stim(q.name, in_names, rows, sample, list(sc.OUTPUTS), sc.expected(q))
 
 
-def lut_stims(sequence: bool) -> list[Stim]:
+def lut_stim(q) -> Stim:
+    """Stimulus of one LUT-config sequence (configs/tile_configs.TileSeq)."""
     import tile_configs as tc
     r = tc.ROUTING
-    seqs = [tc.sequence(list(tc.BASE_TILE_CONFIGS))] if sequence else [f() for f in tc.BASE_TILE_CONFIGS.values()]
     lut_in = [r["lut_inputs"][f"L{x}_I{j}"] for x in tc.LUTS for j in range(4)]
     in_names = [f"FrameData[{k}]" for k in range(32)] + [f"FrameStrobe[{k}]" for k in range(20)] \
         + lut_in + ["Ci[0]", r["lut_inputs"]["J_SR_BEG[0]"], r["lut_inputs"]["J_EN_BEG[0]"], "UserCLK"]
     held0 = sorted(set(tc.TILE.tile_inputs) - set(in_names))
     in_names += held0
     out_names = [r["lut_outputs"][f"L{x}_O"] for x in tc.LUTS] + ["Co[0]"]
-    out = []
-    for q in seqs:
-        rows = np.zeros((len(q.steps), len(in_names)), dtype=np.uint8)
-        for t, s in enumerate(q.steps):
-            v = [(s.fd >> k) & 1 for k in range(32)] + [(s.fs >> k) & 1 for k in range(20)]
-            v += [(s.i[k] >> j) & 1 for k in range(8) for j in range(4)]
-            v += [s.ci & 1, s.sr & 1, s.en & 1, s.clk & 1] + [0] * len(held0)
-            rows[t] = v
-        sample = np.array([s.sample for s in q.steps], dtype=np.uint8)
-        out.append(Stim(q.name, in_names, rows, sample, out_names, tc.tile_model(q)))
-    return out
+    rows = np.zeros((len(q.steps), len(in_names)), dtype=np.uint8)
+    for t, s in enumerate(q.steps):
+        v = [(s.fd >> k) & 1 for k in range(32)] + [(s.fs >> k) & 1 for k in range(20)]
+        v += [(s.i[k] >> j) & 1 for k in range(8) for j in range(4)]
+        v += [s.ci & 1, s.sr & 1, s.en & 1, s.clk & 1] + [0] * len(held0)
+        rows[t] = v
+    sample = np.array([s.sample for s in q.steps], dtype=np.uint8)
+    return Stim(q.name, in_names, rows, sample, out_names, tc.tile_model(q))
+
+
+def stim_from_seq(q) -> Stim:
+    return sm_stim(q) if hasattr(q.steps[0], "inp") else lut_stim(q)
+
+
+def sm_stims(sequence: bool) -> list[Stim]:
+    import sm_configs as sc
+    seqs = [sc.sequence(list(sc.BASE_SM_CONFIGS))] if sequence else [f() for f in sc.BASE_SM_CONFIGS.values()]
+    return [sm_stim(q) for q in seqs]
+
+
+def lut_stims(sequence: bool) -> list[Stim]:
+    import tile_configs as tc
+    seqs = [tc.sequence(list(tc.BASE_TILE_CONFIGS))] if sequence else [f() for f in tc.BASE_TILE_CONFIGS.values()]
+    return [lut_stim(q) for q in seqs]
 
 
 # ---------------------------------------------------------------- run
@@ -192,85 +233,145 @@ def _p(a):
     return a.ctypes.data_as(ctypes.c_void_p)
 
 
-def _init(netlist: str, stims: list[Stim], W: int, limit_factor: int):
-    lib = build_lib()
-    lib.run_config.restype = ctypes.c_int
-    nl = Netlist(netlist)
-    prepared = []
-    for st in stims:
-        in_nets = np.array([nl.port_bits[n] for n in st.in_names], dtype=np.int32)
-        out_nets = np.array([nl.port_bits[n] for n in st.out_names], dtype=np.int32)
-        prepared.append((st, in_nets, out_nets, np.ascontiguousarray(st.rows), st.sample))
-    _G.update(lib=lib, nl=nl, prepared=prepared, W=W, limit=limit_factor * nl.n_cells)
+class Engine:
+    """One netlist + one set of stimuli, shared by all worker threads (ctypes
+    releases the GIL during the kernel call, so threads run in parallel)."""
+
+    def __init__(self, nl: Netlist, stims: list[Stim], W: int = 8, limit_factor: int = 20):
+        self.lib = build_lib()
+        self.lib.run_config.restype = ctypes.c_int
+        self.nl, self.W, self.limit = nl, W, limit_factor * nl.n_cells
+        self.stims = stims
+        self.checked: set[str] = set()
+        self.prepared = []
+        for st in stims:
+            in_nets = np.array([nl.port_bits[n] for n in st.in_names], dtype=np.int32)
+            out_nets = np.array([nl.port_bits[n] for n in st.out_names], dtype=np.int32)
+            self.prepared.append((st, in_nets, out_nets, np.ascontiguousarray(st.rows), st.sample))
+
+    def run_batch(self, batch: list[tuple[int, int]]) -> list[list[str]]:
+        """batch: [(net bit, polarity)] (at most 64 W - 1) -> per config, a status per fault"""
+        lib, nl, W = self.lib, self.nl, self.W
+        fnet = np.array([b for b, _ in batch] or [0], dtype=np.int32)
+        fpol = np.array([p for _, p in batch] or [0], dtype=np.int32)
+        out = []
+        for st, in_nets, out_nets, rows, sample in self.prepared:
+            res = np.zeros(64 * W, dtype=np.uint8)
+            ns = int(sample.sum())
+            gold = np.zeros(ns * len(out_nets), dtype=np.uint8)
+            rc = lib.run_config(
+                nl.n_nets, nl.n_cells, W, _p(nl.type), _p(nl.a), _p(nl.b), _p(nl.c), _p(nl.out),
+                _p(nl.rank), _p(nl.rd_off), _p(nl.rd_idx), _p(nl.dff_slot), nl.n_dff,
+                _p(nl.const_net), _p(nl.const_val), nl.n_const,
+                len(in_nets), _p(in_nets), rows.shape[0], _p(rows), _p(sample), len(out_nets), _p(out_nets),
+                len(batch), _p(fnet), _p(fpol), _p(res), _p(gold), ctypes.c_long(self.limit))
+            if rc != 0:
+                raise RuntimeError(f"{st.name}: the fault-free lane did not settle")
+            if st.name not in self.checked:   # the fault-free lane is the same in every batch
+                n_out = len(out_nets)
+                g = ["".join("x" if v == 2 else str(v) for v in gold[k * n_out:(k + 1) * n_out])
+                     for k in range(ns)]
+                if g != st.expected:
+                    bad = next(i for i, (x, y) in enumerate(zip(g, st.expected)) if x != y)
+                    raise RuntimeError(f"{st.name}: fault-free lane differs from the model at sample {bad}")
+                self.checked.add(st.name)
+            v = res[1:len(batch) + 1]
+            out.append(np.where(v & 1, "D", np.where(v & 4, "T", np.where(v & 2, "P", "U"))).tolist())
+        return out
 
 
-def _run_batch(batch: list[tuple[int, int]]):
-    """batch: [(net bit, polarity)] -> per config: (status bytes per fault, golden ok)"""
-    lib, nl, W = _G["lib"], _G["nl"], _G["W"]
-    fnet = np.array([b for b, _ in batch] or [0], dtype=np.int32)
-    fpol = np.array([p for _, p in batch] or [0], dtype=np.int32)
-    out = []
-    for st, in_nets, out_nets, rows, sample in _G["prepared"]:
-        lanes = 64 * W
-        res = np.zeros(lanes, dtype=np.uint8)
-        ns = int(sample.sum())
-        gold = np.zeros(ns * len(out_nets), dtype=np.uint8)
-        rc = lib.run_config(
-            nl.n_nets, nl.n_cells, W, _p(nl.type), _p(nl.a), _p(nl.b), _p(nl.c), _p(nl.out),
-            _p(nl.rank), _p(nl.rd_off), _p(nl.rd_idx), _p(nl.dff_slot), nl.n_dff,
-            _p(nl.const_net), _p(nl.const_val), nl.n_const,
-            len(in_nets), _p(in_nets), rows.shape[0], _p(rows), _p(sample), len(out_nets), _p(out_nets),
-            len(batch), _p(fnet), _p(fpol), _p(res), _p(gold), ctypes.c_long(_G["limit"]))
-        if rc != 0:
-            raise RuntimeError(f"{st.name}: the fault-free lane did not settle")
-        g = ["".join("x" if v == 2 else str(v) for v in gold[k * len(out_nets):(k + 1) * len(out_nets)])
-             for k in range(ns)]
-        if g != st.expected:
-            bad = next(i for i, (a, b) in enumerate(zip(g, st.expected)) if a != b)
-            raise RuntimeError(f"{st.name}: fault-free lane differs from the model at sample {bad}")
-        stat = []
-        for k in range(len(batch)):
-            v = res[k + 1]
-            stat.append("D" if v & 1 else "T" if v & 4 else "P" if v & 2 else "U")
-        out.append(stat)
-    return out
+def collapse(nl: Netlist, items: list[tuple[int, int]], observed: set[int]) -> list[int]:
+    """Exact structural equivalence: for a gate whose input net has no other
+    reader and is not observed, input SA0 of AND = output SA0, input SA1 of
+    OR = output SA1, NOT input SAv = output SA(1-v), BUF input SAv = output
+    SAv. Forcing such an input forces the output to the same value, so the
+    whole simulation (D / P / U / T) is identical. Returns, per item, the
+    index of its representative item."""
+    parent: dict = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    fanout = np.diff(nl.rd_off)
+    consts = set(nl.consts.values())
+    for t, a, b, c, o in zip(nl.type.tolist(), nl.a.tolist(), nl.b.tolist(), nl.c.tolist(), nl.out.tolist()):
+        if t > 3:
+            continue   # latch / flop: sequential, no collapsing through it
+        for x in (a, b):
+            if x < 0 or x in consts or fanout[x] != 1 or x in observed:
+                continue
+            if t == 0:
+                union((o, 0), (x, 0))
+            elif t == 1:
+                union((o, 1), (x, 1))
+            elif t == 2:
+                union((o, 1), (x, 0)); union((o, 0), (x, 1))
+            else:
+                union((o, 0), (x, 0)); union((o, 1), (x, 1))
+    rep_of_class: dict = {}
+    reps = []
+    for k, it in enumerate(items):
+        r = find(it)
+        reps.append(rep_of_class.setdefault(r, k))
+    return reps
 
 
-def faultsim(netlist: str, suite: str, sequence: bool, jobs: int, W: int, limit_factor: int = 400):
-    stims = (sm_stims if suite == "sm" else lut_stims)(sequence)
-    nl = Netlist(netlist)
-    faults = list(csv.DictReader((ROOT / "faults" / f"{netlist}.csv").open()))
+def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = os.cpu_count() or 1,
+               W: int = 8, do_collapse: bool = True, nl: Netlist | None = None, quiet: bool = False):
+    """Fault-simulate `faults` (dicts with net, polarity) under every stimulus.
+    Returns (config names, per fault {config: status})."""
+    nl = nl or Netlist(netlist)
     missing = [f["net"] for f in faults if f["net"] not in nl.net_bit]
     if missing:
         raise SystemExit(f"fault nets not in the netlist: {missing[:5]}")
-    per = 64 * W - 1
     items = [(nl.net_bit[f["net"]], int(f["polarity"])) for f in faults]
-    batches = [items[k:k + per] for k in range(0, len(items), per)]
+    observed = {nl.port_bits[n] for st in stims for n in st.out_names}
+    reps = collapse(nl, items, observed) if do_collapse else list(range(len(items)))
+    todo = sorted(set(reps))
+    per = 64 * W - 1
+    batches = [todo[k:k + per] for k in range(0, len(todo), per)]
+    eng = Engine(nl, stims, W)
     t0 = time.time()
-    with ProcessPoolExecutor(max_workers=jobs, initializer=_init,
-                             initargs=(netlist, stims, W, limit_factor)) as ex:
-        results = list(ex.map(_run_batch, batches))
-    dt = time.time() - t0
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=jobs) as ex:
+        results = list(ex.map(lambda bt: eng.run_batch([items[k] for k in bt]), batches))
+    status: dict[int, dict[str, str]] = {}
     cfgs = [s.name for s in stims]
+    for bt, res in zip(batches, results):
+        for j, k in enumerate(bt):
+            status[k] = {c: res[ci][j] for ci, c in enumerate(cfgs)}
+    dt = time.time() - t0
+    if not quiet:
+        print(f"{netlist}: {len(items)} faults ({len(todo)} after collapsing) x {len(cfgs)} configs "
+              f"in {dt:.2f} s on {jobs} threads")
+    return cfgs, [status[r] for r in reps]
+
+
+def faultsim(netlist: str, suite: str, sequence: bool, jobs: int, W: int, do_collapse: bool = True):
+    stims = (sm_stims if suite == "sm" else lut_stims)(sequence)
+    faults = list(csv.DictReader((ROOT / "faults" / f"{netlist}.csv").open()))
+    cfgs, stat = run_faults(netlist, stims, faults, jobs, W, do_collapse)
     rows = []
-    k = 0
-    for batch, res in zip(batches, results):
-        for j in range(len(batch)):
-            f = faults[k]
-            st = {c: res[ci][j] for ci, c in enumerate(cfgs)}
-            v = set(st.values())
-            anyd = "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
-            rows.append({"id": f["id"], "path": f["path"], "polarity": f["polarity"], "type": f["type"],
-                         **st, "any": anyd})
-            k += 1
+    for f, st in zip(faults, stat):
+        v = set(st.values())
+        anyd = "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
+        rows.append({"id": f["id"], "path": f["path"], "polarity": f["polarity"], "type": f["type"],
+                     **st, "any": anyd})
     tag = ("_sm" if suite == "sm" else "") + ("_seq" if sequence else "")
     path = REPORTS / f"{netlist}{tag}_fast_matrix.csv"
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["id", "path", "polarity", "type", *cfgs, "any"])
         w.writeheader()
         w.writerows(rows)
-    print(f"{netlist} {suite}{' sequence' if sequence else ''}: {len(faults)} faults x {len(cfgs)} configs "
-          f"in {dt:.1f} s on {jobs} workers ({len(batches)} batches of {per}); {path.name}")
+    print(f"   -> {path.name}")
     return path
 
 
@@ -306,10 +407,11 @@ def main():
     ap.add_argument("--suite", choices=["sm", "lut"], required=True)
     ap.add_argument("--sequence", action="store_true")
     ap.add_argument("--jobs", type=int, default=os.cpu_count())
-    ap.add_argument("--W", type=int, default=4, help="64-lane words per batch (<= 16)")
+    ap.add_argument("--W", type=int, default=8, help="64-lane words per batch (<= 16)")
+    ap.add_argument("--no-collapse", action="store_true", help="simulate every fault (no equivalence collapsing)")
     a = ap.parse_args()
     if a.cmd == "faultsim":
-        faultsim(a.netlist, a.suite, a.sequence, a.jobs, a.W)
+        faultsim(a.netlist, a.suite, a.sequence, a.jobs, a.W, not a.no_collapse)
     else:
         compare(a.netlist, a.suite, a.sequence)
 

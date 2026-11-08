@@ -111,9 +111,11 @@ python3 sim/run_conesplit.py run tile_generic --suite sm --only . --xonly --excl
 python3 sim/sm_analyze.py
 ```
 
-Results go to `reports/`. Fault simulation of the branch-fault tile netlist
-(`tile_generic_br`) takes about 4.5 hours on 4 cores; runs are checkpointed and resume
-after an interruption.
+Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
+by default (about 1 s for all 20,890 `tile_generic_br` faults on the 16 SM configs, 4
+threads) and runs 20 random faults through Icarus as a reference check (`--check N`, 0
+turns it off). `--engine icarus` runs everything through Icarus (about 4.5 hours for
+`tile_generic_br` on 4 cores; checkpointed, resumes after an interruption).
 
 Rebuilding from scratch (needs the full setup):
 

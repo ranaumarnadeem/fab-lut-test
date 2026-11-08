@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "configs"))
 sys.path.insert(0, str(ROOT / "sim"))
 sys.path.insert(0, str(ROOT / "faults"))
+sys.path.insert(0, str(ROOT / "sim" / "fastsim"))
 import simcore  # noqa: E402
 import state  # noqa: E402
 import tile_configs as tc  # noqa: E402
@@ -239,15 +240,52 @@ def _init(pa, golden):
     _W.update(pa=pa, golden=golden)
 
 
-def _sim(job: tuple[str, int]) -> tuple[int, dict[str, str]]:
+def _sim(job: tuple) -> tuple[int, dict[str, str]]:
+    """(vvp, fault id[, all configs]): stops at the first D unless all configs are asked for."""
     vvp, fid = Path(job[0]), job[1]
+    full = len(job) > 2 and job[2]
     out = {c: "-" for c in CONFIGS}
     for c in RUN_ORDER:
         r = simcore.run_vvp(vvp, _W["pa"][c], fid, timeout=TIMEOUT_S)
         out[c] = simcore.status(_W["golden"][c], r)
-        if out[c] == "D":
+        if out[c] == "D" and not full:
             break
     return fid, out
+
+
+def fast_results(netlist: str, faults: list[dict], jobs: int) -> dict[int, dict[str, str]]:
+    """All faults x all configs with the C kernel (sim/fastsim); full matrix, no "-"."""
+    import fastsim
+    stims = []
+    for name, f in tc.TILE_CONFIGS.items():
+        st = fastsim.stim_from_seq(f())
+        st.name = name
+        stims.append(st)
+    cfgs, stat = fastsim.run_faults(netlist, stims, faults, jobs)
+    assert cfgs == CONFIGS, (cfgs, CONFIGS)
+    return {int(f["id"]): s for f, s in zip(faults, stat)}
+
+
+def icarus_check(netlist: str, faults: list[dict], fast: dict[int, dict[str, str]], stims,
+                 n: int, jobs: int) -> None:
+    """Reference check: n random faults through Icarus on every config, must
+    agree with the kernel wherever neither side timed out (an oscillating
+    fault can settle differently in an event order dependent way)."""
+    random.seed(7)
+    sample = random.sample(faults, min(n, len(faults)))
+    vvp, _ = compile_netlist(netlist, sample, tag="_check")
+    golden = golden_runs(vvp, stims)
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=jobs, initializer=_init,
+                             initargs=(plusargs(stims, True), golden)) as ex:
+        ref = dict(ex.map(_sim, [(str(vvp), int(f["id"]), True) for f in sample]))
+    bad = [(fid, c, ref[fid][c], fast[fid][c]) for fid in ref for c in CONFIGS
+           if ref[fid][c] != fast[fid][c] and "T" not in (ref[fid][c], fast[fid][c])]
+    n_t = sum(1 for fid in ref for c in CONFIGS if ref[fid][c] != fast[fid][c]) - len(bad)
+    if bad:
+        raise SystemExit(f"{netlist}: Icarus check FAILED on {len(bad)} (fault, config): {bad[:8]}")
+    print(f"{netlist}: Icarus check OK, {len(sample)} faults x {len(CONFIGS)} configs agree"
+          f"{f' ({n_t} timeout-only differences)' if n_t else ''}, {time.time() - t0:.0f} s", flush=True)
 
 
 def cmd_estimate(args) -> int:
@@ -286,49 +324,54 @@ def cmd_faultsim(args) -> int:
         if not faults:
             print(f"{netlist}: nothing to rerun")
             return 0
-    where = compile_chunks(netlist, faults)
-    vvp0 = where[int(faults[0]["id"])]
-    golden = golden_runs(vvp0, stims)
-    for v in sorted(set(where.values())):
-        if any(simcore.run_vvp(v, plusargs(stims, False)[c], -1).samples != golden[c] for c in CONFIGS):
-            raise SystemExit(f"{v}: FAULT=-1 run differs from golden")
-        # the +EARLY compare against the expected files must not fire fault free
-        if any(simcore.run_vvp(v, plusargs(stims, True)[c], -1).early_detect for c in CONFIGS):
-            raise SystemExit(f"{v}: fault-free +EARLY run reports a mismatch (expected file vs testbench)")
-    print(f"{netlist}: golden OK; {len(faults)} faults, {len(set(where.values()))} chunks", flush=True)
-    results: dict[int, dict[str, str]] = {}
     t0 = time.time()
-    # Checkpoint: every result is appended to a partial file named by the
-    # netlist, tag and a hash of the stimuli; a rerun after an interruption
-    # (e.g. a container restart) skips the faults already there.
-    h = hashlib.sha1(f"{netlist}{TAG}{CONFIGS}{TIMEOUT_S}".encode())
-    h.update((ROOT / "faults" / f"{netlist}.csv").read_bytes())   # a changed fault list invalidates it
-    h.update(gen_tb().encode())   # the testbench fixes which port gets which stimulus bit
-    for s, *_ in stims.values():
-        h.update(Path(s).read_bytes())
-    part = BUILD / "partial" / f"{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"
-    part.parent.mkdir(parents=True, exist_ok=True)
-    if part.exists():
-        for ln in part.read_text().splitlines():
-            try:
-                fid, res = json.loads(ln)
-            except json.JSONDecodeError:
-                continue   # a line cut by the interruption
-            results[int(fid)] = res
-    jobs = [(str(where[int(f["id"])]), int(f["id"])) for f in faults if int(f["id"]) not in results]
-    if results:
-        print(f"{netlist}: resuming, {len(results)} faults from {part.name}, {len(jobs)} to run", flush=True)
-    with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init,
-                             initargs=(plusargs(stims, True), golden)) as ex, part.open("a") as pf:
-        chunk = max(1, min(16, len(jobs) // (8 * args.jobs)))   # small job lists: spread over workers
-        for k, (fid, res) in enumerate(ex.map(_sim, jobs, chunksize=chunk)):
-            results[fid] = res
-            pf.write(json.dumps([fid, res]) + "\n")
-            pf.flush()
-            if (k + 1) % 1000 == 0:
-                el = time.time() - t0
-                print(f"  {k + 1}/{len(jobs)}  {el / 60:.1f} min, eta {el / (k + 1) * (len(jobs) - k - 1) / 60:.1f} min",
-                      flush=True)
+    if args.engine == "fast":
+        results = fast_results(netlist, faults, args.jobs)
+        if args.check:
+            icarus_check(netlist, faults, results, stims, args.check, args.jobs)
+    else:
+        where = compile_chunks(netlist, faults)
+        vvp0 = where[int(faults[0]["id"])]
+        golden = golden_runs(vvp0, stims)
+        for v in sorted(set(where.values())):
+            if any(simcore.run_vvp(v, plusargs(stims, False)[c], -1).samples != golden[c] for c in CONFIGS):
+                raise SystemExit(f"{v}: FAULT=-1 run differs from golden")
+            # the +EARLY compare against the expected files must not fire fault free
+            if any(simcore.run_vvp(v, plusargs(stims, True)[c], -1).early_detect for c in CONFIGS):
+                raise SystemExit(f"{v}: fault-free +EARLY run reports a mismatch (expected file vs testbench)")
+        print(f"{netlist}: golden OK; {len(faults)} faults, {len(set(where.values()))} chunks", flush=True)
+        results: dict[int, dict[str, str]] = {}
+        # Checkpoint: every result is appended to a partial file named by the
+        # netlist, tag and a hash of the stimuli; a rerun after an interruption
+        # (e.g. a container restart) skips the faults already there.
+        h = hashlib.sha1(f"{netlist}{TAG}{CONFIGS}{TIMEOUT_S}".encode())
+        h.update((ROOT / "faults" / f"{netlist}.csv").read_bytes())   # a changed fault list invalidates it
+        h.update(gen_tb().encode())   # the testbench fixes which port gets which stimulus bit
+        for s, *_ in stims.values():
+            h.update(Path(s).read_bytes())
+        part = BUILD / "partial" / f"{netlist}{TAG}_{h.hexdigest()[:12]}.jsonl"
+        part.parent.mkdir(parents=True, exist_ok=True)
+        if part.exists():
+            for ln in part.read_text().splitlines():
+                try:
+                    fid, res = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue   # a line cut by the interruption
+                results[int(fid)] = res
+        jobs = [(str(where[int(f["id"])]), int(f["id"])) for f in faults if int(f["id"]) not in results]
+        if results:
+            print(f"{netlist}: resuming, {len(results)} faults from {part.name}, {len(jobs)} to run", flush=True)
+        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init,
+                                 initargs=(plusargs(stims, True), golden)) as ex, part.open("a") as pf:
+            chunk = max(1, min(16, len(jobs) // (8 * args.jobs)))   # small job lists: spread over workers
+            for k, (fid, res) in enumerate(ex.map(_sim, jobs, chunksize=chunk)):
+                results[fid] = res
+                pf.write(json.dumps([fid, res]) + "\n")
+                pf.flush()
+                if (k + 1) % 1000 == 0:
+                    el = time.time() - t0
+                    print(f"  {k + 1}/{len(jobs)}  {el / 60:.1f} min, eta {el / (k + 1) * (len(jobs) - k - 1) / 60:.1f} min",
+                          flush=True)
     REPORTS.mkdir(exist_ok=True)
     rows = {}
     for flt in faults:
@@ -400,6 +443,10 @@ def main() -> int:
         p.add_argument("netlist", choices=NETLISTS)
         p.add_argument("--jobs", type=int, default=os.cpu_count())
         if cmd == "faultsim":
+            p.add_argument("--engine", choices=("fast", "icarus"), default="fast",
+                           help="fast: C kernel, full matrix (default); icarus: event-driven reference")
+            p.add_argument("--check", type=int, default=20, metavar="N",
+                           help="fast engine: also run N random faults through Icarus and compare (0: off)")
             p.add_argument("--only", help="regex on the fault net: rerun those, merge into the matrix")
             p.add_argument("--rerun-status", metavar="S",
                            help="rerun the faults whose 'any' status is S (e.g. T with a longer "

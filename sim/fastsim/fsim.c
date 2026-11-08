@@ -35,36 +35,38 @@ typedef struct {
     u64 *CQH, *CQL;                              /* n_dff * W : previous clock value */
     int *fidx;                                   /* net -> fault mask slot or -1 */
     u64 *M0, *M1;                                /* slot * W */
-    /* heap */
-    int *heap, hn, *inq;
+    /* event queue (rank buckets) */
+    int hn, *inq, *bhead, *bnext, minr, nr;
+    u64 *bmap;
     u64 *dead;                                   /* lanes given up (oscillation): kept X */
 } Sim;
 
+/* Event queue: one bucket per topological rank, a bitmap of non-empty
+ * buckets, and the lowest possibly non-empty rank. Push and pop are O(1)
+ * apart from a word scan of the bitmap. Cells of one rank are popped LIFO. */
 static inline void hpush(Sim *s, int cell) {
     if (s->inq[cell]) return;
     s->inq[cell] = 1;
-    int i = s->hn++;
-    s->heap[i] = cell;
-    while (i > 0) {
-        int p = (i - 1) >> 1;
-        if (s->rank[s->heap[p]] <= s->rank[s->heap[i]]) break;
-        int t = s->heap[p]; s->heap[p] = s->heap[i]; s->heap[i] = t; i = p;
-    }
+    int r = s->rank[cell];
+    s->bnext[cell] = s->bhead[r];
+    s->bhead[r] = cell;
+    s->bmap[r >> 6] |= (u64)1 << (r & 63);
+    if (r < s->minr) s->minr = r;
+    s->hn++;
 }
 
-static inline int hpop(Sim *s) {
-    int top = s->heap[0];
-    s->heap[0] = s->heap[--s->hn];
-    int i = 0;
-    for (;;) {
-        int l = 2 * i + 1, r = l + 1, m = i;
-        if (l < s->hn && s->rank[s->heap[l]] < s->rank[s->heap[m]]) m = l;
-        if (r < s->hn && s->rank[s->heap[r]] < s->rank[s->heap[m]]) m = r;
-        if (m == i) break;
-        int t = s->heap[m]; s->heap[m] = s->heap[i]; s->heap[i] = t; i = m;
-    }
-    s->inq[top] = 0;
-    return top;
+static inline int hpop(Sim *s) {   /* caller ensures hn > 0 */
+    int w = s->minr >> 6;
+    u64 x = s->bmap[w] & (~(u64)0 << (s->minr & 63));
+    while (!x) x = s->bmap[++w];
+    int r = (w << 6) + __builtin_ctzll(x);
+    s->minr = r;
+    int cell = s->bhead[r];
+    s->bhead[r] = s->bnext[cell];
+    if (s->bhead[r] < 0) s->bmap[r >> 6] &= ~((u64)1 << (r & 63));
+    s->hn--;
+    s->inq[cell] = 0;
+    return cell;
 }
 
 static inline void push_readers(Sim *s, int net) {
@@ -207,7 +209,14 @@ int run_config(int n_nets, int n_cells, int W,
     s.CQH = malloc((size_t)(n_dff ? n_dff : 1) * W * 8); s.CQL = malloc((size_t)(n_dff ? n_dff : 1) * W * 8);
     s.fidx = malloc((size_t)n_nets * sizeof(int));
     s.M0 = calloc((size_t)(n_faults + 1) * W, 8); s.M1 = calloc((size_t)(n_faults + 1) * W, 8);
-    s.heap = malloc((size_t)n_cells * sizeof(int)); s.inq = calloc(n_cells, sizeof(int));
+    s.inq = calloc(n_cells, sizeof(int));
+    s.nr = 0;
+    for (int k = 0; k < n_cells; k++) if (rank[k] + 1 > s.nr) s.nr = rank[k] + 1;
+    s.bhead = malloc((size_t)s.nr * sizeof(int));
+    for (int k = 0; k < s.nr; k++) s.bhead[k] = -1;
+    s.bnext = malloc((size_t)n_cells * sizeof(int));
+    s.bmap = calloc((size_t)(s.nr >> 6) + 2, 8);
+    s.minr = 0;
     int lanes = 64 * W;
     u64 allX = ~(u64)0;
     for (size_t i = 0; i < (size_t)n_nets * W; i++) { s.H[i] = allX; s.L[i] = allX; }
@@ -278,6 +287,6 @@ int run_config(int n_nets, int n_cells, int W,
         res[lane] = ((det[w] & bit) ? 1 : 0) | ((xs[w] & bit) ? 2 : 0) | ((dead[w] & bit) ? 4 : 0);
     }
     free(s.H); free(s.L); free(s.CQH); free(s.CQL); free(s.fidx); free(s.M0); free(s.M1);
-    free(s.heap); free(s.inq);
+    free(s.inq); free(s.bhead); free(s.bnext); free(s.bmap);
     return rc;
 }
