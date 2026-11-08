@@ -52,17 +52,17 @@ J_EN and the MUX8LUT selects) are never observable in a combinational baseline.
 `configs/sm_router.py` routes every mux code to an observed tile output (greedy, Dijkstra
 over free muxes, loop-free, exact model grading, PathFinder-style history, compaction).
 **16 configs** (the fan-in lower bound) show every code at 0 and 1 and against every
-input one select bit away. Strict (all storage X at power-up):
+input one select bit away. Every power-up state:
 
 | netlist | switch-matrix faults | baseline | router | router + {BC1, D0C, D1} |
 |---|---|---|---|---|
 | tile, generic | 8244 | 89.9% | **97.7%** | 98.8% |
-| tile, generic, branch faults | 17276 | 83.1% | **94.7%** | 95.8% |
+| tile, generic, branch faults | 17276 | 85.2% | **97.0%** | 98.1% |
 
 On the generic tile every 4:1, 8:1 and 16:1 mux fault is detected. What is left has no
 gate-only path to an output: the LUT SR / EN muxes and the flop logic (they need clocked
-configs) and, in the branch netlist, FrameStrobe branches into config latches (power-up
-dependent). Details: `reports/rt_summary.md` (local).
+configs) and, in the branch netlist, 43 FrameStrobe branches into config latches that
+escape for some power-up state. Details: `reports/rt_summary.md` (local).
 
 ### Findings about FABulous
 
