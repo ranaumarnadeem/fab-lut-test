@@ -1,0 +1,8 @@
+read_json synth/netlist_tile_generic.json
+read_json synth/netlist_wio.json
+read_verilog rtl/fabric_@A@.v
+hierarchy -top array_top
+flatten -noscopeinfo
+stat
+write_json synth/netlist_fabric_@A@.json
+write_verilog -noattr -noexpr -nohex -nodec synth/netlist_fabric_@A@.v

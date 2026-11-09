@@ -34,8 +34,8 @@ REPORTS = ROOT / "reports"
 TIMEOUT_S = 600
 
 
-def gen_tb(R: int, C: int, in_names: list[str], out_names: list[str]) -> str:
-    _, ports, _ = gen_array.generate(R, C)
+def gen_tb(R: int, C: int, in_names: list[str], out_names: list[str], fabric: bool = False) -> str:
+    _, ports, _ = (gen_array.generate_fabric if fabric else gen_array.generate)(R, C)
     width = {n: w for _, w, n in ports}
 
     def ref(bit: str) -> str:
@@ -143,25 +143,28 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("R", type=int)
     ap.add_argument("C", type=int)
-    ap.add_argument("--suite", choices=["uniform", "router", "clocked", "lut"], default="router")
+    ap.add_argument("--suite", choices=["uniform", "router", "clocked", "lut", "merged"], default="router")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--centre", type=int, default=5, help="extra faults in the centre tile (R, C >= 3)")
     ap.add_argument("--jobs", type=int, default=3)
+    ap.add_argument("--fabric", action="store_true")
+    ap.add_argument("--tag", default="", help="router variant (sim/run_array.py --tag)")
     a = ap.parse_args()
-    arr = fabric.Array(a.R, a.C)
+    run_array.TAG = a.tag
+    arr = fabric.Array(a.R, a.C, fabric=a.fabric)
     stims, _ = run_array.SUITES[a.suite](arr)
     faults = list(csv.DictReader((ROOT / "faults" / f"{arr.name}.csv").open()))
-    matrix = {r["id"]: r for r in csv.DictReader((REPORTS / f"{arr.name}_{a.suite}_matrix.csv").open())}
+    matrix = {r["id"]: r for r in csv.DictReader((REPORTS / f"{arr.name}_{a.suite}{a.tag}_matrix.csv").open())}
     rnd = random.Random(11)
     sample = rnd.sample(faults, a.n)
-    if a.R >= 3 and a.C >= 3:
+    if a.R >= 3 and a.C >= 3 and not a.fabric:
         ctr = f"X{a.C // 2}Y{a.R // 2}."
         sample += rnd.sample([f for f in faults if f["path"].startswith(ctr)], a.centre)
-    build = ROOT / "build" / "array" / f"{arr.name}_{a.suite}"
+    build = ROOT / "build" / "array" / f"{arr.name}_{a.suite}{a.tag}"
     elems = state.storage_elements(ROOT / "synth" / f"netlist_{arr.name}.json")
     t0 = time.time()
-    vvp = simcore.compile_tb(build, gen_tb(a.R, a.C, stims[0].in_names, stims[0].out_names),
-                             [ROOT / "synth" / f"netlist_{arr.name}.v", ROOT / "synth" / "simcells.v"],
+    vvp = simcore.compile_tb(build, gen_tb(a.R, a.C, stims[0].in_names, stims[0].out_names, a.fabric),
+                             [ROOT / "synth" / f"netlist_{arr.name}.v", ROOT / "synth" / "simcells.v"],  # noqa: E501
                              sample, elems)
     print(f"{arr.name} {a.suite}: compiled {len(sample)} faults, {len(elems)} storage elements, "
           f"{time.time() - t0:.0f} s", flush=True)

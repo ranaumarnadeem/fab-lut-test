@@ -39,12 +39,12 @@ def load_top(path: Path, top: str | None) -> tuple[str, dict]:
     return top, mods[top]
 
 
-ARRAY_OUT = re.compile(r"X\d+Y\d+\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|EE4BEG|E6BEG|"
+ARRAY_OUT = re.compile(r"(?:X\d+Y\d+|IOY\d+)\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|EE4BEG|E6BEG|"
                        r"S1BEG|S2BEG|S2BEGb|S4BEG|SS4BEG|W1BEG|W2BEG|W2BEGb|WW4BEG|W6BEG|Co|UserCLKo|"
                        r"FrameData_O|FrameStrobe_O)(\[\d+\])?$")
 
 
-TILE_PORT = re.compile(r"X\d+Y\d+\.\w+(\[\d+\])?$")
+TILE_PORT = re.compile(r"(?:X\d+Y\d+|IOY\d+)\.\w+(\[\d+\])?$")
 
 
 def analyse(mod: dict) -> dict:
@@ -122,7 +122,8 @@ def analyse(mod: dict) -> dict:
                 drv = [nm for nm in pick if ARRAY_OUT.match(nm[0])]
                 if len(drv) > 1:
                     names = {nm[0] for nm in e["names"]}
-                    drv = [nm for nm in drv if ".Inst_LUT4AB.".join(nm[0].split(".", 1)) in names]
+                    drv = [nm for nm in drv if any(f".Inst_{tt}.".join(nm[0].split(".", 1)) in names
+                                                   for tt in ("LUT4AB", "W_IO"))]
                 if len(inner) == 1:
                     pick = inner
                 elif not inner and len(drv) == 1:

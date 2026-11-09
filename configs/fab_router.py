@@ -40,20 +40,28 @@ import sm_configs as sc  # noqa: E402
 import sm_router  # noqa: E402
 
 M = fabric.M
+_ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
+CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
+
+
+def MM(i):
+    """Mux object of id (tile, mux name)."""
+    return _ARR.MT(i[0])[i[1]]
 
 
 class Graph:
     def __init__(self, arr: fabric.Array):
-        self.arr = arr
+        global _ARR
+        _ARR = self.arr = arr
         cn = arr.canon
-        self.ids = [(t, o) for t in arr.tiles for o in M]
-        self.real = [(t, o) for t, o in self.ids if M[o].model != "direct"]
-        self.net_of = {(t, o): cn(t, M[o].net) for t, o in self.ids}
+        self.ids = [(t, o) for t in arr.tiles for o in arr.MT(t)]
+        self.real = [(t, o) for t, o in self.ids if MM((t, o)).model != "direct"]
+        self.net_of = {(t, o): cn(t, MM((t, o)).net) for t, o in self.ids}
         self.mux_of = {n: i for i, n in self.net_of.items()}
         self.readers: dict[str, list] = defaultdict(list)
         for t, o in self.real:
-            for k, s in enumerate(M[o].inputs):
-                if s.kind != "const":
+            for k, s in enumerate(MM((t, o)).inputs):
+                if s.kind != "const" and not self.forbidden((t, o), k):
                     self.readers[cn(t, s.net)].append(((t, o), k))
         self.fixed: dict[str, list] = defaultdict(list)
         self.fixed_pred: dict[str, list] = defaultdict(list)
@@ -61,7 +69,12 @@ class Graph:
         def edge(a, b, c):
             self.fixed[a].append((b, c))
             self.fixed_pred[b].append(a)
-        for t in arr.tiles:
+        for t in arr.io_tiles:   # W_IO BELs: pad in -> A_O, A_I / A_T -> pad out
+            for p in "AB":
+                edge(cn(t, f"{p}_O_top"), cn(t, f"{p}_O"), 0.0)
+                edge(cn(t, f"{p}_I"), cn(t, f"{p}_I_top"), 0.0)
+                edge(cn(t, f"{p}_T"), cn(t, f"{p}_T_top"), 0.0)
+        for t in arr.lut_tiles:
             for o, m in M.items():
                 if m.model == "direct":
                     edge(cn(t, m.inputs[0].net), cn(t, m.net), 0.0)
@@ -74,8 +87,34 @@ class Graph:
 
     def src(self, i, k):
         t, o = i
-        s = M[o].inputs[k]
+        s = MM(i).inputs[k]
         return None if s.kind == "const" else self.arr.canon(t, s.net)
+
+    @staticmethod
+    def forbidden(i, k) -> bool:
+        """W_IO registered pad inputs (A_Q, B_Q): X until clocked, never selected."""
+        if i[0][0] >= 0:
+            return False
+        import wio_model
+        return MM(i).inputs[k].net in wio_model.Q_SOURCES
+
+    def reachable(self) -> set:
+        """Mux ids whose output can reach a border output for some selection."""
+        pred = defaultdict(set)
+        for a, lst in self.fixed.items():
+            for b, _c in lst:
+                pred[b].add(a)
+        for n, lst in self.readers.items():
+            for i, _k in lst:
+                pred[self.net_of[i]].add(n)
+        seen, stack = set(self.out_nets), list(self.out_nets)
+        while stack:
+            n = stack.pop()
+            for p in pred.get(n, ()):
+                if p not in seen:
+                    seen.add(p)
+                    stack.append(p)
+        return {i for i in self.ids if self.net_of[i] in seen}
 
 
 class Cfg:
@@ -144,6 +183,8 @@ class Cfg:
     def assign(self, i, k) -> bool:
         if i in self.sel:
             return self.sel[i] == k
+        if self.g.forbidden(i, k):
+            return False
         s = self.g.src(i, k)
         if s is not None and self.reaches(self.g.net_of[i], s):
             return False
@@ -176,7 +217,7 @@ class Cfg:
                 else:
                     if open_work.get((*i, k)):
                         c = 0.4
-                    elif any(open_work.get((*i, kk)) for kk in range(M[i[1]].fan_in)):
+                    elif any(open_work.get((*i, kk)) for kk in range(MM(i).fan_in)):
                         c = 4.0
                     else:
                         c = 1.0
@@ -190,7 +231,7 @@ class Cfg:
         return None
 
     def try_cover(self, i, k, open_work) -> bool:
-        direct = M[i[1]].model == "direct"
+        direct = MM(i).model == "direct"
         if not direct and not self.assign(i, k):
             return False
         start = self.g.net_of[i]
@@ -231,14 +272,14 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int) -> dict:
     cfg = Cfg(g)
 
     def work(i):
-        return sum(len(open_work.get((*i, k), ())) for k in range(M[i[1]].fan_in))
+        return sum(len(open_work.get((*i, k), ())) for k in range(MM(i).fan_in))
     order = sorted((i for i in g.ids if work(i)),
                    key=lambda i: (-hist.get(i, 0), -work(i), (g.ids.index(i) + bias * 7) % len(g.ids)))
     for i in order:
         if i in cfg.sel:
             continue
-        ks = sorted((k for k in range(M[i[1]].fan_in) if open_work.get((*i, k))),
-                    key=lambda k: (-len(open_work[(*i, k)]), (k + bias) % M[i[1]].fan_in))
+        ks = sorted((k for k in range(MM(i).fan_in) if open_work.get((*i, k))),
+                    key=lambda k: (-len(open_work[(*i, k)]), (k + bias) % MM(i).fan_in))
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
@@ -249,11 +290,24 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
     """Free muxes: an open loop-free code, else any loop-free code (loop
     repair: free a mux on the loop, fill it again later). Returns selects."""
     todo = [i for i in g.real if i not in cfg.sel]
+    # Decorrelation: muxes that share inputs (the LUT pairs A / B, C / D, ...
+    # and their J2MID jump muxes read the same wires) would otherwise pick the
+    # same source, and equal signals hide every select-bit test between them;
+    # a source already selected by another mux of the tile is taken last.
+    used: dict = defaultdict(set)
+    for i, k in cfg.sel.items():
+        used[i[0]].add(g.src(i, k))
     tries = 0
     while todo:
         i = todo.pop(0)
-        fan = M[i[1]].fan_in
-        ks = sorted(range(fan), key=lambda k: (not open_work.get((*i, k)), (k + bias) % fan))
+        fan = MM(i).fan_in
+        u = used[i[0]]
+        ks = sorted((k for k in range(fan) if not g.forbidden(i, k)),
+                    key=lambda k: (not open_work.get((*i, k)), g.src(i, k) in u, (k + bias) % fan))
+        ok = next((k for k in ks if cfg.assign(i, k)), None)
+        if ok is not None:
+            u.add(g.src(i, ok))
+            continue
         if any(cfg.assign(i, k) for k in ks):
             continue
         tries += 1
@@ -261,7 +315,7 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
             raise SystemExit(f"{i}: loop repair did not converge")
         k = ks[0]
         on_loop = [x for x in cfg.path_muxes(g.net_of[i], g.src(i, k)) if x != i
-                   and M[x[1]].model != "direct"]
+                   and MM(x).model != "direct"]
         if not on_loop:
             raise SystemExit(f"{i}: every input closes a loop")
         victim = on_loop[0]
@@ -270,6 +324,8 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
             todo.insert(0, i)
         todo.append(victim)
     sels = sels_of(g, cfg.sel)
+    for t in g.arr.io_tiles:
+        sels[t]["__cbits"] = CBITS_PATTERN[bias % len(CBITS_PATTERN)]
     if g.arr.cycles(sels):
         moves = g.arr.break_loops(sels)
         print(f"    (array check: {len(moves)} loop moves)", flush=True)
@@ -314,7 +370,7 @@ def clocked_configs(arr: fabric.Array, n_cfg: int = 8):
     for c in range(n_cfg):
         cfg = Cfg(g)
         plan = ck.lut_plan(c)
-        for t in arr.tiles:
+        for t in arr.lut_tiles:
             used = set()
             for jm in ("J_SR_BEG0", "J_EN_BEG0"):
                 if not cfg.assign((t, jm), c):
@@ -329,13 +385,13 @@ def clocked_configs(arr: fabric.Array, n_cfg: int = 8):
             for x, (sr, en, _rv) in plan.items():
                 cfg.assign((t, f"L{x}_SR"), sr)
                 cfg.assign((t, f"L{x}_EN"), en)
-        missed = [f"{arr.tn(t)}.L{x}" for t in arr.tiles for x in sc.LUTS
+        missed = [f"{arr.tn(t)}.L{x}" for t in arr.lut_tiles for x in sc.LUTS
                   if not route_net(cfg, arr.canon(t, f"L{x}_O"))]
         sels = fill(g, cfg, {}, c)
         if g.arr.cycles(sels):
             g.arr.break_loops(sels)
         print(f"  clocked {c}: flops not routed to the border: {missed or 'none'}", flush=True)
-        out.append((sels, {t: plan for t in arr.tiles}))
+        out.append((sels, {t: plan for t in arr.lut_tiles}))
     return out
 
 
@@ -358,7 +414,7 @@ def drive_net(cfg: Cfg, net: str, taken: set, used_in: set) -> bool:
         cand = []
         i = g.mux_of.get(n)
         if i is not None:
-            m = M[i[1]]
+            m = MM(i)
             if m.model == "direct":
                 cand.append((g.arr.canon(i[0], m.inputs[0].net), 0.0, None))
             elif i in cfg.sel:
@@ -415,11 +471,14 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
     g = Graph(arr)
     g.border_in = set(arr.border_in)
     g.pass_pred = defaultdict(list)
-    for t in arr.tiles:
+    for t in arr.lut_tiles:
         for o, i in sc.PASS.items():
             g.pass_pred[arr.canon(t, o)].append(arr.canon(t, i))
-    depth = {t: min(t[0], t[1], arr.C - 1 - t[0], arr.R - 1 - t[1]) for t in arr.tiles}
-    order = sorted(arr.tiles, key=lambda t: (-depth[t], t[1], t[0]))
+    for t in arr.io_tiles:
+        for p in "AB":
+            g.pass_pred[arr.canon(t, f"{p}_O")].append(arr.canon(t, f"{p}_O_top"))
+    depth = {t: min(t[0], t[1], arr.C - 1 - t[0], arr.R - 1 - t[1]) for t in arr.lut_tiles}
+    order = sorted(arr.lut_tiles, key=lambda t: (-depth[t], t[1], t[0]))
     out = []
     for c, name in enumerate(names):
         lc = LUT_CONFIGS[name]
@@ -448,7 +507,7 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
         if arr.cycles(sels):
             moves = arr.break_loops(sels)
             print(f"    {name}: {len(moves)} loop moves", flush=True)
-        luts = {t: {x: lc for x in sc.LUTS} for t in arr.tiles}
+        luts = {t: {x: lc for x in sc.LUTS} for t in arr.lut_tiles}
         rep = {"not driven": miss, "outputs not routed": unrouted, "border inputs used": len(used_in)}
         print(f"  {name}: {len(used_in)} border inputs used, {len(miss)} nets not driven independently "
               f"{miss[:6]}, LUT outputs not routed {unrouted[:6]}", flush=True)
@@ -465,45 +524,72 @@ def polish(g: Graph, sels: dict, open_work: dict, hist: dict, max_cand: int = 40
     """Move single muxes near the targets this config selects but does not
     fully show (drivers of sibling inputs, LUT input muxes, readers)."""
     arr = g.arr
-    tgt = [(t, o) for t in arr.tiles for o in M
-           if open_work.get((t, o, sels[t].get(o, 0) if M[o].model != "direct" else 0))]
+    tgt = [(t, o) for t in arr.tiles for o in arr.MT(t)
+           if open_work.get((t, o, sels[t].get(o, 0) if arr.MT(t)[o].model != "direct" else 0))]
     if not tgt:
         return
     cand = []
     for t, o in tgt:
-        m = M[o]
+        m = arr.MT(t)[o]
         k = sels[t].get(o, 0) if m.model != "direct" else 0
         nets = [arr.canon(t, s.net) for s in m.inputs if s.kind != "const"]
         nets.append(g.net_of[(t, o)])
         for n in nets:
             i = g.mux_of.get(n)
-            if i is not None and M[i[1]].model != "direct":
+            if i is not None and MM(i).model != "direct":
                 cand.append(i)
             for i2, _k in g.readers.get(n, ()):
                 cand.append(i2)
         del k
     cand = list(dict.fromkeys(cand))[:max_cand]
     best = gain(g, sels, open_work, hist, tgt)
+    # loop check per move: the move adds src -> net (and drops the old input):
+    # a loop iff net already reaches src (DFS on the current dependency graph)
+    succ: dict = defaultdict(set)
+    for n, ins in arr.deps(sels).items():
+        for p in ins:
+            succ[p].add(n)
+
+    def reaches(a, b, skip):
+        seen, stack = {a}, [a]
+        while stack:
+            x = stack.pop()
+            if x == b:
+                return True
+            for y in succ.get(x, ()):
+                if (x, y) != skip and y not in seen:
+                    seen.add(y)
+                    stack.append(y)
+        return False
     for t, o in cand:
         cur = sels[t][o]
-        for k in range(M[o].fan_in):
-            if k == cur:
+        net = g.net_of[(t, o)]
+        old = g.src(t_o := (t, o), cur)
+        for k in range(arr.MT(t)[o].fan_in):
+            if k == cur or g.forbidden(t_o, k):
+                continue
+            new = g.src(t_o, k)
+            if new is not None and (new == net or reaches(net, new, (old, net))):
                 continue
             sels[t][o] = k
-            if arr.cycles(sels):
-                continue
             gg = gain(g, sels, open_work, hist, tgt)
             if gg > best:
                 best, cur = gg, k
         sels[t][o] = cur
+        now = g.src(t_o, cur)
+        if now != old:
+            if old is not None:
+                succ[old].discard(net)
+            if now is not None:
+                succ[now].add(net)
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do_polish: bool = True,
               hist0: dict | None = None):
     g = Graph(arr)
-    reach = sm_router.reachable_muxes()
-    open_work = {(t, o, k): sm_router.work_items(o, k) for t in arr.tiles for o in M if o in reach
-                 for k in range(M[o].fan_in)}
+    reach = g.reachable()
+    open_work = {(t, o, k): fabric.work_items_m(MM((t, o)), k) for t, o in g.ids if (t, o) in reach
+                 for k in range(MM((t, o)).fan_in) if not g.forbidden((t, o), k)}
     total = sum(len(v) for v in open_work.values())
     hist: dict = defaultdict(int, hist0 or {})
     configs, log, stall = [], [], 0
@@ -514,7 +600,7 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do
             polish(g, sels, open_work, hist)
         shown = fabric.grade(arr, sels)
         for t, o in g.ids:
-            k = sels[t].get(o, 0) if M[o].model != "direct" else 0
+            k = sels[t].get(o, 0) if arr.MT(t)[o].model != "direct" else 0
             key = (t, o, k)
             if open_work.get(key) and not (open_work[key] & shown.get(key, set())):
                 hist[(t, o)] += 1
@@ -545,11 +631,13 @@ def main() -> None:
     ap.add_argument("C", type=int)
     ap.add_argument("--max", type=int, default=40)
     ap.add_argument("--no-polish", action="store_true")
+    ap.add_argument("--rand", type=int, default=0, help="random vectors per config (fabric.Array n_rand)")
+    ap.add_argument("--fabric", action="store_true", help="W_IO west, N / S term, east open (fabric.Array)")
     ap.add_argument("--passes", type=int, default=1,
                     help="PathFinder-style: each pass starts with the history of the previous one; "
                          "the pass with the fewest configs is kept")
     a = ap.parse_args()
-    arr = fabric.Array(a.R, a.C)
+    arr = fabric.Array(a.R, a.C, a.rand, fabric=a.fabric)
     t0 = time.time()
     best, hist = None, None
     for p in range(a.passes):
@@ -562,8 +650,10 @@ def main() -> None:
     configs, open_work, total, log, _ = best
     done = total - sum(len(v) for v in open_work.values())
     left = {f"{arr.tn(t)}:{o}:{k}": sorted(map(str, v)) for (t, o, k), v in open_work.items() if v}
-    out = ROOT / "configs" / f"fab_router_{a.R}x{a.C}.json"
-    out.write_text(json.dumps({"configs": configs, "log": log, "open": left,
+    tag = ("_nopolish" if a.no_polish else "") + (f"_r{a.rand}" if a.rand else "")
+    out = ROOT / "configs" / f"fab_router_{'fabric_' if a.fabric else ''}{a.R}x{a.C}{tag}.json"
+    out.write_text(json.dumps({"configs": configs, "log": log, "open": left, "n_rand": a.rand,
+                               "polish": not a.no_polish,
                                "items": {"total": total, "shown": done}}, indent=0))
     print(f"{arr.name}: {len(configs)} configs, {done} of {total} items ({100 * done / total:.2f}%), "
           f"{time.time() - t0:.0f} s -> {out.relative_to(ROOT)}")

@@ -8,3 +8,6 @@ reports/
 synth/netlist_array_*
 faults/array_*
 rtl/array_*.v
+synth/netlist_fabric_*
+faults/fabric_*
+rtl/fabric_*.v

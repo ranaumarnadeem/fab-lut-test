@@ -38,9 +38,15 @@ def uniform(arr: fabric.Array):
     return stims, logs
 
 
+TAG = ""   # --tag: router output configs/fab_router_<R>x<C><tag>.json, matrices <suite><tag>
+
+
 def routed(arr: fabric.Array):
-    """configs/fab_router_<R>x<C>.json (configs/fab_router.py)."""
-    data = json.loads((ROOT / "configs" / f"fab_router_{arr.R}x{arr.C}.json").read_text())
+    """configs/fab_router_<R>x<C><tag>.json (configs/fab_router.py)."""
+    data = json.loads((ROOT / "configs" / f"fab_router_{'fabric_' if arr.fabric else ''}{arr.R}x{arr.C}{TAG}.json")
+                      .read_text())
+    if data.get("n_rand"):
+        arr = fabric.Array(arr.R, arr.C, data["n_rand"], fabric=arr.fabric)
     stims, logs = [], {}
     for c, cfg in enumerate(data["configs"]):
         sels = {t: {o: k for o, k in cfg[arr.tn(t)].items()} for t in arr.tiles}
@@ -78,11 +84,47 @@ def lut(arr: fabric.Array):
     return stims, {}
 
 
-SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut}
+def merged(arr: fabric.Array):
+    """Router configs with the clocked SR / EN tests folded in: config c keeps
+    its routing, every LUT registered (XOR, reset value from
+    sm_clocked.lut_plan(c mod 8)), J_SR_BEG0 = J_EN_BEG0 = c mod 8 driven
+    from a tile input, the LUT SR / EN mux codes of the plan; 16 code + 48
+    random vectors, clocked (the clocked suite becomes unnecessary)."""
+    import random
+    import sm_clocked as ck
+    data = json.loads((ROOT / "configs" / f"fab_router_{'fabric_' if arr.fabric else ''}{arr.R}x{arr.C}{TAG}.json")
+                      .read_text())
+    M = fabric.M
+    stims = []
+    for c, cfg in enumerate(data["configs"]):
+        sels = {t: dict(cfg[arr.tn(t)]) for t in arr.tiles}
+        j = c % 8
+        plan = ck.lut_plan(j)
+        for t in arr.tiles:
+            used = set()
+            for jm in ("J_SR_BEG0", "J_EN_BEG0"):
+                sels[t][jm] = j
+                src = M[jm].inputs[j].net
+                o2 = next(q for q, m in M.items() if m.net == src)
+                k2 = next(k for k, s_ in enumerate(M[o2].inputs) if s_.kind == "tile_input" and s_.net not in used)
+                sels[t][o2] = k2
+                used.add(M[o2].inputs[k2].net)
+            for x, (sr, en, _rv) in plan.items():
+                sels[t][f"L{x}_SR"], sels[t][f"L{x}_EN"] = sr, en
+        if arr.cycles(sels):
+            arr.break_loops(sels)
+        rnd = random.Random(4000 + c)
+        vecs = list(arr.vecs) + [rnd.getrandbits(len(arr.border_in)) for _ in range(48)]
+        stims.append(fabric.stim_clocked(arr, f"M{c:02d}", sels, sc.frame_order(c % sc.F),
+                                         {t: plan for t in arr.tiles}, vecs))
+    return stims, {}
+
+
+SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut, "merged": merged}
 
 
 def cmd_faultsim(a) -> None:
-    arr = fabric.Array(a.R, a.C)
+    arr = fabric.Array(a.R, a.C, fabric=a.fabric)
     t0 = time.time()
     stims, logs = SUITES[a.suite](arr)
     print(f"{arr.name}: {len(arr.tiles)} tiles, {len(arr.border_in)} border inputs (w = {arr.W}), "
@@ -90,7 +132,7 @@ def cmd_faultsim(a) -> None:
           f"loop moves per config {[len(v) for v in logs.values()]}", flush=True)
     faults = list(csv.DictReader((ROOT / "faults" / f"{arr.name}.csv").open()))
     cfgs, stat = fastsim.run_faults(arr.name, stims, faults, a.jobs)
-    path = REPORTS / f"{arr.name}_{a.suite}_matrix.csv"
+    path = REPORTS / f"{arr.name}_{a.suite}{TAG}_matrix.csv"
     with path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", "type", *cfgs, "any"])
@@ -219,7 +261,9 @@ def main() -> None:
     p = sub.add_parser("faultsim")
     p.add_argument("R", type=int)
     p.add_argument("C", type=int)
-    p.add_argument("--suite", choices=["uniform", "router", "clocked", "lut"], default="uniform")
+    p.add_argument("--suite", choices=list(SUITES), default="uniform")
+    p.add_argument("--tag", default="", help="router variant, e.g. _nopolish (configs/fab_router_<R>x<C><tag>.json)")
+    p.add_argument("--fabric", action="store_true", help="fabric block (rtl/gen_array.py --fabric)")
     p.add_argument("--jobs", type=int, default=os.cpu_count())
     p = sub.add_parser("analyze")
     p.add_argument("R", type=int)
@@ -227,6 +271,8 @@ def main() -> None:
     p.add_argument("--suite", nargs="+", default=["router", "clocked"])
     sub.add_parser("report")
     a = ap.parse_args()
+    global TAG
+    TAG = getattr(a, "tag", "")
     {"faultsim": cmd_faultsim, "analyze": cmd_analyze, "report": cmd_report}[a.cmd](a)
 
 
