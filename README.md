@@ -79,6 +79,23 @@ flop logic that no combinational config reaches.
 Every power-up state. The 27 branch faults left are FrameStrobe branches into config
 latches (stuck latch enables) and 12 select-line branches masked at gate level.
 
+### Multi-tile arrays
+
+R x C arrays of the tile netlist with FABulous wiring (`rtl/gen_array.py`,
+`synth/build_array.sh`); stimulus only at the array border, observation only at the
+border, config through FrameData rows and FrameStrobe columns. `configs/fab_router.py`
+routes every mux code of every tile to the border. Switch-matrix faults, strict:
+
+| array | faults | tile configs in every tile | array router + clocked | tile level, same faults |
+|---|---|---|---|---|
+| 2x2 | 32112 | 97.3% | **99.40%** (27 + 8 configs) | 99.40% |
+| 3x3 | 72252 | 94.8% | **99.40%** (37 + 8 configs) | 99.40% |
+
+The centre tile of the 3x3 array, which has no border port, reaches the same coverage.
+More configs than one tile needs (37 vs 16): exits to the border are shared between a
+tile's own codes and the neighbour signals it relays. With 16 router configs the 3x3
+array is at 99.25%.
+
 ### Findings about FABulous
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
@@ -153,6 +170,16 @@ python3 sim/run_sm.py --suite clocked faultsim tile_generic --jobs 4
 python3 sim/rt_analyze.py
 ```
 
+Arrays (the netlists and fault lists are built, not checked in):
+
+```bash
+./synth/build_array.sh 3 3
+python3 configs/fab_router.py 3 3
+python3 sim/run_array.py faultsim 3 3 --suite router --jobs 4
+python3 sim/run_array.py faultsim 3 3 --suite clocked --jobs 4
+python3 sim/run_array.py report
+```
+
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
 by default (about 1 s for all 20,890 `tile_generic_br` faults on the 16 SM configs, 4
 threads) and runs 20 random faults through Icarus as a reference check (`--check N`, 0
@@ -179,7 +206,8 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-The power-up proof in the fast kernel, multi-tile and full-fabric tests, bridging faults and timing.
+LUT configs and the power-up proof at array level, the full fabric (IO and term tiles,
+other tile types), bridging faults and timing.
 
 ## License
 
