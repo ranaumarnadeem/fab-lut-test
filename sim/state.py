@@ -58,13 +58,20 @@ class Element:
     label: str  # net name of the element's output, for reports
 
 
+def _dref(r: str) -> str:
+    """Testbench expression of a control-pin ref: a dut net, or a constant ("@1'b1")."""
+    return r[1:] if r.startswith("@") else f"dut.{r}"
+
+
 def storage_elements(netlist_json: Path) -> list[Element]:
     _, mod = gen_faults.load_top(netlist_json, None)
     bits = gen_faults.analyse(mod)
 
     def ref(b) -> str:
-        if not isinstance(b, int):
-            raise SystemExit(f"constant on a storage control pin: {b}")
+        if not isinstance(b, int):   # constant control pin (W_IO pad register: E = 1)
+            if b not in ("0", "1"):
+                raise SystemExit(f"constant on a storage control pin: {b}")
+            return f"@1'b{b}"
         return bits[b]["names"][0][1]
 
     out: list[Element] = []
@@ -137,14 +144,14 @@ def monitor_vh(elems: list[Element]) -> str:
               f"    reg [{n - 1}:0] se_wr, se_dw, se_ck;",
              "    initial begin se_wr = 0; se_dw = 0; se_ck = {" + str(n) + "{1'bx}}; end"]
     for e in elems:
-        en = f"dut.{e.en_ref}"
+        en = _dref(e.en_ref)
         i = e.index
         if e.kind == "latch":
             lines.append(f"    always @({en}) if ($time >= 2) begin "
                          f"if ({en} !== 1'b0) se_wr[{i}] = 1'b1; "
                          f"if ({en} === 1'b1) se_dw[{i}] = 1'b1; end")
         else:
-            clk = f"dut.{e.clk_ref}"
+            clk = _dref(e.clk_ref)
             lines.append(
                 f"    always @({clk}) begin if ($time >= 2) begin "
                 f"if ({clk} !== 1'b0 && {en} !== 1'b0) se_wr[{i}] = 1'b1; "
@@ -158,8 +165,8 @@ def deposit_vh(elems: list[Element]) -> str:
     lines = []
     for e in elems:
         if e.kind == "latch":
-            lines.append(f"        if (dut.{e.en_ref} !== 1'b0) se_wr[{e.index}] = 1'b1;")
-            lines.append(f"        if (dut.{e.en_ref} === 1'b1) se_dw[{e.index}] = 1'b1;")
+            lines.append(f"        if ({_dref(e.en_ref)} !== 1'b0) se_wr[{e.index}] = 1'b1;")
+            lines.append(f"        if ({_dref(e.en_ref)} === 1'b1) se_dw[{e.index}] = 1'b1;")
     for e in elems:
         s = f"dut.{e.state_ref}"
         lines.append(

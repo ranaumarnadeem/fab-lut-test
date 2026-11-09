@@ -101,6 +101,28 @@ More configs than one tile needs (37 vs 16): exits to the border are shared betw
 tile's own codes and the neighbour signals it relays. With 16 router configs the 3x3
 array is at 99.25%.
 
+### Scaling and the real fabric border
+
+The array router without its slow polish step, with fill decorrelation instead (muxes
+that share inputs pick different sources): 3x3 routed in 6 s instead of 32 min, fewer
+configs, the same detected faults. A set cover over the full fault matrices
+(`sim/array_cover.py`) and the SR / EN tests folded into the router configs keep the
+config count almost flat with array size, at tile-level coverage:
+
+| array | tiles | switch matrix | LUT faults | configs (all detected) | configs (99.9%) |
+|---|---|---|---|---|---|
+| 2x2 | 4 | 99.40% | 99.46% | 27 | 20 |
+| 3x3 | 9 | 99.40% | 99.46% | 28 | 20 |
+| 4x4 | 16 | 99.40% | 99.46% | 30 | 21 |
+
+With the border of the demo fabric instead (`rtl/gen_array.py --fabric`: W_IO column on
+the west, N / S termination tiles, east edge open), a 4x3 block is reached only through
+the W_IO pads: 8 inputs and 16 outputs for 12 tiles. 71 configs then detect 60.8% of the
+faults (switch matrix 59.9%), about evenly in every column: every observed signal has to
+enter the 16 wires the W_IO output muxes read. Test access, not the configs, is the
+limit at fabric level; this is where boundary scan at the pads and on-chip compaction
+come in.
+
 ### Findings about FABulous
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
@@ -179,12 +201,16 @@ Arrays (the netlists and fault lists are built, not checked in):
 
 ```bash
 ./synth/build_array.sh 3 3
-python3 configs/fab_router.py 3 3
-python3 sim/run_array.py faultsim 3 3 --suite router --jobs 4
+python3 configs/fab_router.py 3 3 --no-polish
+python3 sim/run_array.py faultsim 3 3 --suite router --tag _nopolish --jobs 4
+python3 sim/run_array.py faultsim 3 3 --suite merged --tag _nopolish --jobs 4
 python3 sim/run_array.py faultsim 3 3 --suite clocked --jobs 4
 python3 sim/run_array.py faultsim 3 3 --suite lut --jobs 4
 python3 sim/run_array.py report
 python3 sim/array_check.py 3 3 --suite router
+python3 sim/array_cover.py 3 3 --suites merged_nopolish lut router_nopolish clocked
+./synth/build_wio.sh && ./synth/build_fabric.sh 4 3
+python3 configs/fab_router.py 4 3 --fabric --no-polish
 ```
 
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`

@@ -235,12 +235,13 @@ class Array:
                     order.append(n)
         return [(n, *raw[n]) for n in order]
 
-    def deps(self, sels: dict) -> dict[str, list[str]]:
-        return {n: _deps(op, a) for n, op, a in self.ops(sels)}
+    def deps(self, sels: dict, luts: dict | None = None) -> dict[str, list[str]]:
+        return {n: _deps(op, a) for n, op, a in self.ops(sels, luts)}
 
-    def cycles(self, sels: dict) -> list[set[str]]:
+    def cycles(self, sels: dict, luts: dict | None = None) -> list[set[str]]:
+        """Combinational loops (luts: LUT configs, e.g. I0 from Ci adds Ci -> O)."""
         from loop_check import tarjan
-        d = self.deps(sels)
+        d = self.deps(sels, luts)
         comps = tarjan(sorted(d), lambda n: [p for p in d.get(n, ()) if p in d])
         return [set(c) for c in comps if len(c) > 1 or c[0] in d.get(c[0], ())]
 
@@ -268,12 +269,12 @@ class Array:
                 v[n] = (s & y) | (~s & F & x)
         return v
 
-    def break_loops(self, sels: dict, max_moves: int = 2000) -> list:
+    def break_loops(self, sels: dict, max_moves: int = 2000, luts: dict | None = None) -> list:
         """Move one switch-matrix mux per array-level loop to its next input
         (smallest fan-in first, as sm_configs.break_loops) until none is left."""
         log, moves = [], {}
         for _ in range(max_moves):
-            comps = self.cycles(sels)
+            comps = self.cycles(sels, luts)
             if not comps:
                 return log
             comp = comps[0]

@@ -486,12 +486,13 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
         taken, used_in = set(), set()
         miss = []
         for t in order:
+            # SR / EN on J_SR / J_EN when both are driven independently, else
+            # SR = GND, EN = VCC (the flops load every clock; few pads in a fabric)
+            ok = [drive_net(cfg, arr.canon(t, jn), taken, used_in) for jn in ("J_SR_BEG[0]", "J_EN_BEG[0]")]
+            miss += [f"{arr.tn(t)}.{jn}" for jn, k in zip(("J_SR_BEG[0]", "J_EN_BEG[0]"), ok) if not k]
             for x in sc.LUTS:
-                cfg.assign((t, f"L{x}_SR"), 1)
-                cfg.assign((t, f"L{x}_EN"), 1)
-            for jn in ("J_SR_BEG[0]", "J_EN_BEG[0]"):
-                if not drive_net(cfg, arr.canon(t, jn), taken, used_in):
-                    miss.append(f"{arr.tn(t)}.{jn}")
+                cfg.assign((t, f"L{x}_SR"), 1 if all(ok) else 0)
+                cfg.assign((t, f"L{x}_EN"), 1 if all(ok) else 0)
             for x in sc.LUTS:
                 # Ci: LB..LH take the previous LUT's carry, LA the south tile's Co
                 # (a border input only in the south row): carry chain, not driven
@@ -504,10 +505,10 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
         unrouted = [f"{arr.tn(t)}.L{x}" for t in order for x in sc.LUTS
                     if not route_net(cfg, arr.canon(t, f"L{x}_O"))]
         sels = fill(g, cfg, {}, c)
-        if arr.cycles(sels):
-            moves = arr.break_loops(sels)
-            print(f"    {name}: {len(moves)} loop moves", flush=True)
         luts = {t: {x: lc for x in sc.LUTS} for t in arr.lut_tiles}
+        if arr.cycles(sels, luts):   # BC1: I0 from Ci adds Ci -> O
+            moves = arr.break_loops(sels, luts=luts)
+            print(f"    {name}: {len(moves)} loop moves", flush=True)
         rep = {"not driven": miss, "outputs not routed": unrouted, "border inputs used": len(used_in)}
         print(f"  {name}: {len(used_in)} border inputs used, {len(miss)} nets not driven independently "
               f"{miss[:6]}, LUT outputs not routed {unrouted[:6]}", flush=True)

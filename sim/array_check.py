@@ -148,11 +148,14 @@ def main() -> None:
     ap.add_argument("--centre", type=int, default=5, help="extra faults in the centre tile (R, C >= 3)")
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--fabric", action="store_true")
+    ap.add_argument("--max-configs", type=int, default=0, help="check only the first N configs")
     ap.add_argument("--tag", default="", help="router variant (sim/run_array.py --tag)")
     a = ap.parse_args()
     run_array.TAG = a.tag
     arr = fabric.Array(a.R, a.C, fabric=a.fabric)
     stims, _ = run_array.SUITES[a.suite](arr)
+    if a.max_configs:
+        stims = stims[:a.max_configs]
     faults = list(csv.DictReader((ROOT / "faults" / f"{arr.name}.csv").open()))
     matrix = {r["id"]: r for r in csv.DictReader((REPORTS / f"{arr.name}_{a.suite}{a.tag}_matrix.csv").open())}
     rnd = random.Random(11)

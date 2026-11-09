@@ -26,8 +26,9 @@ def main() -> None:
     ap.add_argument("R", type=int)
     ap.add_argument("C", type=int)
     ap.add_argument("--suites", nargs="+", default=["router", "clocked", "lut"])
+    ap.add_argument("--fabric", action="store_true", help="fabric block (fabric_<R>x<C>)")
     a = ap.parse_args()
-    name = f"array_{a.R}x{a.C}"
+    name = f"{'fabric' if a.fabric else 'array'}_{a.R}x{a.C}"
     sets: dict[str, set[int]] = {}
     nfault = 0
     for su in a.suites:
