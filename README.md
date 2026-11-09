@@ -122,8 +122,8 @@ nets at X (instead of the whole run) the switch matrix is 0.06 points below tile
 
 With the border of the demo fabric instead (`rtl/gen_array.py --fabric`: W_IO column on
 the west, N / S termination tiles, east edge open), a 4x3 block is reached only through
-the W_IO pads: 8 inputs and 16 outputs for 12 tiles. 71 configs then detect 60.8% of the
-faults (switch matrix 59.9%), about evenly in every column: every observed signal has to
+the W_IO pads: 8 inputs and 16 outputs for 12 tiles. 71 configs then detect 61.7% of the
+faults (switch matrix 60.8%), about evenly in every column: every observed signal has to
 enter the 16 wires the W_IO output muxes read. Test access, not the configs, is the
 limit at fabric level; this is where boundary scan at the pads and on-chip compaction
 come in.
@@ -139,8 +139,8 @@ made only of configuration. Fabric block 4x3, strict:
 
 | configs | without backbone | registered backbone |
 |---|---|---|
-| 30 | 50.4% (60.1% with clocked + LUT configs) | **68.5%** (**71.7%**) |
-| 71 (earlier best) | 60.8% | |
+| 30 | 51.7% (61.0% with clocked + LUT configs) | **68.5%** (**71.7%**) |
+| 71 (earlier best) | 61.7% | |
 
 ### Power-up check and oscillation in the fast kernel
 
