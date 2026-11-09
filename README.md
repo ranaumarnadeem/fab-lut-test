@@ -64,6 +64,21 @@ gate-only path to an output: the LUT SR / EN muxes and the flop logic (they need
 configs) and, in the branch netlist, 43 FrameStrobe branches into config latches that
 escape for some power-up state. Details: `reports/rt_summary.md` (local).
 
+### Switch matrix: clocked SR / EN configs
+
+`configs/sm_clocked.py`: 8 configs with registered LUTs (8 = fan-in of J_SR_BEG0 /
+J_EN_BEG0), every LUT through every (SR code, EN code, reset value) combination, flop
+outputs routed to tile outputs, 64 clocked vectors. They test the SR / EN muxes and the
+flop logic that no combinational config reaches.
+
+| netlist | switch-matrix faults | router (16) | router + clocked (24 configs) |
+|---|---|---|---|
+| tile, generic | 8244 | 97.7% | **100%** |
+| tile, generic, branch faults | 17276 | 97.0% | **99.84%** |
+
+Every power-up state. The 27 branch faults left are FrameStrobe branches into config
+latches (stuck latch enables) and 12 select-line branches masked at gate level.
+
 ### Findings about FABulous
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
@@ -134,6 +149,7 @@ Tile, routed switch-matrix configs:
 python3 configs/sm_router.py
 python3 sim/run_sm.py --suite router faultsim tile_generic --jobs 4
 python3 sim/run_sm.py --suite router faultsim tile_generic --sequence --jobs 4
+python3 sim/run_sm.py --suite clocked faultsim tile_generic --jobs 4
 python3 sim/rt_analyze.py
 ```
 
@@ -158,13 +174,12 @@ python3 faults/tile_regions.py tile_generic
 | `rtl/` | FABulous LUT4AB tile files, cell and tile wrappers, `tile_parse.py` |
 | `synth/` | Yosys scripts and the synthesized netlists (sky130 cells, generic gates, branch variants) |
 | `faults/` | fault list generator, fault lists, tile fault regions |
-| `configs/` | config models: cell (`configs.py`), tile LUT configs (`tile_configs.py`), test routing, switch-matrix model (`sm_model.py`), baseline (`sm_configs.py`) and router (`sm_router.py`, `sm_router.json`) |
+| `configs/` | config models: cell (`configs.py`), tile LUT configs (`tile_configs.py`), test routing, switch-matrix model (`sm_model.py`), baseline (`sm_configs.py`) and router (`sm_router.py`, `sm_router.json`), clocked SR / EN configs (`sm_clocked.py`) |
 | `sim/` | runners (`run.py`, `run_tile.py`, `run_sm.py`), exhaustive power-up (`run_conesplit.py`), loop check, analysis |
 
 ## Not covered yet
 
-Clocked configs for the LUT SR / EN muxes and flop logic, the power-up proof in the
-fast kernel, multi-tile and full-fabric tests, bridging faults and timing.
+The power-up proof in the fast kernel, multi-tile and full-fabric tests, bridging faults and timing.
 
 ## License
 
