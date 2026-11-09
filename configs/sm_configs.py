@@ -60,8 +60,8 @@ F = max(m.fan_in for m in MUXES.values())
 # Config suite: "baseline" (this file) or "router" (configs/sm_router.py,
 # selects in configs/sm_router.json), from the SM_SUITE environment variable.
 SUITE = os.environ.get("SM_SUITE", "baseline")
-if SUITE not in ("baseline", "router"):
-    raise SystemExit(f"SM_SUITE={SUITE}: baseline or router")
+if SUITE not in ("baseline", "router", "clocked"):
+    raise SystemExit(f"SM_SUITE={SUITE}: baseline, router or clocked")
 ROUTER_JSON = ROOT / "configs" / "sm_router.json"
 N_CFG = len(json.loads(ROUTER_JSON.read_text())["configs"]) if SUITE == "router" else F
 # Last frame written per config: distinct for all configs (0a rule) while
@@ -208,12 +208,13 @@ def break_loops(c: int, sel: dict[str, int]) -> list[tuple[str, int, int, list[s
     raise SystemExit(f"config {c}: loop breaking did not converge")
 
 
-def config_word(sel: dict[str, int]) -> dict[int, int]:
-    """All 616 tile config bits."""
+def config_word(sel: dict[str, int], lut_bits: dict[str, int] | None = None) -> dict[int, int]:
+    """All 616 tile config bits (LUT bits: CELL_BITS unless given per LUT)."""
     v = {b: 0 for b in TILE.configmem}
     for x in LUTS:
+        bits = (lut_bits or {}).get(x, CELL_BITS)
         for k in range(cell.N_CONFIG_BITS):
-            v[LUT_LO[x] + k] = (CELL_BITS >> k) & 1
+            v[LUT_LO[x] + k] = (bits >> k) & 1
     for o, k in sel.items():
         v.update(MUXES[o].code_for(k))
     return v
@@ -260,10 +261,10 @@ class SMSeq:
     seg_ends: list[int] = field(default_factory=list)
     sample_sel: list[int] = field(default_factory=list)   # per sample: index into selects
 
-    def write_config(self, sel: dict[str, int], order: list[int]) -> None:
+    def write_config(self, sel: dict[str, int], order: list[int], lut_bits: dict[str, int] | None = None) -> None:
         if sorted(order) != list(range(N_FRAMES)):
             raise ValueError("order is not a permutation of the frames")
-        cfg = config_word(sel)
+        cfg = config_word(sel, lut_bits)
         self.selects.append(dict(sel))
         self.configs_written.append(cfg)
         self.frame_orders.append(list(order))
@@ -295,6 +296,8 @@ class SMSeq:
 
 
 def expected(seq: SMSeq) -> list[str]:
+    if getattr(seq, "model", None):   # clocked configs (configs/sm_clocked.py) bring their own model
+        return seq.model(seq)
     out = []
     samples = [s for s in seq.steps if s.sample]
     for s, k in zip(samples, seq.sample_sel):
@@ -373,6 +376,9 @@ def make_seq(c: int) -> SMSeq:
 
 
 SM_CONFIGS = {name_of(c): (lambda c=c: make_seq(c)) for c in range(len(SELECTS))}
+if SUITE == "clocked":   # registered LUTs, SR / EN tests (configs/sm_clocked.py)
+    import sm_clocked  # noqa: E402
+    SM_CONFIGS = dict(sm_clocked.CONFIGS)
 # Fixed copy: runners may replace SM_CONFIGS with a sequence.
 BASE_SM_CONFIGS = dict(SM_CONFIGS)
 

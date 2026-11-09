@@ -7,6 +7,8 @@
   python3 sim/run_sm.py exhaust <netlist>
   --suite router (any command): the routed configs of configs/sm_router.py
   (reports/<netlist>_rt_matrix.csv, _rt_seq_)
+  --suite clocked: registered-LUT SR / EN configs of configs/sm_clocked.py
+  (reports/<netlist>_ck_matrix.csv; no sequence mode)
 
 Same machinery as sim/run_tile.py (chunked fault simulation, strict
 3-valued D / P / U / T, +EARLY, time limit, monitors, deposits), with the
@@ -108,8 +110,8 @@ endmodule
 """
 
 
-CONFIG_FUNCS = dict(sc.BASE_SM_CONFIGS)
-TAG = "_rt" if sc.SUITE == "router" else "_sm"
+CONFIG_FUNCS = dict(sc.SM_CONFIGS if sc.SUITE == "clocked" else sc.BASE_SM_CONFIGS)
+TAG = {"router": "_rt", "clocked": "_ck"}.get(sc.SUITE, "_sm")
 SEQ = "SEQ_RT" if sc.SUITE == "router" else "SEQ_SM"   # name -> SMSeq factory (one sequence in sequence mode)
 
 
@@ -153,7 +155,7 @@ def _setup() -> None:
     rt.gen_tb = gen_tb
     rt.write_stimuli = write_stimuli
     rt.golden_runs = golden_runs
-    rt.BUILD = ROOT / "build" / ("rt" if sc.SUITE == "router" else "sm")
+    rt.BUILD = ROOT / "build" / {"router": "rt", "clocked": "ck"}.get(sc.SUITE, "sm")
     rt.CONFIGS = list(sc.SM_CONFIGS)
     rt.RUN_ORDER = list(sc.SM_CONFIGS)
     rt.TAG = TAG

@@ -60,6 +60,12 @@ def main() -> None:
     rtq = {t.n: sa.read_matrix(REPORTS / f"{t.n}_rt_seq_matrix.csv") for t in nets}
     rcs = {t.n: sa.cone(REPORTS / f"{t.n}_rt_conesplit.json") for t in nets}
 
+    ck = {t.n: sa.read_matrix(REPORTS / f"{t.n}_ck_matrix.csv") for t in nets}
+    ccs = {t.n: sa.cone(REPORTS / f"{t.n}_ck_conesplit.json") for t in nets}
+
+    def cexh(t, i):   # clocked SR / EN configs, exhaustive
+        return bool(ck[t.n]) and (ck[t.n][i]["any"] == "D" or ccs[t.n].get(i) == "detected")
+
     def rexh(t, i):   # router exhaustive: strict D or detected for every power-up state
         return rt[t.n][i]["any"] == "D" or rcs[t.n].get(i) == "detected"
     it = RJ["items"]
@@ -133,6 +139,43 @@ def main() -> None:
                 ex[(grp, st)].append(f"{f['path']} SA{f['polarity']}")
         for (g, st), n in miss.most_common():
             out.append(f"| {t.n} | {g} | {st} | {n} | {', '.join(ex[(g, st)])} |")
+    if all(ck[t.n] for t in nets):
+        out += ["", "## Router + clocked SR / EN configs (Phase 9 step 2)", "",
+                "8 clocked configs CK00..CK07 (configs/sm_clocked.py): LUTs registered, J_SR_BEG0 = "
+                "J_EN_BEG0 = c driven from tile inputs, every LUT through all (SR code, EN code, reset "
+                "value) combinations, flop outputs routed to tile outputs, 64 clocked vectors. "
+                "Exhaustive (cone-split) where the run exists. A fault counts when some suite detects it.", "",
+                "| netlist | population | faults | router | clocked | router + clocked | "
+                "router + clocked + {BC1, D0C, D1} |", "|---|---|---|---|---|---|---|"]
+        for t in nets:
+            for p in sa.POPS + ["all"]:
+                ids = [i for i in t.ids if p == "all" or t.pop(i) == p]
+                vals = [sum(rexh(t, i) for i in ids), sum(cexh(t, i) for i in ids),
+                        sum(rexh(t, i) or cexh(t, i) for i in ids),
+                        sum(rexh(t, i) or cexh(t, i) or t.lut_exh(i) for i in ids)]
+                out.append(f"| {t.n} | {sa.POP_LABEL.get(p, 'all')} | {len(ids)} | " +
+                           " | ".join(f"{v} = {sa.pct(v, len(ids))}" for v in vals) + " |")
+        out += ["", "Switch-matrix faults left (router + clocked):", "",
+                "| netlist | owner group | router status | clocked status | faults | examples |",
+                "|---|---|---|---|---|---|"]
+        for t in nets:
+            miss, ex = Counter(), defaultdict(list)
+            cr = comb_reach(t.n)
+            for i, o in owners[t.n].items():
+                if rexh(t, i) or cexh(t, i):
+                    continue
+                m = sa.sc.MUXES.get(o)
+                grp = ("SR / EN mux" if o in RJ["unreachable"] else
+                       o if m is None else "direct wire" if m.model == "direct" else f"{m.fan_in}:1 mux")
+                if not cr(t.faults[i]["net"]):
+                    grp += ", only through a latch or flop"
+                key = (grp, rt[t.n][i]["any"], ck[t.n][i]["any"])
+                miss[key] += 1
+                if len(ex[key]) < 3:
+                    f = t.faults[i]
+                    ex[key].append(f"{f['path']} SA{f['polarity']}")
+            for (g, a, b), n in miss.most_common():
+                out.append(f"| {t.n} | {g} | {a} | {b} | {n} | {', '.join(ex[(g, a, b)])} |")
     (REPORTS / "rt_summary.md").write_text("\n".join(out) + "\n")
     print("reports/rt_summary.md")
 
