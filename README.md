@@ -107,13 +107,18 @@ The array router without its slow polish step, with fill decorrelation instead (
 that share inputs pick different sources): 3x3 routed in 6 s instead of 32 min, fewer
 configs, the same detected faults. A set cover over the full fault matrices
 (`sim/array_cover.py`) and the SR / EN tests folded into the router configs keep the
-config count almost flat with array size, at tile-level coverage:
+config count almost flat with array size, at tile-level coverage up to 4x4 (tile level:
+switch matrix 99.40%, LUT faults 99.46%, strict):
 
 | array | tiles | switch matrix | LUT faults | configs (all detected) | configs (99.9%) |
 |---|---|---|---|---|---|
 | 2x2 | 4 | 99.40% | 99.46% | 27 | 20 |
 | 3x3 | 9 | 99.40% | 99.46% | 28 | 20 |
 | 4x4 | 16 | 99.40% | 99.46% | 30 | 21 |
+| 5x5 | 25 | 98.88% | 99.46% | 37 | 26 |
+
+At 5x5 the router without polish stops at 99.78% of the model-level items and the switch
+matrix is 0.5 points below tile level.
 
 With the border of the demo fabric instead (`rtl/gen_array.py --fabric`: W_IO column on
 the west, N / S termination tiles, east edge open), a 4x3 block is reached only through
