@@ -11,3 +11,5 @@ rtl/array_*.v
 synth/netlist_fabric_*
 faults/fabric_*
 rtl/fabric_*.v
+synth/netlist_fullfabric*
+faults/fullfabric*

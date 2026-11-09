@@ -46,7 +46,11 @@ def build_lib() -> ctypes.CDLL:
     if not LIB.exists() or LIB.stat().st_mtime < SRC.stat().st_mtime:
         LIB.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["gcc", "-O3", "-march=native", "-shared", "-fPIC", "-o", str(LIB), str(SRC)], check=True)
-    return ctypes.CDLL(str(LIB))
+    lib = ctypes.CDLL(str(LIB))
+    # FASTSIM_OSC=local: an oscillating lane keeps being simulated with only its
+    # oscillating nets at X (default "kill": the whole lane goes X)
+    lib.set_osc_local(1 if os.environ.get("FASTSIM_OSC", "kill") == "local" else 0)
+    return lib
 
 
 class Netlist:
@@ -132,6 +136,15 @@ class Netlist:
         self.const_val = np.array([cv.get(s, 2) for s in self.consts] or [2], dtype=np.int32)
         self.n_const = len(self.consts)
         self.driver = driver
+        # storage elements (latches, flops): slot order = cell name order
+        self.cell_names = names
+        self.store = [i for i, (t, *_) in enumerate(cells) if t in (TYPES["$_DLATCH_P_"], TYPES["$_DFFE_PP_"])]
+        self.st_slot = np.full(self.n_cells, -1, dtype=np.int32)
+        for k, i in enumerate(self.store):
+            self.st_slot[i] = k
+        self.st_net = np.array([cells[i][4] for i in self.store] or [0], dtype=np.int32)
+        self.store_names = [names[i] for i in self.store]
+        self.store_is_latch = [cells[i][0] == TYPES["$_DLATCH_P_"] for i in self.store]
 
 
     @staticmethod
@@ -267,7 +280,7 @@ class Engine:
                 len(batch), _p(fnet), _p(fpol), _p(res), _p(gold), ctypes.c_long(self.limit))
             if rc != 0:
                 raise RuntimeError(f"{st.name}: the fault-free lane did not settle")
-            if st.name not in self.checked:   # the fault-free lane is the same in every batch
+            if st.expected is not None and st.name not in self.checked:   # the same in every batch
                 n_out = len(out_nets)
                 g = ["".join("x" if v == 2 else str(v) for v in gold[k * n_out:(k + 1) * n_out])
                      for k in range(ns)]

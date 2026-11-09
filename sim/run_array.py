@@ -15,6 +15,10 @@ import argparse
 import csv
 import json
 import os
+
+# Oscillation model for arrays: only the oscillating nets of a faulty lane go X
+# (sim/fastsim/fsim.c osc_local); set before fastsim is loaded.
+os.environ.setdefault("FASTSIM_OSC", "local")
 import sys
 import time
 from pathlib import Path
@@ -48,7 +52,7 @@ def routed(arr: fabric.Array):
     if data.get("n_rand"):
         arr = fabric.Array(arr.R, arr.C, data["n_rand"], fabric=arr.fabric)
     stims, logs = [], {}
-    for c, cfg in enumerate(data["configs"]):
+    for c, cfg in enumerate(data["configs"][:MAXCFG or None]):
         sels = {t: {o: k for o, k in cfg[arr.tn(t)].items()} for t in arr.tiles}
         if arr.cycles(sels):
             raise SystemExit(f"router config {c}: loop")
@@ -120,19 +124,59 @@ def merged(arr: fabric.Array):
     return stims, {}
 
 
-SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut, "merged": merged}
+def chain(arr: fabric.Array):
+    """Backbone router configs (configs/fab_router.py --backbone) with every LUT
+    registered (XOR, reset value 0, EN = VCC, SR = GND): the backbone chains are
+    shift registers with XOR inputs (a signature register per row), one clock
+    per vector; sampled once every flop is defined."""
+    data = json.loads((ROOT / "configs" / f"fab_router_{'fabric_' if arr.fabric else ''}{arr.R}x{arr.C}{TAG}.json")
+                      .read_text())
+    luts = {t: {x: (sc.cell.XOR_TT, 0, 1, 0) for x in sc.LUTS} for t in arr.lut_tiles}
+    stims = []
+    for c, cfg in enumerate(data["configs"][:MAXCFG or None]):
+        sels = {t: dict(cfg[arr.tn(t)]) for t in arr.tiles}
+        stims.append(fabric.stim_clocked(arr, f"Q{c:02d}", sels, sc.frame_order(c % sc.F), None,
+                                         list(arr.vecs), luts))
+    return stims, {}
+
+
+SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut, "merged": merged, "chain": chain}
+MAXCFG = 0   # --max-configs
 
 
 def cmd_faultsim(a) -> None:
     arr = fabric.Array(a.R, a.C, fabric=a.fabric)
     t0 = time.time()
     stims, logs = SUITES[a.suite](arr)
+    if a.update_t:
+        # rows with a T (oscillation) from a run with the kill model: rerun only those
+        # (a row without T does not depend on the oscillation model) and replace them
+        path = REPORTS / f"{arr.name}_{a.suite}{TAG}_matrix.csv"
+        rows = list(csv.DictReader(path.open()))
+        cfgs = [st.name for st in stims]
+        idx = [j for j, r in enumerate(rows) if "T" in (r[c] for c in cfgs)]
+        faults = list(csv.DictReader((ROOT / "faults" / f"{arr.name}.csv").open()))
+        _, stat = fastsim.run_faults(arr.name, stims, [faults[j] for j in idx], a.jobs)
+        from collections import Counter
+        before = Counter(rows[j]["any"] for j in idx)
+        for j, st in zip(idx, stat):
+            v = set(st.values())
+            rows[j].update(st)
+            rows[j]["any"] = "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
+        after = Counter(rows[j]["any"] for j in idx)
+        with path.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        print(f"{arr.name} {a.suite}{TAG}: {len(idx)} rows with T rerun (FASTSIM_OSC="
+              f"{os.environ['FASTSIM_OSC']}): {dict(before)} -> {dict(after)}")
+        return
     print(f"{arr.name}: {len(arr.tiles)} tiles, {len(arr.border_in)} border inputs (w = {arr.W}), "
           f"{len(arr.border_out)} border outputs; {len(stims)} configs built in {time.time() - t0:.1f} s; "
           f"loop moves per config {[len(v) for v in logs.values()]}", flush=True)
     faults = list(csv.DictReader((ROOT / "faults" / f"{arr.name}.csv").open()))
     cfgs, stat = fastsim.run_faults(arr.name, stims, faults, a.jobs)
-    path = REPORTS / f"{arr.name}_{a.suite}{TAG}_matrix.csv"
+    path = REPORTS / f"{arr.name}_{a.suite}{TAG}{f'_n{MAXCFG}' if MAXCFG else ''}_matrix.csv"
     with path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", "type", *cfgs, "any"])
@@ -264,6 +308,9 @@ def main() -> None:
     p.add_argument("--suite", choices=list(SUITES), default="uniform")
     p.add_argument("--tag", default="", help="router variant, e.g. _nopolish (configs/fab_router_<R>x<C><tag>.json)")
     p.add_argument("--fabric", action="store_true", help="fabric block (rtl/gen_array.py --fabric)")
+    p.add_argument("--max-configs", type=int, default=0, help="only the first N configs (router / chain)")
+    p.add_argument("--update-t", action="store_true",
+                   help="rerun only the rows with a T in the existing matrix and replace them")
     p.add_argument("--jobs", type=int, default=os.cpu_count())
     p = sub.add_parser("analyze")
     p.add_argument("R", type=int)
@@ -271,8 +318,9 @@ def main() -> None:
     p.add_argument("--suite", nargs="+", default=["router", "clocked"])
     sub.add_parser("report")
     a = ap.parse_args()
-    global TAG
+    global TAG, MAXCFG
     TAG = getattr(a, "tag", "")
+    MAXCFG = getattr(a, "max_configs", 0)
     {"faultsim": cmd_faultsim, "analyze": cmd_analyze, "report": cmd_report}[a.cmd](a)
 
 

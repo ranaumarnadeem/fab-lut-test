@@ -39,7 +39,21 @@ typedef struct {
     int hn, *inq, *bhead, *bnext, minr, nr;
     u64 *bmap;
     u64 *dead;                                   /* lanes given up (oscillation): kept X */
+    /* power-up enumeration (run_config_x): definitely-written tracking */
+    const int *st_slot;                          /* cell -> storage slot or -1 (NULL: off) */
+    u64 *wr;                                     /* n_store * W: lanes definitely written */
+    int track;                                   /* tracking on (after the deposits, as the testbench) */
+    /* local oscillation model (osc_local): only the nets that keep changing go X */
+    u64 *oscx;                                   /* n_nets * W: lanes held at X (sticky) */
+    u64 *netchg;                                 /* n_nets * W: lanes changed in the check round */
+    int *touched, ntouched, rec;                 /* nets with netchg bits, recording on */
+    u64 *osc;                                    /* W: lanes that oscillated (reported as T) */
 } Sim;
+
+/* 0: an oscillating lane is given up (X on every net); 1: only its oscillating
+ * nets are held at X, the rest of the lane keeps being simulated. */
+static int osc_local = 0;
+void set_osc_local(int v) { osc_local = v; }
 
 /* Event queue: one bucket per topological rank, a bitmap of non-empty
  * buckets, and the lowest possibly non-empty rank. Push and pop are O(1)
@@ -86,8 +100,18 @@ static int set_net(Sim *s, int net, const u64 *h, const u64 *l, u64 *chg) {
         }
         nh |= s->dead[w];
         nl |= s->dead[w];
+        if (s->oscx) { u64 x = s->oscx[(size_t)net * W + w]; nh |= x; nl |= x; }
         u64 d = (nh ^ H[w]) | (nl ^ L[w]);
-        if (d) { any = 1; H[w] = nh; L[w] = nl; if (chg) chg[w] |= d; }
+        if (d) {
+            any = 1; H[w] = nh; L[w] = nl; if (chg) chg[w] |= d;
+            if (s->rec) {
+                u64 *nc = s->netchg + (size_t)net * W;
+                int fresh = 1;
+                for (int v = 0; v < W; v++) if (nc[v]) { fresh = 0; break; }
+                if (fresh) s->touched[s->ntouched++] = net;
+                nc[w] |= d;
+            }
+        }
     }
     return any;
 }
@@ -126,6 +150,7 @@ static void eval_cell(Sim *s, int ci, u64 *chg) {
             u64 kh, kl; keep_or_x(QH[w], QL[w], DH[w], DL[w], &kh, &kl);
             nh[w] = (e1 & DH[w]) | (e0 & QH[w]) | (ex & kh);
             nl[w] = (e1 & DL[w]) | (e0 & QL[w]) | (ex & kl);
+            if (s->track && s->st_slot[ci] >= 0) s->wr[(size_t)s->st_slot[ci] * W + w] |= e1;
         }
         break; }
     case C_DFF: {     /* a = C, b = E, c = D, out = Q */
@@ -148,6 +173,7 @@ static void eval_cell(Sim *s, int ci, u64 *chg) {
             nh[w] = (take & DH[w]) | (kox & kh) | (hold & QH[w]);
             nl[w] = (take & DL[w]) | (kox & kl) | (hold & QL[w]);
             CQH[w] = AH[w]; CQL[w] = AL[w];
+            if (s->track && s->st_slot[ci] >= 0) s->wr[(size_t)s->st_slot[ci] * W + w] |= take;
         }
         break; }
     default:
@@ -172,6 +198,36 @@ static void settle(Sim *s, u64 *dead, long limit) {
         eval_cell(s, ci, chg);
         while (s->hn && extra < 4L * s->n_cells) { eval_cell(s, hpop(s), chg); extra++; }
         if (!s->hn) return;   /* it did settle after all */
+        if (osc_local) {
+            /* record which nets still change, per lane, in one more round */
+            for (int k = 0; k < s->ntouched; k++) memset(s->netchg + (size_t)s->touched[k] * W, 0, W * 8);
+            s->ntouched = 0;
+            s->rec = 1;
+            long extra2 = 0;
+            u64 c2[16]; memset(c2, 0, sizeof c2);
+            while (s->hn && extra2 < 4L * s->n_cells) { eval_cell(s, hpop(s), c2); extra2++; }
+            s->rec = 0;
+            if (!s->hn) return;
+            if (c2[0] & 1) {
+                if (++strikes >= 3) { dead[0] |= 1; return; }
+            }
+            for (int k = 0; k < s->ntouched; k++) {
+                int n = s->touched[k];
+                u64 *nc = s->netchg + (size_t)n * W, h[16], l[16];
+                int any = 0;
+                for (int w = 0; w < W; w++) {
+                    u64 m = nc[w] & ~(w == 0 ? (u64)1 : 0);
+                    s->oscx[(size_t)n * W + w] |= m;
+                    s->osc[w] |= m;
+                    h[w] = s->H[(size_t)n * W + w] | m;
+                    l[w] = s->L[(size_t)n * W + w] | m;
+                    any |= m != 0;
+                }
+                if (any && set_net(s, n, h, l, NULL)) push_readers(s, n);
+            }
+            pops = 0;
+            continue;
+        }
         /* oscillating lanes: X everywhere, then settle again. The fault-free
          * lane can still be changing only because oscillating lanes starved
          * its events (rank order): it is never set to X; it counts as
@@ -198,6 +254,18 @@ static void settle(Sim *s, u64 *dead, long limit) {
  *  gold[n_samples * n_out] (lane 0 values, 2 = X)
  * returns 0, or -1 if the fault-free lane oscillated.
  */
+static int run_impl(int n_nets, int n_cells, int W,
+               const int *type, const int *a, const int *b, const int *c, const int *out,
+               const int *rank, const int *rd_off, const int *rd_idx, const int *dff_slot, int n_dff,
+               const int *const_net, const int *const_val, int n_const,
+               int n_in, const int *in_nets, int n_steps, const unsigned char *stim,
+               const unsigned char *sample, int n_out, const int *out_nets,
+               int n_faults, const int *fnet, const int *fpol,
+               unsigned char *res, unsigned char *gold, long limit,
+               int n_init, const int *init_net, const u64 *init_h, const u64 *init_l, const u64 *init_m,
+               const int *st_slot, int n_store, const int *st_net, u64 *wr, u64 *stq_h, u64 *stq_l,
+               u64 *detmap);
+
 int run_config(int n_nets, int n_cells, int W,
                const int *type, const int *a, const int *b, const int *c, const int *out,
                const int *rank, const int *rd_off, const int *rd_idx, const int *dff_slot, int n_dff,
@@ -206,6 +274,52 @@ int run_config(int n_nets, int n_cells, int W,
                const unsigned char *sample, int n_out, const int *out_nets,
                int n_faults, const int *fnet, const int *fpol,
                unsigned char *res, unsigned char *gold, long limit)
+{
+    return run_impl(n_nets, n_cells, W, type, a, b, c, out, rank, rd_off, rd_idx, dff_slot, n_dff,
+                    const_net, const_val, n_const, n_in, in_nets, n_steps, stim, sample, n_out, out_nets,
+                    n_faults, fnet, fpol, res, gold, limit, 0, NULL, NULL, NULL, NULL,
+                    NULL, 0, NULL, NULL, NULL, NULL, NULL);
+}
+
+/* run_config plus power-up enumeration support:
+ *  init_net[n_init] (storage Q nets), init_h / init_l / init_m [n_init * W]: deposited
+ *    (value h / l on the lanes of m) after the faults settle, as the testbench's
+ *    +PU deposits; tracking starts after them;
+ *  st_slot[n_cells] (cell -> storage slot or -1), st_net[n_store] (slot -> Q net):
+ *    wr[n_store * W] lanes in which the element was definitely written (latch
+ *    enable exactly 1; flop clean 0 -> 1 clock edge with enable 1), stq_h / stq_l
+ *    [n_store * W] its value at the end;
+ *  detmap[n_out * W]: lanes with a definite mismatch against lane 0 at output o
+ *    (any sample; detected lanes keep accumulating). */
+int run_config_x(int n_nets, int n_cells, int W,
+               const int *type, const int *a, const int *b, const int *c, const int *out,
+               const int *rank, const int *rd_off, const int *rd_idx, const int *dff_slot, int n_dff,
+               const int *const_net, const int *const_val, int n_const,
+               int n_in, const int *in_nets, int n_steps, const unsigned char *stim,
+               const unsigned char *sample, int n_out, const int *out_nets,
+               int n_faults, const int *fnet, const int *fpol,
+               unsigned char *res, unsigned char *gold, long limit,
+               int n_init, const int *init_net, const u64 *init_h, const u64 *init_l, const u64 *init_m,
+               const int *st_slot, int n_store, const int *st_net, u64 *wr, u64 *stq_h, u64 *stq_l,
+               u64 *detmap)
+{
+    return run_impl(n_nets, n_cells, W, type, a, b, c, out, rank, rd_off, rd_idx, dff_slot, n_dff,
+                    const_net, const_val, n_const, n_in, in_nets, n_steps, stim, sample, n_out, out_nets,
+                    n_faults, fnet, fpol, res, gold, limit, n_init, init_net, init_h, init_l, init_m,
+                    st_slot, n_store, st_net, wr, stq_h, stq_l, detmap);
+}
+
+static int run_impl(int n_nets, int n_cells, int W,
+               const int *type, const int *a, const int *b, const int *c, const int *out,
+               const int *rank, const int *rd_off, const int *rd_idx, const int *dff_slot, int n_dff,
+               const int *const_net, const int *const_val, int n_const,
+               int n_in, const int *in_nets, int n_steps, const unsigned char *stim,
+               const unsigned char *sample, int n_out, const int *out_nets,
+               int n_faults, const int *fnet, const int *fpol,
+               unsigned char *res, unsigned char *gold, long limit,
+               int n_init, const int *init_net, const u64 *init_h, const u64 *init_l, const u64 *init_m,
+               const int *st_slot, int n_store, const int *st_net, u64 *wr, u64 *stq_h, u64 *stq_l,
+               u64 *detmap)
 {
     Sim s;
     memset(&s, 0, sizeof s);
@@ -232,6 +346,13 @@ int run_config(int n_nets, int n_cells, int W,
     u64 ones[16], zeros[16], dead[16];
     for (int w = 0; w < W; w++) { ones[w] = allX; zeros[w] = 0; dead[w] = 0; }
     s.dead = dead;
+    u64 osc[16]; memset(osc, 0, sizeof osc);
+    s.osc = osc;
+    if (osc_local) {
+        s.oscx = calloc((size_t)n_nets * W, 8);
+        s.netchg = calloc((size_t)n_nets * W, 8);
+        s.touched = malloc((size_t)n_nets * sizeof(int));
+    }
     /* constants */
     for (int k = 0; k < n_const; k++) {
         int n = const_net[k], v = const_val[k];
@@ -259,6 +380,23 @@ int run_config(int n_nets, int n_cells, int W,
         if (set_net(&s, n, h, l, NULL)) push_readers(&s, n);
     }
     settle(&s, dead, limit);
+    /* power-up deposits, then tracking */
+    for (int k = 0; k < n_init; k++) {
+        int n = init_net[k];
+        u64 h[16], l[16];
+        for (int w = 0; w < W; w++) {
+            u64 m = init_m[(size_t)k * W + w];
+            h[w] = (s.H[(size_t)n * W + w] & ~m) | (init_h[(size_t)k * W + w] & m);
+            l[w] = (s.L[(size_t)n * W + w] & ~m) | (init_l[(size_t)k * W + w] & m);
+        }
+        if (set_net(&s, n, h, l, NULL)) push_readers(&s, n);
+    }
+    if (n_init) settle(&s, dead, limit);
+    if (st_slot) {
+        s.st_slot = st_slot; s.wr = wr; s.track = 1;
+        memset(wr, 0, (size_t)n_store * W * 8);
+    }
+    if (detmap) memset(detmap, 0, (size_t)n_out * W * 8);
     /* steps */
     u64 det[16], xs[16];
     for (int w = 0; w < W; w++) { det[w] = 0; xs[w] = 0; }
@@ -284,6 +422,7 @@ int run_config(int n_nets, int n_cells, int W,
                     u64 d = g1 ? (L[w] & ~H[w]) : g0 ? (H[w] & ~L[w]) : 0;
                     det[w] |= d & live;
                     xs[w] |= (H[w] & L[w]) & live;
+                    if (detmap) detmap[(size_t)o * W + w] |= d & ~dead[w];
                 }
             }
             ns++;
@@ -291,9 +430,16 @@ int run_config(int n_nets, int n_cells, int W,
     }
     for (int lane = 0; lane < lanes; lane++) {
         int w = lane >> 6; u64 bit = (u64)1 << (lane & 63);
-        res[lane] = ((det[w] & bit) ? 1 : 0) | ((xs[w] & bit) ? 2 : 0) | ((dead[w] & bit) ? 4 : 0);
+        res[lane] = ((det[w] & bit) ? 1 : 0) | ((xs[w] & bit) ? 2 : 0) | (((dead[w] | osc[w]) & bit) ? 4 : 0);
     }
+    if (stq_h)
+        for (int k = 0; k < n_store; k++)
+            for (int w = 0; w < W; w++) {
+                stq_h[(size_t)k * W + w] = s.H[(size_t)st_net[k] * W + w];
+                stq_l[(size_t)k * W + w] = s.L[(size_t)st_net[k] * W + w];
+            }
     free(s.H); free(s.L); free(s.CQH); free(s.CQL); free(s.fidx); free(s.M0); free(s.M1);
     free(s.inq); free(s.bhead); free(s.bnext); free(s.bmap);
+    free(s.oscx); free(s.netchg); free(s.touched);
     return rc;
 }

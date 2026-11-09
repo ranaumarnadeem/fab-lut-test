@@ -268,8 +268,10 @@ def sels_of(g: Graph, sel: dict) -> dict:
     return out
 
 
-def build_config(g: Graph, open_work: dict, hist: dict, bias: int) -> dict:
+def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
     cfg = Cfg(g)
+    if seed is not None:
+        seed(cfg, bias)
 
     def work(i):
         return sum(len(open_work.get((*i, k), ())) for k in range(MM(i).fan_in))
@@ -516,6 +518,59 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
     return out
 
 
+def route_to(cfg: Cfg, src: str, targets: set) -> bool:
+    """Route net `src` to one of the nets in `targets` (point to point) through free muxes."""
+    save = cfg.obs
+    cfg.obs = set(targets)
+    try:
+        banned: set = set()
+        for _ in range(6):
+            path = cfg.route(src, {}, banned)
+            if path is None:
+                return False
+            done = []
+            for i2, k2 in path:
+                if cfg.assign(i2, k2):
+                    done.append(i2)
+                else:
+                    banned.add((i2, k2))
+                    break
+            else:
+                return True
+            for i2 in done:
+                del cfg.sel[i2]
+        return False
+    finally:
+        cfg.obs = save
+        for n in list(cfg.obs):
+            cfg._mark(n)
+
+
+def backbone(cfg: Cfg, bias: int = 0) -> dict:
+    """Observation backbone: per row, the LUTs of the row linked into one chain
+    (each LUT output routed into an input of the next LUT, from the east tile to
+    the west tile, LA..LH within a tile, rotated by bias), the chain end routed
+    to the border (a W_IO pad in a fabric). With XOR LUTs every input of a chain
+    LUT is then observable at the border. Returns a report."""
+    arr = cfg.g.arr
+    links = fails = 0
+    for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
+        for x in sc.LUTS:
+            cfg.assign((t, f"L{x}_SR"), 0)
+            cfg.assign((t, f"L{x}_EN"), 0)
+    for y in range(arr.R):
+        order = [((x, y), sc.LUTS[(k + bias) % 8]) for x in reversed(range(arr.C)) for k in range(8)]
+        for (ta, xa), (tb, xb) in zip(order, order[1:]):
+            pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)}
+            if route_to(cfg, arr.canon(ta, f"L{xa}_O"), pins):
+                links += 1
+            else:
+                fails += 1
+        if not route_net(cfg, arr.canon(*order[-1][:1], f"L{order[-1][1]}_O")):
+            fails += 1
+    return {"links": links, "fails": fails}
+
+
 def gain(g, sels, open_work, hist, only):
     return sum(len(open_work[key] & items) * (1 + hist.get(key[:2], 0))
                for key, items in fabric.grade(g.arr, sels, only).items() if key in open_work)
@@ -586,17 +641,27 @@ def polish(g: Graph, sels: dict, open_work: dict, hist: dict, max_cand: int = 40
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do_polish: bool = True,
-              hist0: dict | None = None):
+              hist0: dict | None = None, prior: list | None = None, seed=None):
+    """prior: configs already chosen (selects per tile name): their shown items
+    are removed first and the new configs only add to them (--extend)."""
     g = Graph(arr)
     reach = g.reachable()
     open_work = {(t, o, k): fabric.work_items_m(MM((t, o)), k) for t, o in g.ids if (t, o) in reach
                  for k in range(MM((t, o)).fan_in) if not g.forbidden((t, o), k)}
     total = sum(len(v) for v in open_work.values())
     hist: dict = defaultdict(int, hist0 or {})
+    for cfg in prior or ():
+        sels = {t: dict(cfg[arr.tn(t)]) for t in arr.tiles}
+        for key, items in fabric.grade(arr, sels).items():
+            if key in open_work:
+                open_work[key] -= items
+    if prior and verbose:
+        print(f"  {len(prior)} prior configs: {sum(len(v) for v in open_work.values())} of {total} items open",
+              flush=True)
     configs, log, stall = [], [], 0
     while len(configs) < max_configs and any(open_work.values()):
         t0 = time.time()
-        sels = build_config(g, open_work, hist, len(configs))
+        sels = build_config(g, open_work, hist, len(configs), seed)
         if do_polish:
             polish(g, sels, open_work, hist)
         shown = fabric.grade(arr, sels)
@@ -634,6 +699,11 @@ def main() -> None:
     ap.add_argument("--no-polish", action="store_true")
     ap.add_argument("--rand", type=int, default=0, help="random vectors per config (fabric.Array n_rand)")
     ap.add_argument("--fabric", action="store_true", help="W_IO west, N / S term, east open (fabric.Array)")
+    ap.add_argument("--backbone", action="store_true",
+                    help="seed every config with the observation backbone (LUT chains to the border)")
+    ap.add_argument("--extend", metavar="TAG",
+                    help="add configs to configs/fab_router_<R>x<C><TAG>.json (only the new ones are "
+                         "written, to ..<TAG>_ext.json); with polish unless --no-polish")
     ap.add_argument("--passes", type=int, default=1,
                     help="PathFinder-style: each pass starts with the history of the previous one; "
                          "the pass with the fewest configs is kept")
@@ -642,7 +712,10 @@ def main() -> None:
     t0 = time.time()
     best, hist = None, None
     for p in range(a.passes):
-        res = route_all(arr, a.max, do_polish=not a.no_polish, hist0=hist)
+        prior = json.loads((ROOT / "configs" / f"fab_router_{'fabric_' if a.fabric else ''}{a.R}x{a.C}"
+                                                f"{a.extend}.json").read_text())["configs"] if a.extend else None
+        res = route_all(arr, a.max, do_polish=not a.no_polish, hist0=hist, prior=prior,
+                        seed=(lambda cfg, b: backbone(cfg, b)) if a.backbone else None)
         hist = res[4]
         done_p = res[2] - sum(len(v) for v in res[1].values())
         print(f"pass {p}: {len(res[0])} configs, {done_p} of {res[2]} items", flush=True)
@@ -651,7 +724,8 @@ def main() -> None:
     configs, open_work, total, log, _ = best
     done = total - sum(len(v) for v in open_work.values())
     left = {f"{arr.tn(t)}:{o}:{k}": sorted(map(str, v)) for (t, o, k), v in open_work.items() if v}
-    tag = ("_nopolish" if a.no_polish else "") + (f"_r{a.rand}" if a.rand else "")
+    tag = f"{a.extend}_ext" if a.extend else ("_nopolish" if a.no_polish else "") + (f"_r{a.rand}" if a.rand else "") \
+        + ("_bb" if a.backbone else "")
     out = ROOT / "configs" / f"fab_router_{'fabric_' if a.fabric else ''}{a.R}x{a.C}{tag}.json"
     out.write_text(json.dumps({"configs": configs, "log": log, "open": left, "n_rand": a.rand,
                                "polish": not a.no_polish,

@@ -39,12 +39,10 @@ def load_top(path: Path, top: str | None) -> tuple[str, dict]:
     return top, mods[top]
 
 
-ARRAY_OUT = re.compile(r"(?:X\d+Y\d+|IOY\d+)\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|EE4BEG|E6BEG|"
+ARRAY_OUT = re.compile(r"[^.]+\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|EE4BEG|E6BEG|"
                        r"S1BEG|S2BEG|S2BEGb|S4BEG|SS4BEG|W1BEG|W2BEG|W2BEGb|WW4BEG|W6BEG|Co|UserCLKo|"
                        r"FrameData_O|FrameStrobe_O)(\[\d+\])?$")
-
-
-TILE_PORT = re.compile(r"(?:X\d+Y\d+|IOY\d+)\.\w+(\[\d+\])?$")
+TILE_PORT = re.compile(r"[^.]+\.\w+(\[\d+\])?$")   # <instance>.<port>[bit]: a port of a tile instance
 
 
 def analyse(mod: dict) -> dict:
@@ -122,8 +120,10 @@ def analyse(mod: dict) -> dict:
                 drv = [nm for nm in pick if ARRAY_OUT.match(nm[0])]
                 if len(drv) > 1:
                     names = {nm[0] for nm in e["names"]}
-                    drv = [nm for nm in drv if any(f".Inst_{tt}.".join(nm[0].split(".", 1)) in names
-                                                   for tt in ("LUT4AB", "W_IO"))]
+                    def driven_inside(nm):   # the instance has an internal name ending in this port
+                        inst, port = nm[0].split(".", 1)
+                        return any(n.startswith(inst + ".Inst_") and n.endswith("." + port) for n in names)
+                    drv = [nm for nm in drv if driven_inside(nm)]
                 if len(inner) == 1:
                     pick = inner
                 elif not inner and len(drv) == 1:
