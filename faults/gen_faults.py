@@ -39,6 +39,14 @@ def load_top(path: Path, top: str | None) -> tuple[str, dict]:
     return top, mods[top]
 
 
+ARRAY_OUT = re.compile(r"X\d+Y\d+\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|EE4BEG|E6BEG|"
+                       r"S1BEG|S2BEG|S2BEGb|S4BEG|SS4BEG|W1BEG|W2BEG|W2BEGb|WW4BEG|W6BEG|Co|UserCLKo|"
+                       r"FrameData_O|FrameStrobe_O)(\[\d+\])?$")
+
+
+TILE_PORT = re.compile(r"X\d+Y\d+\.\w+(\[\d+\])?$")
+
+
 def analyse(mod: dict) -> dict:
     """Per signal bit: name ref, drivers, sinks."""
     bits: dict[int, dict] = {}
@@ -103,6 +111,22 @@ def analyse(mod: dict) -> dict:
             pick = [nm for nm in e["names"] if base(nm) in inputs]
             if not pick:
                 pick = [nm for nm in e["names"] if base(nm) not in ports]
+            if len(pick) > 1:
+                # tile array (rtl/gen_array.py): an inter-tile net is named by the
+                # receiving tile's input port and the driving tile's output port;
+                # keep the driver side
+                # names inside a tile first (as the single tile picks them),
+                # else the driving tile's output port (a pass-through chain:
+                # the tile whose logic drives it)
+                inner = [nm for nm in pick if "." in nm[0] and not TILE_PORT.match(nm[0])]
+                drv = [nm for nm in pick if ARRAY_OUT.match(nm[0])]
+                if len(drv) > 1:
+                    names = {nm[0] for nm in e["names"]}
+                    drv = [nm for nm in drv if ".Inst_LUT4AB.".join(nm[0].split(".", 1)) in names]
+                if len(inner) == 1:
+                    pick = inner
+                elif not inner and len(drv) == 1:
+                    pick = drv
             if len(pick) != 1:
                 raise SystemExit(f"bit {b} has names {e['names']}; rerun synth with rename")
             e["aliases"] = [nm[0] for nm in e["names"] if nm is not pick[0]]

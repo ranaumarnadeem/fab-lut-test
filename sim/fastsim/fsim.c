@@ -162,6 +162,7 @@ static void settle(Sim *s, u64 *dead, long limit) {
     int W = s->W;
     u64 chg[16];
     long pops = 0;
+    int strikes = 0;   /* rounds in which the fault-free lane still changed */
     while (s->hn) {
         int ci = hpop(s);
         if (pops < limit) { eval_cell(s, ci, NULL); pops++; continue; }
@@ -171,7 +172,14 @@ static void settle(Sim *s, u64 *dead, long limit) {
         eval_cell(s, ci, chg);
         while (s->hn && extra < 4L * s->n_cells) { eval_cell(s, hpop(s), chg); extra++; }
         if (!s->hn) return;   /* it did settle after all */
-        /* oscillating lanes: X everywhere, then settle again */
+        /* oscillating lanes: X everywhere, then settle again. The fault-free
+         * lane can still be changing only because oscillating lanes starved
+         * its events (rank order): it is never set to X; it counts as
+         * oscillating when it still changes after 3 rounds. */
+        if (chg[0] & 1) {
+            if (++strikes >= 3) { dead[0] |= 1; return; }   /* caller reports it */
+            chg[0] &= ~(u64)1;
+        }
         for (int w = 0; w < W; w++) dead[w] |= chg[w];
         for (int n = 0; n < s->n_nets; n++)
             for (int w = 0; w < W; w++) {
@@ -180,7 +188,6 @@ static void settle(Sim *s, u64 *dead, long limit) {
             }
         for (int k = 0; k < s->n_cells; k++) hpush(s, k);
         pops = 0;
-        if (chg[0] & 1) return;   /* the fault-free lane oscillates: caller reports it */
     }
 }
 

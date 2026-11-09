@@ -5,3 +5,6 @@ __pycache__/
 NOTES.md
 PLAN.md
 reports/
+synth/netlist_array_*
+faults/array_*
+rtl/array_*.v

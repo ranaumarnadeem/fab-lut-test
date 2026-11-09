@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""Model of an R x C LUT4AB array (Phase 10), wired as rtl/gen_array.py.
+
+Nets: "X<x>Y<y>/<tile net>" (tile nets as configs/sm_configs.py). A tile
+input with a neighbour inside the array is the neighbour's output net (the
+same wire); one without is a border input. A tile routing output with no
+reader inside the array is a border output (observed). The switch matrix,
+LUTs (XOR, combinational unless given), MUX8LUT and pass-throughs of every
+tile as in the tile model; the array model is their composition, evaluated
+bit-parallel over the samples.
+
+Config writing (FABulous frame-based config, ext/demo/Fabric/eFPGA.v):
+FrameData_R<y> feeds row y west to east, FrameStrobe_C<x> column x south to
+north. A frame write of column x puts every row's word for that column's
+tile on FrameData_R<y> and pulses FrameStrobe_C<x>[f]: per column, per frame,
+data / strobe / release, as in the single-tile flow.
+"""
+from __future__ import annotations
+
+import math
+import re
+import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(ROOT / "configs"), str(ROOT / "rtl"), str(ROOT / "sim"), str(ROOT / "sim" / "fastsim")]
+import gen_array  # noqa: E402
+import sm_configs as sc  # noqa: E402
+
+M = sc.MUXES
+REAL = [o for o, m in M.items() if m.model != "direct"]
+TILE_IN = set(sc.INPUTS)
+READ_BY = {src: (dx, dy, dst) for dst, (dx, dy, src) in gen_array.FROM.items()}
+
+
+def _split(n: str) -> tuple[str, str]:
+    m = re.fullmatch(r"(\w+)(\[\d+\])", n)
+    return (m.group(1), m.group(2)) if m else (n, "")
+
+
+class Array:
+    def __init__(self, R: int, C: int):
+        self.R, self.C = R, C
+        self.name = f"array_{R}x{C}"
+        self.tiles = [(x, y) for y in range(R) for x in range(C)]
+        self.border_in = [self.net(t, p) for t in self.tiles for p in sc.INPUTS if self.canon(t, p) == self.net(t, p)]
+        self.border_out = [self.net(t, o) for t in self.tiles for o in sc.OUTPUTS if not self.read_inside(t, o)]
+        self.W = math.ceil(math.log2(len(self.border_in) + 2))
+        self.NS = 2 * self.W
+        self.FULL = (1 << self.NS) - 1
+        codes = {n: j + 1 for j, n in enumerate(self.border_in)}
+        self.vecs = [sum(((codes[n] >> b) & 1) << j for j, n in enumerate(self.border_in)) for b in range(self.W)]
+        full = (1 << len(self.border_in)) - 1
+        self.vecs += [v ^ full for v in self.vecs]
+        self.invec = {n: sum(((self.vecs[t] >> j) & 1) << t for t in range(self.NS))
+                      for j, n in enumerate(self.border_in)}
+
+    @staticmethod
+    def tn(t) -> str:
+        return f"X{t[0]}Y{t[1]}"
+
+    def net(self, t, n: str) -> str:
+        return f"{self.tn(t)}/{n}"
+
+    def inside(self, x: int, y: int) -> bool:
+        return 0 <= x < self.C and 0 <= y < self.R
+
+    def canon(self, t, n: str) -> str:
+        """Array net of tile net n: a driven tile input is the neighbour's output."""
+        if n in TILE_IN:
+            base, idx = _split(n)
+            dx, dy, src = gen_array.FROM[base]
+            nx, ny = t[0] + dx, t[1] + dy
+            if self.inside(nx, ny):
+                return self.net((nx, ny), src + idx)
+        return self.net(t, n)
+
+    def read_inside(self, t, o: str) -> bool:
+        base, _ = _split(o)
+        dx, dy, _dst = READ_BY[base]
+        return self.inside(t[0] - dx, t[1] - dy)
+
+    def port(self, n: str) -> str:
+        """Array port bit of a border net ("X0Y0/N1END[3]" -> "X0Y0_N1END[3]")."""
+        return n.replace("/", "_")
+
+    # ------------------------------------------------------------ model
+
+    def ops(self, sels: dict, lut_ff: dict | None = None) -> list[tuple[str, str, object]]:
+        """(net, op, args) of the whole array, topologically sorted.
+        sels: tile -> mux selects. ops: b copy, c const, x XOR-4 LUT,
+        m carry majority, s MUX8LUT 2:1."""
+        raw = {}
+        for t in self.tiles:
+            sel = sels[t]
+            cn = lambda n, t=t: self.canon(t, n)  # noqa: E731
+            for o, m in M.items():
+                s = m.inputs[sel.get(o, 0)] if m.model != "direct" else m.inputs[0]
+                if s.kind == "const":
+                    raw[cn(m.net)] = ("c", 0 if s.port.startswith("GND") else self.FULL)
+                else:
+                    raw[cn(m.net)] = ("b", cn(s.net))
+            for o, i in sc.PASS.items():
+                raw[cn(o)] = ("b", cn(i))
+            for x in sc.LUTS:
+                raw[cn(f"L{x}_O")] = ("x", [cn(f"L{x}_I{j}") for j in range(4)])
+                raw[cn(f"L{x}_Co")] = ("m", [cn(p) for p in sc.lut_deps(x)[f"L{x}_Co"]])
+            for out, ins in sc.mux8_deps(0, 0).items():
+                raw[cn(out)] = ("s", [cn(p) for p in ins])
+        deps = {n: ([a] if op == "b" else [] if op == "c" else list(a)) for n, (op, a) in raw.items()}
+        order, state = [], {}
+        for n0 in sorted(raw):
+            if n0 in state:
+                continue
+            stack = [(n0, iter(deps[n0]))]
+            state[n0] = 1
+            while stack:
+                n, it = stack[-1]
+                for p in it:
+                    if p in raw and p not in state:
+                        state[p] = 1
+                        stack.append((p, iter(deps[p])))
+                        break
+                else:
+                    stack.pop()
+                    state[n] = 2
+                    order.append(n)
+        return [(n, *raw[n]) for n in order]
+
+    def deps(self, sels: dict) -> dict[str, list[str]]:
+        return {n: ([a] if op == "b" else [] if op == "c" else list(a)) for n, op, a in self.ops(sels)}
+
+    def cycles(self, sels: dict) -> list[set[str]]:
+        from loop_check import tarjan
+        d = self.deps(sels)
+        comps = tarjan(sorted(d), lambda n: [p for p in d.get(n, ()) if p in d])
+        return [set(c) for c in comps if len(c) > 1 or c[0] in d.get(c[0], ())]
+
+    def run(self, ops, forced: str | None = None, fval: int = 0) -> dict[str, int]:
+        v = dict(self.invec)
+        if forced is not None:
+            v[forced] = fval
+        F = self.FULL
+        for n, op, a in ops:
+            if n == forced:
+                continue
+            if op == "b":
+                v[n] = v[a]
+            elif op == "c":
+                v[n] = a
+            elif op == "x":
+                v[n] = v[a[0]] ^ v[a[1]] ^ v[a[2]] ^ v[a[3]]
+            elif op == "m":
+                x, y, z = v[a[0]], v[a[1]], v[a[2]]
+                v[n] = (x & y) | (x & z) | (y & z)
+            else:
+                x, y, s = v[a[0]], v[a[1]], v[a[2]]
+                v[n] = (s & y) | (~s & F & x)
+        return v
+
+    def break_loops(self, sels: dict, max_moves: int = 2000) -> list:
+        """Move one switch-matrix mux per array-level loop to its next input
+        (smallest fan-in first, as sm_configs.break_loops) until none is left."""
+        log, moves = [], {}
+        for _ in range(max_moves):
+            comps = self.cycles(sels)
+            if not comps:
+                return log
+            comp = comps[0]
+            cand = []
+            for t in self.tiles:
+                for o in REAL:
+                    m = M[o]
+                    if self.canon(t, m.net) not in comp:
+                        continue
+                    s = m.inputs[sels[t][o]]
+                    if s.kind != "const" and self.canon(t, s.net) in comp and moves.get((t, o), 0) < m.fan_in - 1:
+                        cand.append((m.fan_in, self.tn(t), o, t))
+            if not cand:
+                raise SystemExit(f"array loop {sorted(comp)[:6]} has no movable mux")
+            _, _, o, t = min(cand)
+            old = sels[t][o]
+            sels[t][o] = (old + 1) % M[o].fan_in
+            moves[(t, o)] = moves.get((t, o), 0) + 1
+            log.append((self.tn(t), o, old, sels[t][o], len(comp)))
+        raise SystemExit("array loop breaking did not converge")
+
+    # ------------------------------------------------------------ stimulus
+
+    def stim(self, name: str, sels: dict, order: list[int], lut_bits: dict | None = None):
+        """fastsim.Stim for one array config: config write, then the 2 W vectors."""
+        import fastsim
+        R, C = self.R, self.C
+        in_names = [f"FrameData_R{y}[{k}]" for y in range(R) for k in range(32)] + \
+                   [f"FrameStrobe_C{x}[{k}]" for x in range(C) for k in range(20)] + \
+                   [self.port(n) for n in self.border_in] + ["UserCLK"]
+        nb = len(self.border_in)
+        words = {t: sc.frame_words(sc.config_word(sels[t], (lut_bits or {}).get(t))) for t in self.tiles}
+        rows = []
+
+        def row(fd: dict[int, int], strobe: tuple[int, int] | None, inp: int, clk: int = 0):
+            r = np.zeros(len(in_names), dtype=np.uint8)
+            for y, w in fd.items():
+                for k in range(32):
+                    r[y * 32 + k] = (w >> k) & 1
+            if strobe:
+                x, f = strobe
+                r[R * 32 + x * 20 + f] = 1
+            base = R * 32 + C * 20
+            for j in range(nb):
+                r[base + j] = (inp >> j) & 1
+            r[-1] = clk
+            return r
+
+        sample = []
+        fd = {y: 0 for y in range(R)}
+        for x in range(C):
+            for f in order:
+                fd = {y: words[(x, y)][f] for y in range(R)}
+                rows += [row(fd, None, 0), row(fd, (x, f), 0), row(fd, None, 0)]
+                sample += [0, 0, 0]
+        rows.append(row(fd, None, 0))
+        sample.append(0)
+        for v in self.vecs:
+            rows.append(row(fd, None, v))
+            sample.append(1)
+        vals = self.run(self.ops(sels))
+        expected = ["".join(str((vals[n] >> t) & 1) for n in self.border_out) for t in range(self.NS)]
+        return fastsim.Stim(name, in_names, np.array(rows), np.array(sample, dtype=np.uint8),
+                            [self.port(n) for n in self.border_out], expected)
+
+
+# ---------------------------------------------------------------- grading
+
+def work_items(o: str, k: int) -> set:
+    """Model-level items of code k of mux o (as configs/sm_router.work_items)."""
+    import sm_router
+    return sm_router.work_items(o, k)
+
+
+def grade(arr: Array, sels: dict, only: list | None = None) -> dict:
+    """(tile, mux, code) -> items shown, exact at model level, for every mux
+    (or the (tile, mux) pairs in `only`) in one pass: lane block 0 is the
+    fault-free array, block i + 1 flips the output net of mux i at every
+    sample (Python ints as wide bit vectors: samples x blocks)."""
+    ops = arr.ops(sels)
+    vals = {n for n, _, _ in ops}
+    muxes = [(t, o) for t in arr.tiles for o in M if arr.canon(t, M[o].net) in vals] if only is None else only
+    NS, FULL = arr.NS, arr.FULL
+    nb = len(muxes) + 1
+    REP = sum(1 << (b * NS) for b in range(nb))
+    ALL = FULL * REP
+    flip = {}
+    for i, (t, o) in enumerate(muxes):
+        n = arr.canon(t, M[o].net)
+        flip[n] = flip.get(n, 0) | (FULL << ((i + 1) * NS))
+    v = {n: val * REP for n, val in arr.invec.items()}
+    for n, op, a in ops:
+        if op == "b":
+            r = v[a]
+        elif op == "c":
+            r = ALL if a else 0
+        elif op == "x":
+            r = v[a[0]] ^ v[a[1]] ^ v[a[2]] ^ v[a[3]]
+        elif op == "m":
+            x, y, z = v[a[0]], v[a[1]], v[a[2]]
+            r = (x & y) | (x & z) | (y & z)
+        else:
+            x, y, s = v[a[0]], v[a[1]], v[a[2]]
+            r = (s & y) | (~s & ALL & x)
+        if n in flip:
+            r ^= flip[n]
+        v[n] = r
+    diff = 0
+    for n in arr.border_out:
+        w = v[n]
+        diff |= w ^ ((w & FULL) * REP)
+    base = {n: w & FULL for n, w in v.items()}
+    shown = {}
+    for i, (t, o) in enumerate(muxes):
+        ob = (diff >> ((i + 1) * NS)) & FULL
+        if not ob:
+            continue
+        m = M[o]
+        k = sels[t].get(o, 0) if m.model != "direct" else 0
+        s = m.inputs[k]
+
+        def val(src):
+            return (0 if src.port.startswith("GND") else FULL) if src.kind == "const" else base[arr.canon(t, src.net)]
+        a = val(s)
+        items = set()
+        if ob & ~a & FULL:
+            items.add("t0")
+        if ob & a:
+            items.add("t1")
+        for b in range(len(m.sel)):
+            k2 = k ^ (1 << b)
+            if k2 < m.fan_in and ob & (a ^ val(m.inputs[k2])):
+                items.add(b)
+        shown[(t, o, k)] = items
+    return shown
+
+
+# ---------------------------------------------------------------- clocked (registered LUTs)
+
+def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int]) -> tuple[list[int], list[str]]:
+    """Registered LUTs (O = flop, posedge UserCLK, EN ? (SR ? reset value : LUT out) : hold).
+    Dual-rail 3-valued model (h, l) per net, per vector: inputs, clock edge,
+    sample. Returns (sample flag per vector, expected strings of the sampled
+    vectors). A vector is sampled once every flop of the array is defined."""
+    ops = arr.ops(sels)
+    q = {(t, x): (1, 1) for t in arr.tiles for x in sc.LUTS}
+    flop_of = {arr.canon(t, f"L{x}_O"): (t, x) for t in arr.tiles for x in sc.LUTS}
+
+    def comb(inp: int):
+        v = {}
+        for j, n in enumerate(arr.border_in):
+            b = (inp >> j) & 1
+            v[n] = (b, 1 - b)
+        for n, op, a in ops:
+            if n in flop_of:
+                v[n] = q[flop_of[n]]
+            elif op == "b":
+                v[n] = v[a]
+            elif op == "c":
+                v[n] = (1, 0) if a else (0, 1)
+            elif op == "x":
+                h, l = v[a[0]]
+                for p in a[1:]:
+                    h2, l2 = v[p]
+                    h, l = (h & l2) | (l & h2), (h & h2) | (l & l2)
+                v[n] = (h, l)
+            elif op == "m":
+                (h1, l1), (h2, l2), (h3, l3) = (v[p] for p in a)
+                v[n] = ((h1 & h2) | (h1 & h3) | (h2 & h3), (l1 & l2) | (l1 & l3) | (l2 & l3))
+            else:
+                (ha, la), (hb, lb), (hs, ls) = (v[p] for p in a)
+                # X select: X (at least as pessimistic as the gates)
+                v[n] = (1, 1) if hs and ls else ((hs & hb) | (ls & ha), (hs & lb) | (ls & la))
+        return v
+
+    flags, exp = [], []
+    for inp in vecs:
+        v = comb(inp)
+        nq = {}
+        for (t, x), old in q.items():
+            rv = plan[t][x][2]
+            h, l = v[arr.canon(t, f"L{x}_I0")]
+            for j in (1, 2, 3):
+                h2, l2 = v[arr.canon(t, f"L{x}_I{j}")]
+                h, l = (h & l2) | (l & h2), (h & h2) | (l & l2)
+            d = (h, l)
+            r = (rv, 1 - rv)
+            sh, sl = v[arr.canon(t, f"L{x}_SR")]
+            load = (1, 1) if sh and sl else (r if sh else d)
+            eh, el = v[arr.canon(t, f"L{x}_EN")]
+            nq[(t, x)] = (1, 1) if eh and el else (load if eh else old)
+        q = nq
+        ready = all(not (h and l) for h, l in q.values())
+        flags.append(int(ready))
+        if ready:
+            v = comb(inp)
+            if any(v[n][0] and v[n][1] for n in arr.border_out):
+                raise RuntimeError("defined flops but X at a border output")
+            exp.append("".join(str(v[n][0]) for n in arr.border_out))
+    return flags, exp
+
+
+def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict, vecs: list[int]):
+    """fastsim.Stim: config write (LUTs registered, reset values from plan), then per
+    vector: inputs, UserCLK 1, UserCLK 0 + sample (sampled once every flop is defined)."""
+    import fastsim
+    lut_bits = {t: {x: sc.cell.make_bits(sc.cell.XOR_TT, ff=1, i0_from_ci=0, reset_value=plan[t][x][2])
+                    for x in sc.LUTS} for t in arr.tiles}
+    base = arr.stim(name, sels, order, lut_bits)
+    n_cfg = int(np.argmax(base.sample))           # config-write steps (the first sample is the first vector)
+    rows = [base.rows[k] for k in range(n_cfg)]
+    sample = [0] * n_cfg
+    nb, col0 = len(arr.border_in), arr.R * 32 + arr.C * 20
+    flags, exp = seq_expected(arr, sels, plan, vecs)
+    for v, f in zip(vecs, flags):
+        r = base.rows[n_cfg - 1].copy()
+        for j in range(nb):
+            r[col0 + j] = (v >> j) & 1
+        r0, r1 = r.copy(), r.copy()
+        r1[-1] = 1
+        rows += [r0, r1, r0.copy()]
+        sample += [0, 0, f]
+    return fastsim.Stim(name, base.in_names, np.array(rows), np.array(sample, dtype=np.uint8),
+                        base.out_names, exp)
