@@ -88,10 +88,12 @@ class Array:
 
     # ------------------------------------------------------------ model
 
-    def ops(self, sels: dict, lut_ff: dict | None = None) -> list[tuple[str, str, object]]:
+    def ops(self, sels: dict, luts: dict | None = None) -> list[tuple[str, str, object]]:
         """(net, op, args) of the whole array, topologically sorted.
-        sels: tile -> mux selects. ops: b copy, c const, x XOR-4 LUT,
-        m carry majority, s MUX8LUT 2:1."""
+        sels: tile -> mux selects; luts: tile -> LUT -> (truth table, I0 from
+        Ci, FF, reset value), default XOR, I0 = I[0], combinational. ops: b copy,
+        c const, x XOR-4 LUT, l LUT (args: index nets I0mux..I3, table), q
+        registered LUT output (the flop), m carry majority, s MUX8LUT 2:1."""
         raw = {}
         for t in self.tiles:
             sel = sels[t]
@@ -105,11 +107,19 @@ class Array:
             for o, i in sc.PASS.items():
                 raw[cn(o)] = ("b", cn(i))
             for x in sc.LUTS:
-                raw[cn(f"L{x}_O")] = ("x", [cn(f"L{x}_I{j}") for j in range(4)])
+                lc = (luts or {}).get(t, {}).get(x)
+                if lc is None:
+                    raw[cn(f"L{x}_O")] = ("x", [cn(f"L{x}_I{j}") for j in range(4)])
+                elif lc[2]:
+                    raw[cn(f"L{x}_O")] = ("q", None)
+                else:
+                    idx = [cn(f"L{x}_Ci") if lc[1] else cn(f"L{x}_I0")] + [cn(f"L{x}_I{j}") for j in (1, 2, 3)]
+                    raw[cn(f"L{x}_O")] = ("l", (idx, lc[0]))
                 raw[cn(f"L{x}_Co")] = ("m", [cn(p) for p in sc.lut_deps(x)[f"L{x}_Co"]])
             for out, ins in sc.mux8_deps(0, 0).items():
                 raw[cn(out)] = ("s", [cn(p) for p in ins])
-        deps = {n: ([a] if op == "b" else [] if op == "c" else list(a)) for n, (op, a) in raw.items()}
+        deps = {n: ([a] if op == "b" else [] if op in ("c", "q") else list(a[0]) if op == "l" else list(a))
+                for n, (op, a) in raw.items()}
         order, state = [], {}
         for n0 in sorted(raw):
             if n0 in state:
@@ -305,14 +315,35 @@ def grade(arr: Array, sels: dict, only: list | None = None) -> dict:
 
 # ---------------------------------------------------------------- clocked (registered LUTs)
 
-def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int]) -> tuple[list[int], list[str]]:
-    """Registered LUTs (O = flop, posedge UserCLK, EN ? (SR ? reset value : LUT out) : hold).
-    Dual-rail 3-valued model (h, l) per net, per vector: inputs, clock edge,
-    sample. Returns (sample flag per vector, expected strings of the sampled
-    vectors). A vector is sampled once every flop of the array is defined."""
-    ops = arr.ops(sels)
+def lut_index_nets(arr: Array, t, x: str, i0ci: int) -> list[str]:
+    return [arr.canon(t, f"L{x}_Ci") if i0ci else arr.canon(t, f"L{x}_I0")] + \
+        [arr.canon(t, f"L{x}_I{j}") for j in (1, 2, 3)]
+
+
+def _lut3(tt: int, ins: list[tuple[int, int]]) -> tuple[int, int]:
+    """Dual-rail LUT: any X input -> X (as pessimistic as the gate-level mux tree)."""
+    if any(h and l for h, l in ins):
+        return (1, 1)
+    b = (tt >> sum(h << j for j, (h, _l) in enumerate(ins))) & 1
+    return (b, 1 - b)
+
+
+def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
+                 luts: dict | None = None) -> tuple[list[int], list[str]]:
+    """Clocked array: per vector inputs, UserCLK rising edge, sample.
+    luts: tile -> LUT -> (truth table, I0 from Ci, FF, reset value); default
+    (from plan, the clocked SR / EN configs): XOR, I0 = I[0], registered,
+    reset value plan[t][x][2]. Flop: EN ? (SR ? reset value : LUT out) : hold.
+    Dual-rail 3-valued (h, l), at least as pessimistic as the gates (an X
+    select, EN, SR or LUT input gives X). Returns (sample flag per vector,
+    expected strings): a vector is sampled once every flop of a registered
+    LUT is defined."""
+    if luts is None:
+        luts = {t: {x: (sc.cell.XOR_TT, 0, 1, plan[t][x][2]) for x in sc.LUTS} for t in arr.tiles}
+    ops = arr.ops(sels, luts)
     q = {(t, x): (1, 1) for t in arr.tiles for x in sc.LUTS}
     flop_of = {arr.canon(t, f"L{x}_O"): (t, x) for t in arr.tiles for x in sc.LUTS}
+    regs = [(t, x) for t in arr.tiles for x in sc.LUTS if luts[t][x][2]]
 
     def comb(inp: int):
         v = {}
@@ -320,12 +351,14 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int]) -> tuple[l
             b = (inp >> j) & 1
             v[n] = (b, 1 - b)
         for n, op, a in ops:
-            if n in flop_of:
+            if op == "q":
                 v[n] = q[flop_of[n]]
             elif op == "b":
                 v[n] = v[a]
             elif op == "c":
                 v[n] = (1, 0) if a else (0, 1)
+            elif op == "l":
+                v[n] = _lut3(a[1], [v[p] for p in a[0]])
             elif op == "x":
                 h, l = v[a[0]]
                 for p in a[1:]:
@@ -346,19 +379,14 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int]) -> tuple[l
         v = comb(inp)
         nq = {}
         for (t, x), old in q.items():
-            rv = plan[t][x][2]
-            h, l = v[arr.canon(t, f"L{x}_I0")]
-            for j in (1, 2, 3):
-                h2, l2 = v[arr.canon(t, f"L{x}_I{j}")]
-                h, l = (h & l2) | (l & h2), (h & h2) | (l & l2)
-            d = (h, l)
-            r = (rv, 1 - rv)
+            tt, i0ci, _ff, rv = luts[t][x]
+            d = _lut3(tt, [v[n] for n in lut_index_nets(arr, t, x, i0ci)])
             sh, sl = v[arr.canon(t, f"L{x}_SR")]
-            load = (1, 1) if sh and sl else (r if sh else d)
+            load = (1, 1) if sh and sl else ((rv, 1 - rv) if sh else d)
             eh, el = v[arr.canon(t, f"L{x}_EN")]
             nq[(t, x)] = (1, 1) if eh and el else (load if eh else old)
         q = nq
-        ready = all(not (h and l) for h, l in q.values())
+        ready = all(not (q[r][0] and q[r][1]) for r in regs)
         flags.append(int(ready))
         if ready:
             v = comb(inp)
@@ -368,18 +396,21 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int]) -> tuple[l
     return flags, exp
 
 
-def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict, vecs: list[int]):
+def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict, vecs: list[int],
+                 luts: dict | None = None):
     """fastsim.Stim: config write (LUTs registered, reset values from plan), then per
     vector: inputs, UserCLK 1, UserCLK 0 + sample (sampled once every flop is defined)."""
     import fastsim
-    lut_bits = {t: {x: sc.cell.make_bits(sc.cell.XOR_TT, ff=1, i0_from_ci=0, reset_value=plan[t][x][2])
-                    for x in sc.LUTS} for t in arr.tiles}
+    if luts is None:
+        luts = {t: {x: (sc.cell.XOR_TT, 0, 1, plan[t][x][2]) for x in sc.LUTS} for t in arr.tiles}
+    lut_bits = {t: {x: sc.cell.make_bits(tt, ff=ff, i0_from_ci=i0, reset_value=rv)
+                    for x, (tt, i0, ff, rv) in luts[t].items()} for t in arr.tiles}
     base = arr.stim(name, sels, order, lut_bits)
     n_cfg = int(np.argmax(base.sample))           # config-write steps (the first sample is the first vector)
     rows = [base.rows[k] for k in range(n_cfg)]
     sample = [0] * n_cfg
     nb, col0 = len(arr.border_in), arr.R * 32 + arr.C * 20
-    flags, exp = seq_expected(arr, sels, plan, vecs)
+    flags, exp = seq_expected(arr, sels, plan, vecs, luts)
     for v, f in zip(vecs, flags):
         r = base.rows[n_cfg - 1].copy()
         for j in range(nb):

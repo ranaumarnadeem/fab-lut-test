@@ -339,6 +339,123 @@ def clocked_configs(arr: fabric.Array, n_cfg: int = 8):
     return out
 
 
+def drive_net(cfg: Cfg, net: str, taken: set, used_in: set) -> bool:
+    """Drive `net` from a border input of its own: backward Dijkstra through
+    free muxes (cost 1 per mux), direct wires and pass-throughs (0); nets
+    already on another drive path (`taken`) and used border inputs are not
+    reused, so every driven net carries an independent signal."""
+    g = cfg.g
+    border = g.border_in
+    dist, prev, pq = {net: 0.0}, {}, [(0.0, net)]
+    goal = None
+    while pq:
+        d, n = heapq.heappop(pq)
+        if d > dist.get(n, 1e18):
+            continue
+        if n in border and n not in used_in:
+            goal = n
+            break
+        cand = []
+        i = g.mux_of.get(n)
+        if i is not None:
+            m = M[i[1]]
+            if m.model == "direct":
+                cand.append((g.arr.canon(i[0], m.inputs[0].net), 0.0, None))
+            elif i in cfg.sel:
+                continue   # set already: it carries another signal
+            else:
+                for k, src in enumerate(m.inputs):
+                    if src.kind != "const":
+                        cand.append((g.arr.canon(i[0], src.net), 1.0, (i, k)))
+        for p in g.pass_pred.get(n, ()):
+            cand.append((p, 0.0, None))
+        for t2, c, step in cand:
+            if t2 in taken:
+                continue
+            nd = d + c
+            if nd < dist.get(t2, 1e18):
+                dist[t2] = nd
+                prev[t2] = (n, step)
+                heapq.heappush(pq, (nd, t2))
+    if goal is None:
+        return False
+    steps, nets, n = [], [goal], goal
+    while n != net:
+        p, step = prev[n]
+        if step:
+            steps.append(step)
+        nets.append(p)
+        n = p
+    done = []
+    for i, k in steps:
+        if cfg.assign(i, k):
+            done.append(i)
+        else:
+            for i2 in done:
+                del cfg.sel[i2]
+            return False
+    taken.update(nets)
+    used_in.add(goal)
+    return True
+
+
+LUT_CONFIGS = {   # name: (truth table, I0 from Ci, FF, reset value), as configs/configs.py
+    "BC1": (sc.cell.XNOR_TT, 1, 0, 1),
+    "D0C": (sc.cell.XOR_TT, 0, 1, 0),
+    "D1": (sc.cell.XOR_TT, 0, 1, 1),
+}
+
+
+def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
+    """Array version of the LUT configs: every LUT gets the cell config, its
+    inputs I0..I3 (and Ci when I0 comes from Ci), and every tile's J_SR /
+    J_EN, are driven each from a border input of its own (drive_net), SR and
+    EN muxes on J_SR / J_EN, every LUT output routed to the border. Tiles
+    farthest from the border first. Returns [(name, sels, luts, report)]."""
+    g = Graph(arr)
+    g.border_in = set(arr.border_in)
+    g.pass_pred = defaultdict(list)
+    for t in arr.tiles:
+        for o, i in sc.PASS.items():
+            g.pass_pred[arr.canon(t, o)].append(arr.canon(t, i))
+    depth = {t: min(t[0], t[1], arr.C - 1 - t[0], arr.R - 1 - t[1]) for t in arr.tiles}
+    order = sorted(arr.tiles, key=lambda t: (-depth[t], t[1], t[0]))
+    out = []
+    for c, name in enumerate(names):
+        lc = LUT_CONFIGS[name]
+        cfg = Cfg(g)
+        taken, used_in = set(), set()
+        miss = []
+        for t in order:
+            for x in sc.LUTS:
+                cfg.assign((t, f"L{x}_SR"), 1)
+                cfg.assign((t, f"L{x}_EN"), 1)
+            for jn in ("J_SR_BEG[0]", "J_EN_BEG[0]"):
+                if not drive_net(cfg, arr.canon(t, jn), taken, used_in):
+                    miss.append(f"{arr.tn(t)}.{jn}")
+            for x in sc.LUTS:
+                # Ci: LB..LH take the previous LUT's carry, LA the south tile's Co
+                # (a border input only in the south row): carry chain, not driven
+                pins = (["Ci"] if lc[1] and x == "A" and t[1] == arr.R - 1 else [] if lc[1] else ["I0"]) + \
+                    ["I1", "I2", "I3"]
+                for pin in pins:
+                    n = arr.canon(t, f"L{x}_{pin}")
+                    if not drive_net(cfg, n, taken, used_in):
+                        miss.append(f"{arr.tn(t)}.L{x}_{pin}")
+        unrouted = [f"{arr.tn(t)}.L{x}" for t in order for x in sc.LUTS
+                    if not route_net(cfg, arr.canon(t, f"L{x}_O"))]
+        sels = fill(g, cfg, {}, c)
+        if arr.cycles(sels):
+            moves = arr.break_loops(sels)
+            print(f"    {name}: {len(moves)} loop moves", flush=True)
+        luts = {t: {x: lc for x in sc.LUTS} for t in arr.tiles}
+        rep = {"not driven": miss, "outputs not routed": unrouted, "border inputs used": len(used_in)}
+        print(f"  {name}: {len(used_in)} border inputs used, {len(miss)} nets not driven independently "
+              f"{miss[:6]}, LUT outputs not routed {unrouted[:6]}", flush=True)
+        out.append((name, sels, luts, rep))
+    return out
+
+
 def gain(g, sels, open_work, hist, only):
     return sum(len(open_work[key] & items) * (1 + hist.get(key[:2], 0))
                for key, items in fabric.grade(g.arr, sels, only).items() if key in open_work)

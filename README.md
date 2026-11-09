@@ -91,7 +91,12 @@ routes every mux code of every tile to the border. Switch-matrix faults, strict:
 | 2x2 | 32112 | 97.3% | **99.40%** (27 + 8 configs) | 99.40% |
 | 3x3 | 72252 | 94.8% | **99.40%** (37 + 8 configs) | 99.40% |
 
-The centre tile of the 3x3 array, which has no border port, reaches the same coverage.
+LUT faults with the three LUT configs at array level (every LUT input driven from a
+border input of its own, every LUT output routed to the border): 2x2 and 3x3 **99.46%**,
+the tile level (strict). All faults, router + clocked + LUT configs: 98.97% (2x2), 99.00%
+(3x3). The centre tile of the 3x3 array, which has no border port, reaches the same
+coverage. An Icarus reference check (`sim/array_check.py`) compares a fault sample
+against the fast kernel.
 More configs than one tile needs (37 vs 16): exits to the border are shared between a
 tile's own codes and the neighbour signals it relays. With 16 router configs the 3x3
 array is at 99.25%.
@@ -177,7 +182,9 @@ Arrays (the netlists and fault lists are built, not checked in):
 python3 configs/fab_router.py 3 3
 python3 sim/run_array.py faultsim 3 3 --suite router --jobs 4
 python3 sim/run_array.py faultsim 3 3 --suite clocked --jobs 4
+python3 sim/run_array.py faultsim 3 3 --suite lut --jobs 4
 python3 sim/run_array.py report
+python3 sim/array_check.py 3 3 --suite router
 ```
 
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
@@ -206,7 +213,7 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-LUT configs and the power-up proof at array level, the full fabric (IO and term tiles,
+The power-up proof at array level, the full fabric (IO and term tiles,
 other tile types), bridging faults and timing.
 
 ## License

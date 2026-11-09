@@ -5,4 +5,4 @@ flatten -noscopeinfo
 tee -o build/array_@A@_check.rpt check
 stat
 write_json synth/netlist_array_@A@.json
-write_verilog -noattr synth/netlist_array_@A@.v
+write_verilog -noattr -noexpr -nohex -nodec synth/netlist_array_@A@.v

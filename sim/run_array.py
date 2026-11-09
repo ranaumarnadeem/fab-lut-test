@@ -64,10 +64,27 @@ def clocked(arr: fabric.Array):
     return stims, {}
 
 
+def lut(arr: fabric.Array):
+    """LUT configs BC1, D0C, D1 (configs/fab_router.lut_configs), 16 code + 240 random vectors, clocked."""
+    import random
+    import fab_router
+    stims = []
+    for c, (name, sels, luts, _rep) in enumerate(fab_router.lut_configs(arr)):
+        rnd = random.Random(3000 + c)
+        vecs = list(arr.vecs) + [rnd.getrandbits(len(arr.border_in)) for _ in range(240)]
+        order = sc.cell.rotated(list(range(sc.N_FRAMES)), {"BC1": 7, "D0C": 18, "D1": 3}[name])
+        stims.append(fabric.stim_clocked(arr, name, sels, order, None, vecs, luts))
+        print(f"  {name}: {int(stims[-1].sample.sum())} samples", flush=True)
+    return stims, {}
+
+
+SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut}
+
+
 def cmd_faultsim(a) -> None:
     arr = fabric.Array(a.R, a.C)
     t0 = time.time()
-    stims, logs = {"uniform": uniform, "router": routed, "clocked": clocked}[a.suite](arr)
+    stims, logs = SUITES[a.suite](arr)
     print(f"{arr.name}: {len(arr.tiles)} tiles, {len(arr.border_in)} border inputs (w = {arr.W}), "
           f"{len(arr.border_out)} border outputs; {len(stims)} configs built in {time.time() - t0:.1f} s; "
           f"loop moves per config {[len(v) for v in logs.values()]}", flush=True)
@@ -132,6 +149,7 @@ def cmd_report(a) -> None:
     tm = tile_map()
     rt = {r["id"]: r for r in csv.DictReader((REPORTS / "tile_generic_rt_matrix.csv").open())}
     ck = {r["id"]: r for r in csv.DictReader((REPORTS / "tile_generic_ck_matrix.csv").open())}
+    lt = {r["id"]: r for r in csv.DictReader((REPORTS / "tile_generic_matrix.csv").open())}
     out = ["# LUT4AB arrays: fabric-level test (Phase 10)", "",
            "R x C arrays of the tile netlist, FABulous wiring (rtl/gen_array.py), stimulus only at the "
            "border inputs, observation only at the border outputs, config through FrameData rows and "
@@ -140,17 +158,20 @@ def cmd_report(a) -> None:
            "result (tile router RT00..15, and the tile clocked configs where the suite has clocked).", "",
            "Suites: uniform = tile router config RTc in every tile (array loops broken); router = "
            "configs/fab_router.py on the array; clocked = 8 registered-LUT SR / EN configs, flops routed "
-           "to the border.", ""]
+           "to the border; lut = BC1, D0C, D1 in every LUT, LUT inputs (Ci for BC1), J_SR and J_EN each "
+           "driven from a border input of its own, LUT outputs routed to the border, 256 clocked "
+           "vectors (tile level: the tile LUT configs, reports/tile_generic_matrix.csv).", ""]
     for R, C in [(2, 2), (3, 3)]:
         arr = fabric.Array(R, C)
-        avail = [su for su in ("uniform", "router", "clocked")
+        avail = [su for su in ("uniform", "router", "clocked", "lut")
                  if (REPORTS / f"{arr.name}_{su}_matrix.csv").exists()]
         if not avail:
             continue
         mats = {su: list(csv.DictReader((REPORTS / f"{arr.name}_{su}_matrix.csv").open())) for su in avail}
         ncfg = {su: len([k for k in mats[su][0] if k not in ("id", "path", "polarity", "type", "any")])
                 for su in avail}
-        combos = [c for c in (["uniform"], ["router"], ["uniform", "clocked"], ["router", "clocked"])
+        combos = [c for c in (["uniform"], ["router"], ["router", "clocked"], ["lut"],
+                              ["router", "clocked", "lut"])
                   if all(su in avail for su in c)]
         out += [f"## {arr.name}: {len(arr.tiles)} tiles, {len(arr.border_in)} border inputs, "
                 f"{len(arr.border_out)} border outputs", "",
@@ -179,8 +200,11 @@ def cmd_report(a) -> None:
             cells = []
             for combo in combos:
                 d = sum(any(mats[su][j]["any"] == "D" for su in combo) for j in idx)
-                td = sum(info[j][2] is not None and (rt[info[j][2]]["any"] == "D" or
-                         ("clocked" in combo and ck[info[j][2]]["any"] == "D")) for j in idx)
+                td = sum(info[j][2] is not None and (
+                    ("router" in combo and rt[info[j][2]]["any"] == "D") or
+                    ("uniform" in combo and rt[info[j][2]]["any"] == "D") or
+                    ("clocked" in combo and ck[info[j][2]]["any"] == "D") or
+                    ("lut" in combo and lt[info[j][2]]["any"] == "D")) for j in idx)
                 cells += [f"{100 * d / len(idx):.2f}%", f"{100 * td / len(idx):.2f}%"]
             lab = "**" + cls + "**" if pos == "all" else cls
             out.append(f"| {lab} | {pos} | {len(idx)} | " + " | ".join(cells) + " |")
@@ -195,7 +219,7 @@ def main() -> None:
     p = sub.add_parser("faultsim")
     p.add_argument("R", type=int)
     p.add_argument("C", type=int)
-    p.add_argument("--suite", choices=["uniform", "router", "clocked"], default="uniform")
+    p.add_argument("--suite", choices=["uniform", "router", "clocked", "lut"], default="uniform")
     p.add_argument("--jobs", type=int, default=os.cpu_count())
     p = sub.add_parser("analyze")
     p.add_argument("R", type=int)
