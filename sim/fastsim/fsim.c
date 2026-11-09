@@ -209,7 +209,9 @@ static void settle(Sim *s, u64 *dead, long limit) {
             s->rec = 0;
             if (!s->hn) return;
             if (c2[0] & 1) {
-                if (++strikes >= 3) { dead[0] |= 1; return; }
+                /* local mode needs more rounds for the faulty lanes to calm down
+                 * (only their oscillating nets go X): allow the fault-free lane 10 */
+                if (++strikes >= 10) { dead[0] |= 1; return; }
             }
             for (int k = 0; k < s->ntouched; k++) {
                 int n = s->touched[k];

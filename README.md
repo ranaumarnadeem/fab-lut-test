@@ -128,6 +128,36 @@ enter the 16 wires the W_IO output muxes read. Test access, not the configs, is 
 limit at fabric level; this is where boundary scan at the pads and on-chip compaction
 come in.
 
+### Test access built from configuration
+
+At the fabric border the limit is observation. The fix stays within "test through
+configuration": `configs/fab_router.py --backbone` first links the LUTs of every row into
+a chain (each LUT output routed into an input of the next LUT, the chain end to the row's
+W_IO pad) and then routes the targets into the chain LUTs' free inputs. With every LUT
+registered as XOR (`sim/run_array.py --suite chain`), each chain is a signature register
+made only of configuration. Fabric block 4x3, strict:
+
+| configs | without backbone | registered backbone |
+|---|---|---|
+| 30 | 50.4% (60.1% with clocked + LUT configs) | **68.5%** (**71.7%**) |
+| 71 (earlier best) | 60.8% | |
+
+### Power-up check and oscillation in the fast kernel
+
+`sim/fastsim/powerup.py` runs the cone-split power-up enumeration on the fast kernel
+(per-lane deposits, definitely-written masks): on the branch-fault tile it agrees with the
+Icarus runs (604 of 604 faults for the baseline configs) in about 1.5 min instead of hours,
+and decides faults where Icarus timed out. `FASTSIM_OSC=local` keeps a lane that
+oscillates under its fault alive with only the oscillating nets at X; on the 5x5 array
+this recovers 882 of the 1050 switch-matrix faults the whole-lane model lost.
+
+### Full demo fabric
+
+`synth/build_fullfabric.sh` synthesizes every tile type of the FABulous demo fabric and
+flattens FABulous's own `eFPGA.v`: 577941 gates, 1157594 faults. The fast kernel simulates
+one config of it at 0.8 ms per fault on 2 threads (all faults: about 15 min per config).
+Coverage of the full fabric needs models of the RegFile, DSP and RAM_IO BELs (not done).
+
 ### Findings about FABulous
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
@@ -244,8 +274,9 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-The power-up proof at array level, the full fabric (IO and term tiles,
-other tile types), bridging faults and timing.
+Models of the RegFile, DSP and RAM_IO BELs for full-fabric coverage, the power-up check
+at fabric scale (the cone computation in Python is the slow part), bridging faults and
+timing.
 
 ## License
 
