@@ -139,8 +139,14 @@ made only of configuration. Fabric block 4x3, strict:
 
 | configs | without backbone | registered backbone |
 |---|---|---|
-| 30 | 51.7% (61.0% with clocked + LUT configs) | **68.5%** (**71.7%**) |
+| 30 | 51.7% (61.0% with clocked + LUT configs) | 68.5% (71.7%) |
+| 60, two chains per row, XOR / XNOR alternating | | **74.1%** (**76.4%**) |
 | 71 (earlier best) | 61.7% | |
+
+With two chains per row each row ends at two pads, and alternating XOR / XNOR configs
+cover the faults a fixed parity cancels. Both chain styles together with the clocked and
+LUT configs reach 79.4%, all suites together 82.6%. The faults left are mostly never
+observed at a pad.
 
 ### Power-up check and oscillation in the fast kernel
 
@@ -150,13 +156,37 @@ Icarus runs (604 of 604 faults for the baseline configs) in about 1.5 min instea
 and decides faults where Icarus timed out. `FASTSIM_OSC=local` keeps a lane that
 oscillates under its fault alive with only the oscillating nets at X; on the 5x5 array
 this recovers 882 of the 1050 switch-matrix faults the whole-lane model lost.
+Faults with at most 10 undefined storage elements are enumerated directly (no cones),
+the kernel calls run on threads and a fault stops at its first decided group. Arrays,
+all suites, every power-up state: 2x2 99.54% (strict 98.97%), 3x3 **99.57%** (strict
+99.00%, all 506 X-only faults detected, 3.7 h).
 
 ### Full demo fabric
 
 `synth/build_fullfabric.sh` synthesizes every tile type of the FABulous demo fabric and
 flattens FABulous's own `eFPGA.v`: 577941 gates, 1157594 faults. The fast kernel simulates
 one config of it at 0.8 ms per fault on 2 threads (all faults: about 15 min per config).
-Coverage of the full fabric needs models of the RegFile, DSP and RAM_IO BELs (not done).
+
+Every tile type is modelled from its generated FABulous sources (`configs/tile_model.py`:
+switch matrix, pass-throughs, BEL pins); RegFile, DSP and RAM_IO BELs are opaque: their
+outputs, and every net they reach through fixed wiring, are never used as a source. The
+router with the backbone (`sim/run_fullfabric.py route`, two chains per row, each ending
+at a W_IO pad) covers 51.7% of the model-level items in 12 configs (4.2 h). Fault
+simulation of a seeded random sample of 10,000 faults, every LUT registered (XOR / XNOR
+alternating), 64 clocked vectors on the 28 pads, strict (7 min on 4 threads):
+
+| tile type | sampled | detected |
+|---|---|---|
+| all | 10000 | **63.5% +- 0.9** |
+| LUT4AB | 6935 | 72.8% +- 1.1 |
+| W_IO | 175 | 70.3% +- 6.8 |
+| RAM_IO | 513 | 50.9% +- 4.3 |
+| RegFile | 1178 | 40.8% +- 2.8 |
+| DSP (wrapper, top, bottom) | 1184 | 31.6-50.6% |
+
+Every sampled fault left reaches a pad as X (none stays unobserved), and the 12th config
+still adds 1.6 points: more configs, BEL models (registers initialized through their
+config) and the power-up check are the next steps.
 
 ### Findings about FABulous
 
@@ -246,6 +276,15 @@ python3 sim/array_check.py 3 3 --suite router
 python3 sim/array_cover.py 3 3 --suites merged_nopolish lut router_nopolish clocked
 ./synth/build_wio.sh && ./synth/build_fabric.sh 4 3
 python3 configs/fab_router.py 4 3 --fabric --no-polish
+python3 sim/array_powerup.py 3 3
+```
+
+Full demo fabric:
+
+```bash
+./synth/build_fullfabric.sh
+python3 sim/run_fullfabric.py route --configs 12 --chains 2
+python3 sim/run_fullfabric.py faultsim --sample 10000 --jobs 4
 ```
 
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
@@ -274,9 +313,10 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-Models of the RegFile, DSP and RAM_IO BELs for full-fabric coverage, the power-up check
-at fabric scale (the cone computation in Python is the slow part), bridging faults and
-timing.
+Behavioural models of the RegFile, DSP and RAM_IO BELs (they are opaque in the
+full-fabric run), the configuration logic (ConfigFSM, frame registers: the simulation
+writes FrameData / FrameStrobe directly), the power-up check on the full fabric,
+bridging faults and timing.
 
 ## License
 
