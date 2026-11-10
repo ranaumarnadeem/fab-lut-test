@@ -35,6 +35,7 @@ import fullfabric  # noqa: E402
 import sm_configs as sc  # noqa: E402
 
 CFG = ROOT / "configs" / "fab_router_fullfabric.json"
+CKPT = ROOT / "build" / "fab_router_fullfabric_ckpt.json"   # after every config (resume: --extend)
 REPORTS = ROOT / "reports"
 
 
@@ -44,18 +45,20 @@ def cmd_route(a) -> None:
     t0 = time.time()
     prior, plog = [], []
     if a.extend:
-        d = json.loads(CFG.read_text())
+        d = json.loads((CKPT if a.resume else CFG).read_text())
         prior, plog = d["configs"], d["log"]
         assert d["chains"] == a.chains, "--extend with another --chains"
 
-    def save(cs, lg, total, left):   # after every config: a reclaimed container resumes with --extend
-        CFG.write_text(json.dumps({"configs": prior + cs, "log": plog + lg, "chains": a.chains,
-                                   "items": {"total": total, "shown": total - left}}, indent=0))
+    def save(cs, lg, total, left, path=CKPT):
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"configs": prior + cs, "log": plog + lg, "chains": a.chains,
+                                    "items": {"total": total, "shown": total - left}}, indent=0))
     configs, open_work, total, log, _ = fr.route_all(ff, a.configs, do_polish=False, prior=prior or None,
                                                      seed=lambda cfg, b: fr.backbone(cfg, b),
                                                      idx0=len(prior), checkpoint=save)
-    configs = prior + configs
     done = total - sum(len(v) for v in open_work.values())
+    save(configs, log, total, total - done, CFG)
+    configs = prior + configs
     print(f"fullfabric: {len(configs)} configs, {done} of {total} items ({100 * done / total:.2f}%), "
           f"{time.time() - t0:.0f} s -> {CFG.relative_to(ROOT)}")
 
@@ -124,6 +127,7 @@ def main() -> None:
     p.add_argument("--configs", type=int, default=12)
     p.add_argument("--chains", type=int, default=2)
     p.add_argument("--extend", action="store_true", help="add --configs configs to the routed ones")
+    p.add_argument("--resume", action="store_true", help="with --extend: start from the checkpoint")
     p = sub.add_parser("faultsim")
     p.add_argument("--sample", type=int, default=10000)
     p.add_argument("--jobs", type=int, default=4)
