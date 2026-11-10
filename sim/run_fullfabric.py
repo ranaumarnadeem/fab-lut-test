@@ -47,13 +47,15 @@ def cmd_route(a) -> None:
         d = json.loads(CFG.read_text())
         prior, plog = d["configs"], d["log"]
         assert d["chains"] == a.chains, "--extend with another --chains"
+
+    def save(cs, lg, total, left):   # after every config: a reclaimed container resumes with --extend
+        CFG.write_text(json.dumps({"configs": prior + cs, "log": plog + lg, "chains": a.chains,
+                                   "items": {"total": total, "shown": total - left}}, indent=0))
     configs, open_work, total, log, _ = fr.route_all(ff, a.configs, do_polish=False, prior=prior or None,
                                                      seed=lambda cfg, b: fr.backbone(cfg, b),
-                                                     idx0=len(prior))
-    configs, log = prior + configs, plog + log
+                                                     idx0=len(prior), checkpoint=save)
+    configs = prior + configs
     done = total - sum(len(v) for v in open_work.values())
-    CFG.write_text(json.dumps({"configs": configs, "log": log, "chains": a.chains,
-                               "items": {"total": total, "shown": done}}, indent=0))
     print(f"fullfabric: {len(configs)} configs, {done} of {total} items ({100 * done / total:.2f}%), "
           f"{time.time() - t0:.0f} s -> {CFG.relative_to(ROOT)}")
 

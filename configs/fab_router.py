@@ -676,7 +676,8 @@ def polish(g: Graph, sels: dict, open_work: dict, hist: dict, max_cand: int = 40
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do_polish: bool = True,
-              hist0: dict | None = None, prior: list | None = None, seed=None, idx0: int = 0):
+              hist0: dict | None = None, prior: list | None = None, seed=None, idx0: int = 0,
+              checkpoint=None):
     """prior: configs already chosen (selects per tile name): their shown items
     are removed first and the new configs only add to them (--extend). idx0: index
     of the first new config (fill decorrelation, frame order)."""
@@ -724,6 +725,8 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do
         stall = 0
         configs.append({arr.tn(t): s for t, s in sels.items()})
         log.append({"gain": gained, "open": left})
+        if checkpoint is not None:
+            checkpoint(configs, log, total, left)
     return configs, open_work, total, log, hist
 
 
