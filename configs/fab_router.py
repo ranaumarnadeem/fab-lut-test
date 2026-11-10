@@ -676,9 +676,10 @@ def polish(g: Graph, sels: dict, open_work: dict, hist: dict, max_cand: int = 40
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do_polish: bool = True,
-              hist0: dict | None = None, prior: list | None = None, seed=None):
+              hist0: dict | None = None, prior: list | None = None, seed=None, idx0: int = 0):
     """prior: configs already chosen (selects per tile name): their shown items
-    are removed first and the new configs only add to them (--extend)."""
+    are removed first and the new configs only add to them (--extend). idx0: index
+    of the first new config (fill decorrelation, frame order)."""
     g = Graph(arr)
     reach = g.reachable()
     open_work = {(t, o, k): fabric.work_items_m(MM((t, o)), k) for t, o in g.ids if (t, o) in reach
@@ -696,7 +697,7 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True, do
     configs, log, stall = [], [], 0
     while len(configs) < max_configs and any(open_work.values()):
         t0 = time.time()
-        sels = build_config(g, open_work, hist, len(configs), seed)
+        sels = build_config(g, open_work, hist, idx0 + len(configs), seed)
         if do_polish:
             polish(g, sels, open_work, hist)
         shown = fabric.grade(arr, sels)

@@ -172,6 +172,20 @@ class FullFabric(fabric.Array):
         self.route_max_reach = 10000  # and the incremental loop check (exact check per config)
         self.loop_max_moves = 20000
 
+    def bel_ops(self, t) -> dict:
+        """DSP_bot: MULADD at config 0 (Q = A * B + C, combinational). RegFile (registers X
+        at power-up) and RAM_IO (BRAM data) stay opaque."""
+        if self.types.get(t) != "DSP_bot":
+            return {}
+        c = self.__dict__.setdefault("_belops", {})
+        if t in c:
+            return c[t]
+        gt = self.gen["DSP_bot"]
+        pin = {p.split(".", 1)[1]: n for n, p in {**gt.bel_in, **gt.bel_out}.items() if "MULADD" in p}
+        ins = [self.canon(t, pin[f"{x}{i}"]) for x, w in (("A", 8), ("B", 8), ("C", 20)) for i in range(w)]
+        c[t] = {pin[f"Q{k}"]: ("M", (ins, k)) for k in range(20)}
+        return c[t]
+
     def _taint(self) -> set:
         """Nets that carry an unknown value whatever the selects: the BEL outputs of the
         unmodelled tile types (registers X at power-up) and the W_IO registered pad
@@ -191,7 +205,8 @@ class FullFabric(fabric.Array):
             passes = sc.PASS if typ == "LUT4AB" else {} if typ == "W_IO" else self.gen[typ].passes
             for o, i in passes.items():
                 edge(self.canon(t, i), self.canon(t, o))
-        seeds = [self.canon(t, n) for t in self.other_tiles for n in self.gen[self.types[t]].bel_out]
+        seeds = [self.canon(t, n) for t in self.other_tiles for n in self.gen[self.types[t]].bel_out
+                 if n not in self.bel_ops(t)]
         seeds += [self.canon(t, q) for t in self.io_tiles for q in wm.Q_SOURCES]
         out, stack = set(seeds), list(seeds)
         while stack:

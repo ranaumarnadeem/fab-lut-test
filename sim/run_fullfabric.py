@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Full demo fabric: backbone configs, registered chains, sampled fault simulation (Phase 12).
 
-  python3 sim/run_fullfabric.py route --configs N [--chains 2]
+  python3 sim/run_fullfabric.py route --configs N [--chains 2] [--extend]
   python3 sim/run_fullfabric.py faultsim [--sample 10000] [--jobs 4]
 
 route: configs/fab_router.py on configs/fullfabric.FullFabric (no polish, backbone:
@@ -42,8 +42,15 @@ def cmd_route(a) -> None:
     ff = fullfabric.FullFabric()
     fr.CHAINS = a.chains
     t0 = time.time()
-    configs, open_work, total, log, _ = fr.route_all(ff, a.configs, do_polish=False,
-                                                     seed=lambda cfg, b: fr.backbone(cfg, b))
+    prior, plog = [], []
+    if a.extend:
+        d = json.loads(CFG.read_text())
+        prior, plog = d["configs"], d["log"]
+        assert d["chains"] == a.chains, "--extend with another --chains"
+    configs, open_work, total, log, _ = fr.route_all(ff, a.configs, do_polish=False, prior=prior or None,
+                                                     seed=lambda cfg, b: fr.backbone(cfg, b),
+                                                     idx0=len(prior))
+    configs, log = prior + configs, plog + log
     done = total - sum(len(v) for v in open_work.values())
     CFG.write_text(json.dumps({"configs": configs, "log": log, "chains": a.chains,
                                "items": {"total": total, "shown": done}}, indent=0))
@@ -114,6 +121,7 @@ def main() -> None:
     p = sub.add_parser("route")
     p.add_argument("--configs", type=int, default=12)
     p.add_argument("--chains", type=int, default=2)
+    p.add_argument("--extend", action="store_true", help="add --configs configs to the routed ones")
     p = sub.add_parser("faultsim")
     p.add_argument("--sample", type=int, default=10000)
     p.add_argument("--jobs", type=int, default=4)

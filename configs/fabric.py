@@ -49,9 +49,26 @@ def _deps(op: str, a) -> list[str]:
         return [a]
     if op in ("c", "q"):
         return []
-    if op == "l":
+    if op in ("l", "M"):
         return list(a[0])
     return list(a)
+
+
+def _muladd(vals: list[int], width: int) -> list[int]:
+    """MULADD at config 0 (DSP_bot BEL: no registers, unsigned): Q = A * B + C mod 2^20.
+    vals: bit vectors (width lanes) of A0..A7, B0..B7, C0..C19 -> Q0..Q19."""
+    import numpy as np
+    nby = (width + 7) // 8
+
+    def bits(x: int):
+        return np.unpackbits(np.frombuffer(x.to_bytes(nby, "little"), np.uint8), bitorder="little")[:width]
+    b = [bits(x).astype(np.int64) for x in vals]
+    A = sum(b[i] << i for i in range(8))
+    B = sum(b[8 + i] << i for i in range(8))
+    C = sum(b[16 + i] << i for i in range(20))
+    Q = (A * B + C) & ((1 << 20) - 1)
+    return [int.from_bytes(np.packbits(((Q >> k) & 1).astype(np.uint8), bitorder="little").tobytes(), "little")
+            for k in range(20)]
 
 
 def _split(n: str) -> tuple[str, str]:
@@ -125,11 +142,15 @@ class Array:
         if tainted is not None and self.canon(t, s.net) in tainted:
             return True
         if self.generic(t) is not None:
-            return s.kind == "bel_output"
+            return s.kind == "bel_output" and s.net not in self.bel_ops(t)
         if t[0] < 0:
             import wio_model
             return s.net in wio_model.Q_SOURCES
         return False
+
+    def bel_ops(self, t) -> dict:
+        """Modelled BELs of a generic tile: BEL output net -> op (none here)."""
+        return {}
 
     def real(self, t) -> list[str]:
         return [o for o, m in self.MT(t).items() if m.model != "direct"]
@@ -211,8 +232,9 @@ class Array:
             if gt is not None:   # other tile types: pass-throughs; BEL outputs never selected
                 for o, i in gt.passes.items():
                     raw[cn(o)] = ("b", cn(i))
+                bel = self.bel_ops(t)
                 for n in gt.bel_out:
-                    raw.setdefault(cn(n), ("c", 0))
+                    raw.setdefault(cn(n), bel.get(n, ("c", 0)))
                 continue
             if self.ttype(t) == "W_IO":   # W_IO BELs (configs/wio_model.py)
                 import wio_model as wm
@@ -281,11 +303,17 @@ class Array:
         if forced is not None:
             v[forced] = fval
         F = self.FULL
+        mc: dict = {}
         for n, op, a in ops:
             if n == forced:
                 continue
             if op == "b":
                 v[n] = v[a]
+            elif op == "M":
+                key = tuple(a[0])
+                if key not in mc:
+                    mc[key] = _muladd([v[p] for p in key], self.NS)
+                v[n] = mc[key][a[1]]
             elif op == "c":
                 v[n] = a
             elif op == "n":
@@ -449,9 +477,15 @@ def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
         n = arr.canon(t, arr.MT(t)[o].net)
         flip[n] = flip.get(n, 0) | (FULL << ((i + 1) * NS))
     v = {n: val * REP for n, val in arr.invec.items()}
+    mc: dict = {}
     for n, op, a in ops:
         if op == "b":
             r = v[a]
+        elif op == "M":
+            key = tuple(a[0])
+            if key not in mc:
+                mc[key] = _muladd([v[p] for p in key], NS * nb)
+            r = mc[key][a[1]]
         elif op == "c":
             r = ALL if a else 0
         elif op == "n":
@@ -536,9 +570,17 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
             b = (inp >> j) & 1
             v[n] = (b, 1 - b)
         v["GND"] = (0, 1)
+        mc: dict = {}
         for n, op, a in ops:
             if op == "n":
                 v[n] = v[a][::-1]
+            elif op == "M":   # any X input: every output X (at least as pessimistic as the gates)
+                key = tuple(a[0])
+                if key not in mc:
+                    iv = [v[p] for p in key]
+                    mc[key] = [(1, 1)] * 20 if any(h and l for h, l in iv) else \
+                        [(q, 1 - q) for q in _muladd([h for h, _ in iv], 1)]
+                v[n] = mc[key][a[1]]
             elif op == "q":
                 v[n] = q[flop_of[n]]
             elif op == "b":
