@@ -55,6 +55,10 @@ typedef struct {
 static int osc_local = 0;
 void set_osc_local(int v) { osc_local = v; }
 
+/* debugging: if set, run_impl copies the final H / L of every net (W = 1) */
+static u64 *dump_h = NULL, *dump_l = NULL;
+void set_dump(u64 *h, u64 *l) { dump_h = h; dump_l = l; }
+
 /* Event queue: one bucket per topological rank, a bitmap of non-empty
  * buckets, and the lowest possibly non-empty rank. Push and pop are O(1)
  * apart from a word scan of the bitmap. Cells of one rank are popped LIFO. */
@@ -434,6 +438,7 @@ static int run_impl(int n_nets, int n_cells, int W,
         int w = lane >> 6; u64 bit = (u64)1 << (lane & 63);
         res[lane] = ((det[w] & bit) ? 1 : 0) | ((xs[w] & bit) ? 2 : 0) | (((dead[w] | osc[w]) & bit) ? 4 : 0);
     }
+    if (dump_h && W == 1) { memcpy(dump_h, s.H, (size_t)n_nets * 8); memcpy(dump_l, s.L, (size_t)n_nets * 8); }
     if (stq_h)
         for (int k = 0; k < n_store; k++)
             for (int w = 0; w < W; w++) {

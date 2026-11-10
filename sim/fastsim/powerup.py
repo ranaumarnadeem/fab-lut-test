@@ -112,7 +112,7 @@ class PowerUp:
         return (arr2d[:, lane >> 6] >> np.uint64(lane & 63)) & np.uint64(1)
 
     def decide(self, faults: list[dict], p_cfgs: dict[int, list[str]], max_group: int = 12,
-               verbose: bool = True) -> dict[int, dict]:
+               verbose: bool = True, full_k: int = 10, jobs: int = 4) -> dict[int, dict]:
         """faults: X-only fault rows (net, polarity, id); p_cfgs: fault index -> P configs.
         Returns fault index -> {verdict, k, groups}."""
         cs, g, nl = self.cs, self.g, self.nl
@@ -151,17 +151,25 @@ class PowerUp:
         plan = {}
         out_bits = set(self.out_bit_pos)
         verdict = {i: {"verdict": "timeout", "k": len(U[i]), "group_sizes": []} for i in timeout}
+        all_pos = set(self.out_bit_pos.values())
+        n_cone = 0
         for i in p_cfgs:
             if i in timeout:
                 continue
             Ul = sorted(U[i])
+            if len(Ul) <= full_k:
+                # small U: every joint assignment of U on every output (exact, no cones needed)
+                plan[i] = (Ul, [Ul], [all_pos], {e: all_pos for e in Ul})
+                continue
+            n_cone += 1
             groups, cones = cs.groups_for(g, self.elem_cells, Ul, consts[i], out_bits, carry=None)
             gpos = [{self.out_bit_pos[b] for b in cs.group_outputs(g, set().union(*(cones[e] for e in grp)),
                                                                      out_bits)} for grp in groups]
             epos = {e: {self.out_bit_pos[b] for b in cs.group_outputs(g, cones[e], out_bits)} for e in Ul}
             plan[i] = (Ul, groups, gpos, epos)
         if verbose:
-            print(f"  cones / groups ({time.time() - t0:.1f} s)", flush=True)
+            print(f"  cones / groups for {n_cone} faults with |U| > {full_k}, the rest enumerated "
+                  f"({time.time() - t0:.1f} s)", flush=True)
 
         def try_sets(cands: dict[int, list[tuple[list[int], set[int]]]]) -> dict[int, bool]:
             """cands: fault -> [(elements, positions)]; True for a fault when some set has
@@ -177,26 +185,43 @@ class PowerUp:
                     for ai, bits in enumerate(assigns):
                         jobs.append((i, si, ai, dict(zip(els, bits)), pos))
             hit = set()
-            for c in sorted({c for i in cands for c in p_cfgs[i]}):
-                todo = [j for j in jobs if c in p_cfgs[j[0]] and (j[0], j[1], j[2]) not in hit]
-                for b0 in range(0, len(todo), LANES):
-                    part = todo[b0:b0 + LANES]
-                    res, det, _, _, _ = self.run(c, [(bit[j[0]], pol[j[0]], j[3]) for j in part])
-                    for k, j in enumerate(part):
-                        lane = k + 1
-                        if res[lane] & 4:
-                            continue   # oscillates under this assignment: no information (as Icarus)
-                        if any((int(det[o, lane >> 6]) >> (lane & 63)) & 1 for o in j[4]):
-                            hit.add((j[0], j[1], j[2]))
+            from concurrent.futures import ThreadPoolExecutor
+
+            def one(args):
+                c, part = args
+                res, det, _, _, _ = self.run(c, [(bit[j[0]], pol[j[0]], j[3]) for j in part])
+                out = []
+                for k, j in enumerate(part):
+                    lane = k + 1
+                    if res[lane] & 4:
+                        continue   # oscillates under this assignment: no information (as Icarus)
+                    if any((int(det[o, lane >> 6]) >> (lane & 63)) & 1 for o in j[4]):
+                        out.append((j[0], j[1], j[2]))
+                return out
+            with ThreadPoolExecutor(max_workers=jobs_n) as ex:
+                for c in sorted({c for i in cands for c in p_cfgs[i]}):
+                    todo = [j for j in jobs if c in p_cfgs[j[0]] and (j[0], j[1], j[2]) not in hit]
+                    parts = [(c, todo[b0:b0 + LANES]) for b0 in range(0, len(todo), LANES)]
+                    for got in ex.map(one, parts):
+                        hit.update(got)
             done = defaultdict(bool)
             for (i, si), n in n_assign.items():
                 if all((i, si, a) in hit for a in range(n)):
                     done[i] = True
             return done
 
-        small = {i: [(grp, pos) for grp, pos in zip(pl[1], pl[2]) if len(grp) <= max_group]
-                 for i, pl in plan.items()}
-        d1 = try_sets(small)
+        jobs_n = jobs
+        # rounds by group rank (smallest first): a fault one group decides is not simulated further
+        d1: dict = {}
+        ranked = {i: sorted([(grp, pos) for grp, pos in zip(pl[1], pl[2]) if len(grp) <= max_group],
+                            key=lambda gp: len(gp[0])) for i, pl in plan.items()}
+        for r in range(max((len(v) for v in ranked.values()), default=0)):
+            cand = {i: [v[r]] for i, v in ranked.items() if len(v) > r and not d1.get(i)}
+            if not cand:
+                break
+            for i, ok in try_sets(cand).items():
+                if ok:
+                    d1[i] = True
         rest = {}
         for i, (Ul, groups, gpos, epos) in plan.items():
             if d1.get(i):

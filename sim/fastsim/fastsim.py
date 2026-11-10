@@ -338,7 +338,8 @@ def collapse(nl: Netlist, items: list[tuple[int, int]], observed: set[int]) -> l
 
 
 def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = os.cpu_count() or 1,
-               W: int = 8, do_collapse: bool = True, nl: Netlist | None = None, quiet: bool = False):
+               W: int = 8, do_collapse: bool = True, nl: Netlist | None = None, quiet: bool = False,
+               limit_factor: int = 20):
     """Fault-simulate `faults` (dicts with net, polarity) under every stimulus.
     Returns (config names, per fault {config: status})."""
     nl = nl or Netlist(netlist)
@@ -351,7 +352,7 @@ def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = 
     todo = sorted(set(reps))
     per = 64 * W - 1
     batches = [todo[k:k + per] for k in range(0, len(todo), per)]
-    eng = Engine(nl, stims, W)
+    eng = Engine(nl, stims, W, limit_factor=limit_factor)
     t0 = time.time()
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=jobs) as ex:

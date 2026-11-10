@@ -107,6 +107,30 @@ class Array:
             return wio_model.MUXES
         return M
 
+    def ttype(self, t) -> str:
+        return "W_IO" if t[0] < 0 else "LUT4AB"
+
+    def generic(self, t):
+        """configs/tile_model.TileType of a tile of another type (full fabric), else None."""
+        return None
+
+    def forbidden_src(self, t, o: str, k: int) -> bool:
+        """Code k of mux o of tile t selects a source with an unknown value (never selected):
+        the W_IO registered pad inputs; in the full fabric also the BEL outputs of the
+        unmodelled tile types and every net they reach through fixed wiring."""
+        s = self.MT(t)[o].inputs[k]
+        if s.kind == "const":
+            return False
+        tainted = getattr(self, "tainted", None)
+        if tainted is not None and self.canon(t, s.net) in tainted:
+            return True
+        if self.generic(t) is not None:
+            return s.kind == "bel_output"
+        if t[0] < 0:
+            import wio_model
+            return s.net in wio_model.Q_SOURCES
+        return False
+
     def real(self, t) -> list[str]:
         return [o for o, m in self.MT(t).items() if m.model != "direct"]
 
@@ -183,7 +207,14 @@ class Array:
                     op = mop[(t, o, k)] = (cn(m.net), ("c", 0 if s.port.startswith("GND") else self.FULL)
                                           if s.kind == "const" else ("b", cn(s.net)))
                 raw[op[0]] = op[1]
-            if t[0] < 0:   # W_IO BELs (configs/wio_model.py)
+            gt = self.generic(t)
+            if gt is not None:   # other tile types: pass-throughs; BEL outputs never selected
+                for o, i in gt.passes.items():
+                    raw[cn(o)] = ("b", cn(i))
+                for n in gt.bel_out:
+                    raw.setdefault(cn(n), ("c", 0))
+                continue
+            if self.ttype(t) == "W_IO":   # W_IO BELs (configs/wio_model.py)
                 import wio_model as wm
                 for p in "AB":
                     raw[cn(f"{p}_O")] = ("b", cn(f"{p}_O_top"))
@@ -291,7 +322,12 @@ class Array:
                 raise SystemExit(f"array loop {sorted(comp)[:6]} has no movable mux")
             _, _, o, t = min(cand)
             old = sels[t][o]
-            sels[t][o] = (old + 1) % self.MT(t)[o].fan_in
+            fan = self.MT(t)[o].fan_in
+            k = (old + 1) % fan
+            while self.forbidden_src(t, o, k) and k != old:   # never move onto an unknown source
+                k = (k + 1) % fan
+                moves[(t, o)] = moves.get((t, o), 0) + 1
+            sels[t][o] = k
             moves[(t, o)] = moves.get((t, o), 0) + 1
             log.append((self.tn(t), o, old, sels[t][o], len(comp)))
         raise SystemExit("array loop breaking did not converge")
@@ -382,15 +418,28 @@ def work_items_m(m, k: int) -> set:
     return items
 
 
+GRADE_CHUNK = 1500   # muxes per pass: the lane vectors are (chunk + 1) x samples bits wide
+
+
 def grade(arr: Array, sels: dict, only: list | None = None) -> dict:
-    """(tile, mux, code) -> items shown, exact at model level, for every mux
-    (or the (tile, mux) pairs in `only`) in one pass: lane block 0 is the
-    fault-free array, block i + 1 flips the output net of mux i at every
-    sample (Python ints as wide bit vectors: samples x blocks)."""
+    """grade_chunk over chunks of at most GRADE_CHUNK muxes (memory)."""
     ops = arr.ops(sels)
     vals = {n for n, _, _ in ops}
     muxes = [(t, o) for t in arr.tiles for o, m in arr.MT(t).items() if arr.canon(t, m.net) in vals] \
         if only is None else only
+    shown = {}
+    for c0 in range(0, len(muxes), GRADE_CHUNK):
+        shown.update(grade_chunk(arr, sels, muxes[c0:c0 + GRADE_CHUNK], ops))
+    return shown
+
+
+def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
+    """(tile, mux, code) -> items shown, exact at model level, for every mux
+    (or the (tile, mux) pairs in `only`) in one pass: lane block 0 is the
+    fault-free array, block i + 1 flips the output net of mux i at every
+    sample (Python ints as wide bit vectors: samples x blocks)."""
+    ops = ops or arr.ops(sels)
+    muxes = only
     NS, FULL = arr.NS, arr.FULL
     nb = len(muxes) + 1
     REP = sum(1 << (b * NS) for b in range(nb))
@@ -547,7 +596,7 @@ def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict
     n_cfg = int(np.argmax(base.sample))           # config-write steps (the first sample is the first vector)
     rows = [base.rows[k] for k in range(n_cfg)]
     sample = [0] * n_cfg
-    nb, col0 = len(arr.border_in), arr.R * 32 + arr.C * 20 + (20 if arr.fabric else 0)
+    nb, col0 = len(arr.border_in), base.in_names.index(arr.port(arr.border_in[0]))
     flags, exp = seq_expected(arr, sels, plan, vecs, luts)
     for v, f in zip(vecs, flags):
         r = base.rows[n_cfg - 1].copy()

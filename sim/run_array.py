@@ -131,16 +131,32 @@ def chain(arr: fabric.Array):
     per vector; sampled once every flop is defined."""
     data = json.loads((ROOT / "configs" / f"fab_router_{'fabric_' if arr.fabric else ''}{arr.R}x{arr.C}{TAG}.json")
                       .read_text())
-    luts = {t: {x: (sc.cell.XOR_TT, 0, 1, 0) for x in sc.LUTS} for t in arr.lut_tiles}
     stims = []
     for c, cfg in enumerate(data["configs"][:MAXCFG or None]):
+        # chainx: XOR / XNOR alternating, so every truth-table latch sees both values
+        tt = sc.cell.XNOR_TT if (ALT_TABLE and c % 2) else sc.cell.XOR_TT
+        luts = {t: {x: (tt, 0, 1, 0) for x in sc.LUTS} for t in arr.lut_tiles}
         sels = {t: dict(cfg[arr.tn(t)]) for t in arr.tiles}
         stims.append(fabric.stim_clocked(arr, f"Q{c:02d}", sels, sc.frame_order(c % sc.F), None,
                                          list(arr.vecs), luts))
     return stims, {}
 
 
-SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut, "merged": merged, "chain": chain}
+ALT_TABLE = False
+
+
+def chainx(arr: fabric.Array):
+    """chain with the LUT tables alternating XOR / XNOR between configs."""
+    global ALT_TABLE
+    ALT_TABLE = True
+    try:
+        return chain(arr)
+    finally:
+        ALT_TABLE = False
+
+
+SUITES = {"uniform": uniform, "router": routed, "clocked": clocked, "lut": lut, "merged": merged, "chain": chain,
+          "chainx": chainx}
 MAXCFG = 0   # --max-configs
 
 

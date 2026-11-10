@@ -58,6 +58,9 @@ class Graph:
         self.real = [(t, o) for t, o in self.ids if MM((t, o)).model != "direct"]
         self.net_of = {(t, o): cn(t, MM((t, o)).net) for t, o in self.ids}
         self.mux_of = {n: i for i, n in self.net_of.items()}
+        self.pos = {i: k for k, i in enumerate(self.ids)}
+        self.max_pop = getattr(arr, "route_max_pop", None)
+        self.max_reach = getattr(arr, "route_max_reach", None)
         self.readers: dict[str, list] = defaultdict(list)
         for t, o in self.real:
             for k, s in enumerate(MM((t, o)).inputs):
@@ -74,6 +77,13 @@ class Graph:
                 edge(cn(t, f"{p}_O_top"), cn(t, f"{p}_O"), 0.0)
                 edge(cn(t, f"{p}_I"), cn(t, f"{p}_I_top"), 0.0)
                 edge(cn(t, f"{p}_T"), cn(t, f"{p}_T_top"), 0.0)
+        for t in getattr(arr, "other_tiles", []):   # full fabric: other tile types
+            gt = arr.generic(t)
+            for o, m in gt.muxes.items():
+                if m.model == "direct" and m.inputs[0].kind != "const":
+                    edge(cn(t, m.inputs[0].net), cn(t, m.net), 0.0)
+            for o, i in gt.passes.items():
+                edge(cn(t, i), cn(t, o), 0.0)
         for t in arr.lut_tiles:
             for o, m in M.items():
                 if m.model == "direct":
@@ -92,11 +102,8 @@ class Graph:
 
     @staticmethod
     def forbidden(i, k) -> bool:
-        """W_IO registered pad inputs (A_Q, B_Q): X until clocked, never selected."""
-        if i[0][0] >= 0:
-            return False
-        import wio_model
-        return MM(i).inputs[k].net in wio_model.Q_SOURCES
+        """Sources with an unknown value are never selected (fabric.Array.forbidden_src)."""
+        return _ARR.forbidden_src(i[0], i[1], k)
 
     def reachable(self) -> set:
         """Mux ids whose output can reach a border output for some selection."""
@@ -125,6 +132,13 @@ class Cfg:
         for n in list(g.out_nets):
             self._mark(n)
 
+    def _open_muxes(self, open_work: dict) -> set:
+        """Muxes with open work (cached per open_work dict; it does not change during a config)."""
+        if getattr(self, "_om_src", None) is not open_work:
+            self._om_src = open_work
+            self._om = {(t, o) for (t, o, _k), v in open_work.items() if v}
+        return self._om
+
     def succ(self, n):
         for t, _c in self.g.fixed.get(n, ()):
             yield t
@@ -151,11 +165,17 @@ class Cfg:
                     stack.append(p)
 
     def reaches(self, a, b) -> bool:
+        """a reaches b (an edge b -> a would close a loop). Large models cap the search
+        (fabric.route_max_reach): past it no loop is assumed; build_config's exact
+        check (cycles + break_loops) catches the rest."""
         seen, stack = {a}, [a]
+        cap = self.g.max_reach
         while stack:
             n = stack.pop()
             if n == b:
                 return True
+            if cap and len(seen) > cap:
+                return False
             for t in self.succ(n):
                 if t not in seen:
                     seen.add(t)
@@ -195,11 +215,17 @@ class Cfg:
 
     def route(self, start, open_work, banned):
         dist, prev, pq = {start: 0.0}, {}, [(0.0, start)]
+        cap = self.g.max_pop
+        pops = 0
         while pq:
             d, n = heapq.heappop(pq)
             if d > dist.get(n, 1e18):
                 continue
+            pops += 1
+            if cap and pops > cap:
+                return None   # large models: give up far searches (fabric.route_max_pop)
             if n != start and n in self.obs:
+                self.last_end = n
                 path = []
                 while n != start:
                     p, step = prev[n]
@@ -217,7 +243,7 @@ class Cfg:
                 else:
                     if open_work.get((*i, k)):
                         c = 0.4
-                    elif any(open_work.get((*i, kk)) for kk in range(MM(i).fan_in)):
+                    elif i in self._open_muxes(open_work):
                         c = 4.0
                     else:
                         c = 1.0
@@ -250,9 +276,7 @@ class Cfg:
                     banned.add((i2, k2))
                     break
             else:
-                self._mark(start)
-                for n in list(self.obs):
-                    self._mark(n)
+                self._mark(self.last_end)   # the only new edges are the path's: mark back from its end
                 return True
             for i2 in done:
                 del self.sel[i2]
@@ -276,7 +300,7 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) ->
     def work(i):
         return sum(len(open_work.get((*i, k), ())) for k in range(MM(i).fan_in))
     order = sorted((i for i in g.ids if work(i)),
-                   key=lambda i: (-hist.get(i, 0), -work(i), (g.ids.index(i) + bias * 7) % len(g.ids)))
+                   key=lambda i: (-hist.get(i, 0), -work(i), (g.pos[i] + bias * 7) % len(g.ids)))
     for i in order:
         if i in cfg.sel:
             continue
@@ -329,7 +353,7 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
     for t in g.arr.io_tiles:
         sels[t]["__cbits"] = CBITS_PATTERN[bias % len(CBITS_PATTERN)]
     if g.arr.cycles(sels):
-        moves = g.arr.break_loops(sels)
+        moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000))
         print(f"    (array check: {len(moves)} loop moves)", flush=True)
     return sels
 
@@ -351,9 +375,7 @@ def route_net(cfg: Cfg, net: str) -> bool:
                 banned.add((i2, k2))
                 break
         else:
-            cfg._mark(net)
-            for n in list(cfg.obs):
-                cfg._mark(n)
+            cfg._mark(cfg.last_end)
             return True
         for i2 in done:
             del cfg.sel[i2]
@@ -542,8 +564,12 @@ def route_to(cfg: Cfg, src: str, targets: set) -> bool:
         return False
     finally:
         cfg.obs = save
-        for n in list(cfg.obs):
-            cfg._mark(n)
+        end = getattr(cfg, "last_end", None)
+        if end in cfg.obs:
+            cfg._mark(end)
+
+
+CHAINS = 1   # --chains: chains per row
 
 
 def backbone(cfg: Cfg, bias: int = 0) -> dict:
@@ -558,16 +584,25 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
             cfg.assign((t, f"L{x}_EN"), 0)
-    for y in range(arr.R):
-        order = [((x, y), sc.LUTS[(k + bias) % 8]) for x in reversed(range(arr.C)) for k in range(8)]
-        for (ta, xa), (tb, xb) in zip(order, order[1:]):
-            pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)}
-            if route_to(cfg, arr.canon(ta, f"L{xa}_O"), pins):
-                links += 1
-            else:
+    for y in sorted({t[1] for t in arr.lut_tiles}):
+        row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
+        order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)]
+        n = len(order)
+        segs = [order[i * n // CHAINS:(i + 1) * n // CHAINS] for i in range(CHAINS)]
+        # chain ends: a pad output of the row's W_IO each (fabric), else any observed net
+        pads = [arr.canon((-1, y), p) for p in ("A_I_top", "B_I_top", "A_T_top", "B_T_top")] \
+            if arr.fabric else []
+        for si, seg in enumerate(segs):
+            for (ta, xa), (tb, xb) in zip(seg, seg[1:]):
+                pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)}
+                if route_to(cfg, arr.canon(ta, f"L{xa}_O"), pins):
+                    links += 1
+                else:
+                    fails += 1
+            end = arr.canon(seg[-1][0], f"L{seg[-1][1]}_O")
+            ok = route_to(cfg, end, {pads[si % len(pads)]}) if pads and CHAINS > 1 else route_net(cfg, end)
+            if not ok:
                 fails += 1
-        if not route_net(cfg, arr.canon(*order[-1][:1], f"L{order[-1][1]}_O")):
-            fails += 1
     return {"links": links, "fails": fails}
 
 
@@ -699,6 +734,7 @@ def main() -> None:
     ap.add_argument("--no-polish", action="store_true")
     ap.add_argument("--rand", type=int, default=0, help="random vectors per config (fabric.Array n_rand)")
     ap.add_argument("--fabric", action="store_true", help="W_IO west, N / S term, east open (fabric.Array)")
+    ap.add_argument("--chains", type=int, default=1, help="backbone chains per row (each to its own pad)")
     ap.add_argument("--backbone", action="store_true",
                     help="seed every config with the observation backbone (LUT chains to the border)")
     ap.add_argument("--extend", metavar="TAG",
@@ -708,6 +744,8 @@ def main() -> None:
                     help="PathFinder-style: each pass starts with the history of the previous one; "
                          "the pass with the fewest configs is kept")
     a = ap.parse_args()
+    global CHAINS
+    CHAINS = a.chains
     arr = fabric.Array(a.R, a.C, a.rand, fabric=a.fabric)
     t0 = time.time()
     best, hist = None, None
@@ -725,7 +763,7 @@ def main() -> None:
     done = total - sum(len(v) for v in open_work.values())
     left = {f"{arr.tn(t)}:{o}:{k}": sorted(map(str, v)) for (t, o, k), v in open_work.items() if v}
     tag = f"{a.extend}_ext" if a.extend else ("_nopolish" if a.no_polish else "") + (f"_r{a.rand}" if a.rand else "") \
-        + ("_bb" if a.backbone else "")
+        + ("_bb" if a.backbone else "") + (f"{a.chains}" if a.backbone and a.chains > 1 else "")
     out = ROOT / "configs" / f"fab_router_{'fabric_' if a.fabric else ''}{a.R}x{a.C}{tag}.json"
     out.write_text(json.dumps({"configs": configs, "log": log, "open": left, "n_rand": a.rand,
                                "polish": not a.no_polish,
