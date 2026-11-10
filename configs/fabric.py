@@ -513,7 +513,7 @@ def _lut3(tt: int, ins: list[tuple[int, int]]) -> tuple[int, int]:
 
 
 def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
-                 luts: dict | None = None) -> tuple[list[int], list[str]]:
+                 luts: dict | None = None, partial: bool = False) -> tuple[list[int], list[str]]:
     """Clocked array: per vector inputs, UserCLK rising edge, sample.
     luts: tile -> LUT -> (truth table, I0 from Ci, FF, reset value); default
     (from plan, the clocked SR / EN configs): XOR, I0 = I[0], registered,
@@ -521,7 +521,8 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
     Dual-rail 3-valued (h, l), at least as pessimistic as the gates (an X
     select, EN, SR or LUT input gives X). Returns (sample flag per vector,
     expected strings): a vector is sampled once every flop of a registered
-    LUT is defined."""
+    LUT is defined. partial: every vector with a defined border output is
+    sampled, X outputs as "x" (not compared)."""
     if luts is None:
         luts = {t: {x: (sc.cell.XOR_TT, 0, 1, plan[t][x][2]) for x in sc.LUTS} for t in arr.lut_tiles}
     ops = arr.ops(sels, luts)
@@ -573,6 +574,13 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
             eh, el = v[arr.canon(t, f"L{x}_EN")]
             nq[(t, x)] = (1, 1) if eh and el else (load if eh else old)
         q = nq
+        if partial:
+            v = comb(inp)
+            e = "".join("x" if v[n][0] and v[n][1] else str(v[n][0]) for n in arr.border_out)
+            flags.append(int(e.count("x") < len(e)))
+            if flags[-1]:
+                exp.append(e)
+            continue
         ready = all(not (q[r][0] and q[r][1]) for r in regs)
         flags.append(int(ready))
         if ready:
@@ -584,7 +592,7 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
 
 
 def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict, vecs: list[int],
-                 luts: dict | None = None):
+                 luts: dict | None = None, partial: bool = False):
     """fastsim.Stim: config write (LUTs registered, reset values from plan), then per
     vector: inputs, UserCLK 1, UserCLK 0 + sample (sampled once every flop is defined)."""
     import fastsim
@@ -597,7 +605,7 @@ def stim_clocked(arr: Array, name: str, sels: dict, order: list[int], plan: dict
     rows = [base.rows[k] for k in range(n_cfg)]
     sample = [0] * n_cfg
     nb, col0 = len(arr.border_in), base.in_names.index(arr.port(arr.border_in[0]))
-    flags, exp = seq_expected(arr, sels, plan, vecs, luts)
+    flags, exp = seq_expected(arr, sels, plan, vecs, luts, partial)
     for v, f in zip(vecs, flags):
         r = base.rows[n_cfg - 1].copy()
         for j in range(nb):

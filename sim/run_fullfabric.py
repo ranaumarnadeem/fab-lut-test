@@ -63,7 +63,7 @@ def cmd_faultsim(a) -> None:
         tt = sc.cell.XNOR_TT if c % 2 else sc.cell.XOR_TT
         luts = {t: {x: (tt, 0, 1, 0) for x in sc.LUTS} for t in ff.lut_tiles}
         stims.append(fabric.stim_clocked(ff, f"FF{c:02d}", sels, sc.frame_order(c % sc.F), None,
-                                         list(ff.vecs), luts))
+                                         list(ff.vecs), luts, partial=True))
         print(f"  FF{c:02d}: {int(stims[-1].sample.sum())} samples", flush=True)
     # fault-free check per config first: a config whose fault-free lane differs from the model
     # or does not settle is left out (reported)

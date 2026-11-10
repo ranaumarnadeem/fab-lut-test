@@ -284,8 +284,10 @@ class Engine:
                 n_out = len(out_nets)
                 g = ["".join("x" if v == 2 else str(v) for v in gold[k * n_out:(k + 1) * n_out])
                      for k in range(ns)]
-                if g != st.expected:
-                    bad = next(i for i, (x, y) in enumerate(zip(g, st.expected)) if x != y)
+                # "x" in the model: not compared (the gates may be defined there)
+                ok = [all(e == "x" or a == e for a, e in zip(x, y)) for x, y in zip(g, st.expected)]
+                if len(g) != len(st.expected) or not all(ok):
+                    bad = ok.index(False) if not all(ok) else min(len(g), len(st.expected))
                     raise RuntimeError(f"{st.name}: fault-free lane differs from the model at sample {bad}")
                 self.checked.add(st.name)
             v = res[1:len(batch) + 1]
