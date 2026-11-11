@@ -49,7 +49,9 @@ def _deps(op: str, a) -> list[str]:
         return [a]
     if op in ("c", "q"):
         return []
-    if op in ("l", "M", "F"):
+    if op == "F":   # RegFile read: combinational in the read address only (D: through the clock)
+        return list(a[0][1:])
+    if op in ("l", "M"):
         return list(a[0])
     return list(a)
 
@@ -316,8 +318,8 @@ class Array:
                 if key not in mc:
                     mc[key] = _muladd([v[p] for p in key], self.NS)
                 v[n] = mc[key][a[1]]
-            elif op == "F":   # RegFile read (two-valued model: the written data, D)
-                v[n] = v[a[0][0]]
+            elif op == "F":   # RegFile read (two-valued model: the written data, D, if already known)
+                v[n] = v.get(a[0][0], 0)
             elif op == "c":
                 v[n] = a
             elif op == "n":
@@ -491,7 +493,7 @@ def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
                 mc[key] = _muladd([v[p] for p in key], NS * nb)
             r = mc[key][a[1]]
         elif op == "F":
-            r = v[a[0][0]]
+            r = v.get(a[0][0], 0)
         elif op == "c":
             r = ALL if a else 0
         elif op == "n":
@@ -660,6 +662,7 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
             if any(v[n][0] and v[n][1] for n in arr.border_out):
                 raise RuntimeError("defined flops but X at a border output")
             exp.append("".join(str(v[n][0]) for n in arr.border_out))
+    arr._seq_last = v   # dual-rail values of the last sample (diagnostics)
     return flags, exp
 
 
