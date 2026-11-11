@@ -235,7 +235,10 @@ class Cfg:
                         path.append(step)
                     n = p
                 return path[::-1]
-            cand = [(t, c, None) for t, c in self.g.fixed.get(n, ())]
+            # wires_only (routes that carry a value: constants, addresses, data): no BEL
+            # edges (cost > 0, LUT input -> output), whose output is a different signal
+            cand = [(t, c, None) for t, c in self.g.fixed.get(n, ())
+                    if not (getattr(self, "wires_only", False) and c > 0)]
             for i, k in self.g.readers.get(n, ()):
                 if (i, k) in banned:
                     continue
@@ -545,10 +548,12 @@ def lut_configs(arr: fabric.Array, names=("BC1", "D0C", "D1")):
     return out
 
 
-def route_to(cfg: Cfg, src: str, targets: set) -> bool:
-    """Route net `src` to one of the nets in `targets` (point to point) through free muxes."""
+def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool:
+    """Route net `src` to one of the nets in `targets` (point to point) through free muxes;
+    wires_only: never through a BEL (the target gets exactly the value of src)."""
     save = cfg.obs
     cfg.obs = set(targets)
+    cfg.wires_only = wires_only
     try:
         banned: set = set()
         for _ in range(6):
@@ -569,6 +574,7 @@ def route_to(cfg: Cfg, src: str, targets: set) -> bool:
         return False
     finally:
         cfg.obs = save
+        cfg.wires_only = False
         end = getattr(cfg, "last_end", None)
         if end in cfg.obs:
             cfg._mark(end)
@@ -611,7 +617,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         one = None
         for x in "HGFEDCBA":
             before = set(cfg.sel)
-            if all(route_to(cfg, zero, {arr.canon(w, f"L{x}_I{j}")}) for j in range(4)):
+            if all(route_to(cfg, zero, {arr.canon(w, f"L{x}_I{j}")}, True) for j in range(4)):
                 cfg.lut_const.setdefault(w, {})[x] = 1
                 cfg.cut.add(arr.canon(w, f"L{x}_O"))
                 one = arr.canon(w, f"L{x}_O")
@@ -623,7 +629,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             fails += 1
             continue
         adr = bias % 32
-        if route_to(cfg, one, {p["en"]}):
+        if route_to(cfg, one, {p["en"]}, True):
             links += 1
         else:
             fails += 1
@@ -632,7 +638,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         for i in range(5):
             for val in ((adr >> i) & 1, 1 - ((adr >> i) & 1)):
                 before = set(cfg.sel)
-                if all(route_to(cfg, one if val else zero, {p[port][i]}) for port in "WAB"):
+                if all(route_to(cfg, one if val else zero, {p[port][i]}, True) for port in "WAB"):
                     links += 3
                     break
                 for k in set(cfg.sel) - before:
@@ -645,7 +651,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
         for k in range(4):
             for src in pads[k:] + pads[:k]:
-                if route_to(cfg, src, {p["D"][k]}):
+                if route_to(cfg, src, {p["D"][k]}, True):
                     links += 1
                     break
             else:
