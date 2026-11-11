@@ -334,9 +334,11 @@ class Array:
                 v[n] = (s & y) | (~s & F & x)
         return v
 
-    def break_loops(self, sels: dict, max_moves: int = 2000, luts: dict | None = None) -> list:
+    def break_loops(self, sels: dict, max_moves: int = 2000, luts: dict | None = None,
+                    pinned: set = frozenset()) -> list:
         """Move one switch-matrix mux per array-level loop to its next input
-        (smallest fan-in first, as sm_configs.break_loops) until none is left."""
+        (smallest fan-in first, as sm_configs.break_loops) until none is left.
+        pinned: (tile, mux) never moved (routes a config depends on, e.g. constants)."""
         log, moves = [], {}
         for _ in range(max_moves):
             comps = self.cycles(sels, luts)
@@ -347,7 +349,7 @@ class Array:
             for t in self.tiles:
                 for o in self.real(t):
                     m = self.MT(t)[o]
-                    if self.canon(t, m.net) not in comp:
+                    if self.canon(t, m.net) not in comp or (t, o) in pinned:
                         continue
                     s = m.inputs[sels[t][o]]
                     if s.kind != "const" and self.canon(t, s.net) in comp and moves.get((t, o), 0) < m.fan_in - 1:

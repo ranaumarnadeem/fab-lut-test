@@ -343,7 +343,7 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
             raise SystemExit(f"{i}: loop repair did not converge")
         k = ks[0]
         on_loop = [x for x in cfg.path_muxes(g.net_of[i], g.src(i, k)) if x != i
-                   and MM(x).model != "direct"]
+                   and MM(x).model != "direct" and x not in getattr(cfg, "pinned", ())]
         if not on_loop:
             raise SystemExit(f"{i}: every input closes a loop")
         victim = on_loop[0]
@@ -357,7 +357,8 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
     for t, c in getattr(cfg, "lut_const", {}).items():   # before the loop check: constants
         sels[t]["__lut"] = dict(c)
     if g.arr.cycles(sels):
-        moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000))
+        moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000),
+                                  pinned=getattr(cfg, "pinned", frozenset()))
         print(f"    (array check: {len(moves)} loop moves)", flush=True)
     return sels
 
@@ -598,6 +599,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
             cfg.assign((t, f"L{x}_EN"), 0)
+    sel0 = set(cfg.sel)
     for r, p in rf.items():
         w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
         if e not in cfg.lut_const:
@@ -648,6 +650,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                     break
             else:
                 fails += 1
+    cfg.pinned = set(cfg.sel) - sel0 if rf else set()   # RegFile constants and data: never moved
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
         order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)
