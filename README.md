@@ -168,25 +168,33 @@ flattens FABulous's own `eFPGA.v`: 577941 gates, 1157594 faults. The fast kernel
 one config of it at 0.8 ms per fault on 2 threads (all faults: about 15 min per config).
 
 Every tile type is modelled from its generated FABulous sources (`configs/tile_model.py`:
-switch matrix, pass-throughs, BEL pins); RegFile, DSP and RAM_IO BELs are opaque: their
-outputs, and every net they reach through fixed wiring, are never used as a source. The
-router with the backbone (`sim/run_fullfabric.py route`, two chains per row, each ending
-at a W_IO pad) covers 51.7% of the model-level items in 12 configs (4.2 h). Fault
-simulation of a seeded random sample of 10,000 faults, every LUT registered (XOR / XNOR
-alternating), 64 clocked vectors on the 28 pads, strict (7 min on 4 threads):
+switch matrix, pass-throughs, BEL pins). The DSP's MULADD is modelled at config 0
+(Q = A * B + C, combinational), so its outputs can be routed and observed; RegFile
+(registers X at power-up) and RAM_IO (BRAM data) stay opaque: their outputs, and every net
+they reach through fixed wiring, are never used as a source. The router with the backbone
+(`sim/run_fullfabric.py route`, two chains per row, each ending at a W_IO pad) covers
+63.8% of the model-level items in 24 configs (8.2 h; checkpointed, `--extend --resume`).
+Fault simulation of a seeded random sample of 10,000 faults, every LUT registered (XOR /
+XNOR alternating), 64 clocked vectors on the 28 pads, strict (23 min on 4 threads):
 
-| tile type | sampled | detected |
-|---|---|---|
-| all | 10000 | **63.5% +- 0.9** |
-| LUT4AB | 6935 | 72.8% +- 1.1 |
-| W_IO | 175 | 70.3% +- 6.8 |
-| RAM_IO | 513 | 50.9% +- 4.3 |
-| RegFile | 1178 | 40.8% +- 2.8 |
-| DSP (wrapper, top, bottom) | 1184 | 31.6-50.6% |
+| tile type | sampled | 12 configs, BELs opaque | 12 configs, MULADD model | **24 configs, MULADD model** |
+|---|---|---|---|---|
+| all | 10000 | 63.5% | 65.0% | **74.7% +- 0.9** |
+| LUT4AB | 6935 | 72.8% | 71.4% | 81.7% +- 0.9 |
+| W_IO | 175 | 70.3% | 66.3% | 75.4% +- 6.4 |
+| DSP (wrapper, top, bottom) | 1184 | 31.6-50.6% | 57.5-62.5% | 66.2-76.2% |
+| RAM_IO | 513 | 50.9% | 45.6% | 53.8% +- 4.3 |
+| RegFile | 1178 | 40.8% | 42.2% | 47.5% +- 2.9 |
 
-Every sampled fault left reaches a pad as X (none stays unobserved), and the 12th config
-still adds 1.6 points: more configs, BEL models (registers initialized through their
-config) and the power-up check are the next steps.
+Every sampled fault left reaches a pad as X (none stays unobserved); the 24th config still
+adds 0.4 points. The RegFile is the weakest part: its read data is X until written, and its
+address and write-enable inputs have no constant source, so making it defined needs
+routed write cycles in the test configs.
+
+Test time: a full config is 200 frames (3,401 words); between consecutive configs 159 of
+the 200 frames change. Through the parallel `SelfWriteData` port at 50 MHz the 24 configs
+load in about 2-3 ms; bitbang about 0.35 s, UART about 25 s. The 64 vectors per config are
+negligible. No area is added: every test structure is configuration.
 
 ### Findings about FABulous
 
@@ -313,8 +321,7 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-Behavioural models of the RegFile, DSP and RAM_IO BELs (they are opaque in the
-full-fabric run), the configuration logic (ConfigFSM, frame registers: the simulation
+RegFile and RAM_IO models (opaque in the full-fabric run; MULADD only at config 0), the configuration logic (ConfigFSM, frame registers: the simulation
 writes FrameData / FrameStrobe directly), the power-up check on the full fabric,
 bridging faults and timing.
 
