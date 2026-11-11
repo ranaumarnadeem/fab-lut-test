@@ -22,7 +22,8 @@ used config bit). One test, sampled after every phase:
 
 Every phase writes data different from what the memory holds, so a write that does
 not happen is seen. A fault is detected (strict) when some config bit, ComActive or
-ReceiveLED differs from the fault-free run at a sample. Faults of the config memory
+ReceiveLED differs from the fault-free run at a sample (the two pins also every 16
+clocks, as a tester sees them: stimulus PINS). Faults of the config memory
 model are not in the list. Writes reports/cfgtop_matrix.csv.
 """
 from __future__ import annotations
@@ -199,8 +200,13 @@ def build(bits: list) -> tuple[fastsim.Stim, list[str]]:
         st.mark()
         snap()
     outs = [f"CM[{k}]" for k in range(len(bits))] + ["ComActive", "ReceiveLED"]
-    return fastsim.Stim("CFG", IN, np.array(st.rows, dtype=np.uint8), np.array(st.sample, dtype=np.uint8),
-                        outs, expected), outs
+    rows = np.array(st.rows, dtype=np.uint8)
+    cm = fastsim.Stim("CFG", IN, rows, np.array(st.sample, dtype=np.uint8), outs, expected)
+    # the two status pins, as a tester sees them: every 16 clocks (no expected values)
+    pins_sample = np.zeros(len(rows), dtype=np.uint8)
+    pins_sample[31::32] = 1
+    pins = fastsim.Stim("PINS", IN, rows, pins_sample, ["ComActive", "ReceiveLED"], None)
+    return [cm, pins], outs
 
 
 def main() -> None:
@@ -210,20 +216,26 @@ def main() -> None:
     a = ap.parse_args()
     bits = json.loads((ROOT / "rtl" / "config" / "cfg_bits.json").read_text())
     t0 = time.time()
-    st, _ = build(bits)
+    stims, _ = build(bits)
+    st = stims[0]
     print(f"cfgtop: {st.rows.shape[0]} steps, {int(st.sample.sum())} samples ({time.time() - t0:.0f} s)", flush=True)
     nl = fastsim.Netlist("cfgtop")
-    fastsim.Engine(nl, [st], W=1).run_batch([])
+    fastsim.Engine(nl, stims, W=1).run_batch([])
     print(f"cfgtop: fault-free load = the intended config bits ({time.time() - t0:.0f} s)", flush=True)
     if a.cmd == "check":
         return
     fl = list(csv.DictReader((ROOT / "faults" / "cfgtop.csv").open()))
-    cfgs, stat = fastsim.run_faults("cfgtop", [st], fl, a.jobs, nl=nl)
+    cfgs, stat = fastsim.run_faults("cfgtop", stims, fl, a.jobs, nl=nl)
+
+    def any_(s):
+        v = set(s.values())
+        return "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
     with (ROOT / "reports" / "cfgtop_matrix.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["id", "path", "polarity", "CFG"])
+        w.writerow(["id", "path", "polarity", *cfgs, "any"])
         for f, s in zip(fl, stat):
-            w.writerow([f["id"], f["path"], f["polarity"], s["CFG"]])
+            w.writerow([f["id"], f["path"], f["polarity"], *[s[c] for c in cfgs], any_(s)])
+    stat = [{"CFG": any_(s)} for s in stat]
     tot, det = Counter(), Counter()
     for f, s in zip(fl, stat):
         m = re.match(r"(\w+?)(?:_inst|_\d+)?\.", f["path"])
