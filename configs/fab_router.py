@@ -621,6 +621,17 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                     del cfg.sel[k]
             else:
                 fails += 1
+        # write data from pad inputs (defined every vector, no loop through a RegFile):
+        # the A / B pads of this row and the next ones
+        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - r[1]), yy))
+        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
+        for k in range(4):
+            for src in pads[k:] + pads[:k]:
+                if route_to(cfg, src, {p["D"][k]}):
+                    links += 1
+                    break
+            else:
+                fails += 1
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
         order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)
