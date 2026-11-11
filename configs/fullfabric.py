@@ -167,18 +167,30 @@ class FullFabric(fabric.Array):
         self.invec = {n: sum(((self.vecs[s] >> j) & 1) << s for s in range(self.NS))
                       for j, n in enumerate(self.border_in)}
         self.invec["GND"] = 0
+        self.rf_pins = {t: {"D": [self.canon(t, f"D{k}") for k in range(4)],
+                            "W": [self.canon(t, f"W_ADR{k}") for k in range(5)],
+                            "A": [self.canon(t, f"A_ADR{k}") for k in range(5)],
+                            "B": [self.canon(t, f"B_ADR{k}") for k in range(5)],
+                            "en": self.canon(t, "W_en")} for t in self.tiles if self.types[t] == "RegFile"}
         self.tainted = self._taint()
         self.route_max_pop = 3000   # fab_router: cap the Dijkstra exploration per route
         self.route_max_reach = 10000  # and the incremental loop check (exact check per config)
         self.loop_max_moves = 20000
 
     def bel_ops(self, t) -> dict:
-        """DSP_bot: MULADD at config 0 (Q = A * B + C, combinational). RegFile (registers X
-        at power-up) and RAM_IO (BRAM data) stay opaque."""
-        if self.types.get(t) != "DSP_bot":
+        """DSP_bot: MULADD at config 0 (Q = A * B + C, combinational). RegFile: op F, read
+        port data (fabric.seq_expected: 32 x 4 memory, X until written; two-valued model:
+        D); defined once the test config pins W_en and the addresses (fab_router.backbone,
+        constant LUTs). RAM_IO (BRAM data) stays opaque."""
+        typ = self.types.get(t)
+        if typ not in ("DSP_bot", "RegFile"):
             return {}
         c = self.__dict__.setdefault("_belops", {})
         if t in c:
+            return c[t]
+        if typ == "RegFile":
+            p = self.rf_pins[t]
+            c[t] = {f"{port}D{k}": ("F", ([p["D"][k]] + p[port], (t, port, k))) for port in "AB" for k in range(4)}
             return c[t]
         gt = self.gen["DSP_bot"]
         pin = {p.split(".", 1)[1]: n for n, p in {**gt.bel_in, **gt.bel_out}.items() if "MULADD" in p}

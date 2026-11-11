@@ -216,7 +216,8 @@ def config_word(sel: dict[str, int], lut_bits: dict[str, int] | None = None) -> 
         for k in range(cell.N_CONFIG_BITS):
             v[LUT_LO[x] + k] = (bits >> k) & 1
     for o, k in sel.items():
-        v.update(MUXES[o].code_for(k))
+        if not o.startswith("__"):    # "__lut": constant LUTs (full-fabric RegFile configs)
+            v.update(MUXES[o].code_for(k))
     return v
 
 

@@ -309,7 +309,10 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) ->
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
-    return fill(g, cfg, open_work, bias)
+    sels = fill(g, cfg, open_work, bias)
+    for t, c in getattr(cfg, "lut_const", {}).items():
+        sels[t]["__lut"] = dict(c)
+    return sels
 
 
 def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
@@ -580,13 +583,35 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     LUT is then observable at the border. Returns a report."""
     arr = cfg.g.arr
     links = fails = 0
+    # RegFile (full fabric): LUT H of the west neighbour = 1, of the east neighbour = 0,
+    # routed to W_en and to all three address ports (address = config index mod 32):
+    # the RegFile is then a 4-bit register on one word (AD = BD = D one clock later).
+    rf = getattr(arr, "rf_pins", {})
+    cfg.lut_const = {}
+    for r in rf:
+        w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
+        if w in arr.lut_tiles and e in arr.lut_tiles:
+            cfg.lut_const.setdefault(w, {})["H"] = 1
+            cfg.lut_const.setdefault(e, {})["H"] = 0
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
             cfg.assign((t, f"L{x}_EN"), 0)
+    for r, p in rf.items():
+        w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
+        if w not in cfg.lut_const or e not in cfg.lut_const:
+            continue
+        one, zero = arr.canon(w, "LH_O"), arr.canon(e, "LH_O")
+        adr = bias % 32
+        for net, val in [(p["en"], 1)] + [(n, (adr >> i) & 1) for port in "WAB" for i, n in enumerate(p[port])]:
+            if route_to(cfg, one if val else zero, {net}):
+                links += 1
+            else:
+                fails += 1
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
-        order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)]
+        order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)
+                 if sc.LUTS[(k + bias) % 8] not in cfg.lut_const.get(t, {})]
         n = len(order)
         segs = [order[i * n // CHAINS:(i + 1) * n // CHAINS] for i in range(CHAINS)]
         # chain ends: a pad output of the row's W_IO each (fabric), else any observed net

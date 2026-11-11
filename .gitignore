@@ -13,3 +13,6 @@ faults/fabric_*
 rtl/fabric_*.v
 synth/netlist_fullfabric*
 faults/fullfabric*
+rtl/config/
+synth/netlist_cfgtop*
+faults/cfgtop.csv

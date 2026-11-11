@@ -55,7 +55,7 @@ class PowerUp:
         self.eng = fastsim.Engine(nl, stims, W=1, limit_factor=limit_factor)
         self.lib = self.eng.lib
         self.lib.run_config_x.restype = ctypes.c_int
-        self.g = cs.load_graph(netlist_json)
+        self._json, self._g = netlist_json, None
         self.cfg_index = {st.name: k for k, st in enumerate(stims)}
         outs = stims[0].out_names
         if any(st.out_names != outs for st in stims):
@@ -63,6 +63,12 @@ class PowerUp:
         self.out_bit_pos = {nl.port_bits[o]: k for k, o in enumerate(outs)}
         self.elem_cells = {k: nl.store_names[k] for k in range(len(nl.store))}
         self.q_bit = {k: int(nl.st_net[k]) for k in range(len(nl.store))}
+
+    @property
+    def g(self):   # loaded on first use (cones; not needed when every U is small)
+        if self._g is None:
+            self._g = self.cs.load_graph(self._json)
+        return self._g
 
     def run(self, cfg: str, lanes: list[tuple[int, int, dict]]):
         """lanes: [(fault net bit, polarity, deposits {slot: 0/1})] (at most LANES).
@@ -112,10 +118,12 @@ class PowerUp:
         return (arr2d[:, lane >> 6] >> np.uint64(lane & 63)) & np.uint64(1)
 
     def decide(self, faults: list[dict], p_cfgs: dict[int, list[str]], max_group: int = 12,
-               verbose: bool = True, full_k: int = 10, jobs: int = 4) -> dict[int, dict]:
+               verbose: bool = True, full_k: int = 10, jobs: int = 4,
+               max_u: int | None = None) -> dict[int, dict]:
         """faults: X-only fault rows (net, polarity, id); p_cfgs: fault index -> P configs.
+        max_u: faults with a larger U are not decided ("U too large", no cones).
         Returns fault index -> {verdict, k, groups}."""
-        cs, g, nl = self.cs, self.g, self.nl
+        cs, nl = self.cs, self.nl
         t0 = time.time()
         bit = {i: nl.net_bit[f["net"]] for i, f in enumerate(faults)}
         pol = {i: int(f["polarity"]) for i, f in enumerate(faults)}
@@ -157,10 +165,14 @@ class PowerUp:
             if i in timeout:
                 continue
             Ul = sorted(U[i])
+            if max_u is not None and len(Ul) > max_u:
+                verdict[i] = {"verdict": "U too large", "k": len(Ul), "group_sizes": []}
+                continue
             if len(Ul) <= full_k:
                 # small U: every joint assignment of U on every output (exact, no cones needed)
                 plan[i] = (Ul, [Ul], [all_pos], {e: all_pos for e in Ul})
                 continue
+            g = self.g
             n_cone += 1
             groups, cones = cs.groups_for(g, self.elem_cells, Ul, consts[i], out_bits, carry=None)
             gpos = [{self.out_bit_pos[b] for b in cs.group_outputs(g, set().union(*(cones[e] for e in grp)),

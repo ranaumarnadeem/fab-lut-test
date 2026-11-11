@@ -3,6 +3,7 @@
 
   python3 sim/run_fullfabric.py route --configs N [--chains 2] [--extend]
   python3 sim/run_fullfabric.py faultsim [--sample 10000] [--jobs 4]
+  python3 sim/run_fullfabric.py powerup [--sample 400] [--max-u 10]
 
 route: configs/fab_router.py on configs/fullfabric.FullFabric (no polish, backbone:
   per row the LUT chains end at the row's W_IO pads), configs/fab_router_fullfabric.json.
@@ -63,8 +64,7 @@ def cmd_route(a) -> None:
           f"{time.time() - t0:.0f} s -> {CFG.relative_to(ROOT)}")
 
 
-def cmd_faultsim(a) -> None:
-    ff = fullfabric.FullFabric()
+def build_stims(ff) -> list:
     data = json.loads(CFG.read_text())
     inv = {ff.tn(t): t for t in ff.tiles}
     stims = []
@@ -74,9 +74,18 @@ def cmd_faultsim(a) -> None:
             sels.setdefault(t, {})
         tt = sc.cell.XNOR_TT if c % 2 else sc.cell.XOR_TT
         luts = {t: {x: (tt, 0, 1, 0) for x in sc.LUTS} for t in ff.lut_tiles}
+        for t in ff.lut_tiles:   # constant LUTs (RegFile W_en / addresses): combinational
+            for x, val in sels[t].get("__lut", {}).items():
+                luts[t][x] = (0xFFFF if val else 0, 0, 0, 0)
         stims.append(fabric.stim_clocked(ff, f"FF{c:02d}", sels, sc.frame_order(c % sc.F), None,
                                          list(ff.vecs), luts, partial=True))
         print(f"  FF{c:02d}: {int(stims[-1].sample.sum())} samples", flush=True)
+    return stims
+
+
+def cmd_faultsim(a) -> None:
+    ff = fullfabric.FullFabric()
+    stims = build_stims(ff)
     # fault-free check per config first: a config whose fault-free lane differs from the model
     # or does not settle is left out (reported)
     nl = fastsim.Netlist("fullfabric")
@@ -120,6 +129,45 @@ def cmd_faultsim(a) -> None:
     print(f"   -> {path.relative_to(ROOT)}")
 
 
+def cmd_powerup(a) -> None:
+    """X-only faults of the sample matrix (P in some config, D in none): a seeded sample of
+    them through the power-up check (sim/fastsim/powerup.py); faults whose U is larger
+    than --max-u are not decided (RegFile memory never written: U in the thousands)."""
+    import powerup
+    from collections import Counter
+    ff = fullfabric.FullFabric()
+    rows = list(csv.DictReader((REPORTS / "fullfabric_chain_sample_matrix.csv").open()))
+    cfgs = [c for c in rows[0] if c.startswith("FF")]
+    xo = [r for r in rows if r["any"] == "P"]
+    n, det = len(rows), sum(r["any"] == "D" for r in rows)
+    pick = sorted(random.Random(2).sample(range(len(xo)), min(a.sample, len(xo))))
+    want = {xo[j]["id"] for j in pick}
+    faults = {f["id"]: f for f in csv.DictReader((ROOT / "faults" / "fullfabric.csv").open()) if f["id"] in want}
+    fl = [faults[xo[j]["id"]] for j in pick]
+    p_cfgs = {k: [c for c in cfgs if xo[j][c] == "P"] for k, j in enumerate(pick)}
+    del rows[:], faults
+    stims = {st.name: st for st in build_stims(ff)}
+    stims = [stims[c] for c in cfgs]
+    del ff
+    import gc
+    gc.collect()
+    t0 = time.time()
+    nl = fastsim.Netlist("fullfabric")
+    pu = powerup.PowerUp(nl, stims, ROOT / "synth" / "netlist_fullfabric.json", limit_factor=200)
+    v = pu.decide(fl, p_cfgs, jobs=a.jobs, max_u=a.max_u)
+    cnt = Counter(r["verdict"] for r in v.values())
+    p = cnt["detected"] / len(fl)
+    ci = 1.96 * math.sqrt(p * (1 - p) / len(fl))
+    ks = sorted(r["k"] for r in v.values())
+    print(f"fullfabric power-up: {len(fl)} of {len(xo)} X-only sampled faults, {dict(cnt)}, "
+          f"|U| median {ks[len(ks) // 2]}, {time.time() - t0:.0f} s")
+    print(f"  detected for every power-up state: {100 * p:.1f}% +- {100 * ci:.1f} of the X-only faults;"
+          f" estimated exhaustive coverage {100 * (det + p * len(xo)) / n:.2f}% (strict {100 * det / n:.2f}%)")
+    (REPORTS / "fullfabric_powerup.json").write_text(json.dumps(
+        [{"id": fl[k]["id"], "path": fl[k]["path"], "polarity": fl[k]["polarity"], **r} for k, r in v.items()],
+        indent=0))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -131,8 +179,12 @@ def main() -> None:
     p = sub.add_parser("faultsim")
     p.add_argument("--sample", type=int, default=10000)
     p.add_argument("--jobs", type=int, default=4)
+    p = sub.add_parser("powerup")
+    p.add_argument("--sample", type=int, default=400)
+    p.add_argument("--max-u", type=int, default=10)
+    p.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
-    {"route": cmd_route, "faultsim": cmd_faultsim}[a.cmd](a)
+    {"route": cmd_route, "faultsim": cmd_faultsim, "powerup": cmd_powerup}[a.cmd](a)
 
 
 if __name__ == "__main__":

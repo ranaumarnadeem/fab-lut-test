@@ -49,7 +49,7 @@ def _deps(op: str, a) -> list[str]:
         return [a]
     if op in ("c", "q"):
         return []
-    if op in ("l", "M"):
+    if op in ("l", "M", "F"):
         return list(a[0])
     return list(a)
 
@@ -259,9 +259,11 @@ class Array:
                     st[cn(out)] = ("s", [cn(p) for p in ins])
                 self._static[t] = st
             raw.update(st)
+            for x, val in sel.get("__lut", {}).items():   # constant LUTs (RegFile configs)
+                raw[cn(f"L{x}_O")] = ("c", self.FULL if val else 0)
             for x in sc.LUTS:
                 lc = (luts or {}).get(t, {}).get(x)
-                if lc is None:
+                if lc is None or x in sel.get("__lut", {}):
                     continue
                 elif lc[2]:
                     raw[cn(f"L{x}_O")] = ("q", None)
@@ -314,6 +316,8 @@ class Array:
                 if key not in mc:
                     mc[key] = _muladd([v[p] for p in key], self.NS)
                 v[n] = mc[key][a[1]]
+            elif op == "F":   # RegFile read (two-valued model: the written data, D)
+                v[n] = v[a[0][0]]
             elif op == "c":
                 v[n] = a
             elif op == "n":
@@ -486,6 +490,8 @@ def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
             if key not in mc:
                 mc[key] = _muladd([v[p] for p in key], NS * nb)
             r = mc[key][a[1]]
+        elif op == "F":
+            r = v[a[0][0]]
         elif op == "c":
             r = ALL if a else 0
         elif op == "n":
@@ -574,6 +580,11 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
         for n, op, a in ops:
             if op == "n":
                 v[n] = v[a][::-1]
+            elif op == "F":   # RegFile read: mem[address], X for an X address or entry
+                t, port, k = a[1]
+                adr = [v[p] for p in a[0][1:]]
+                v[n] = (1, 1) if any(h and l for h, l in adr) else \
+                    mem[t][sum(h << i for i, (h, _) in enumerate(adr))][k]
             elif op == "M":   # any X input: every output X (at least as pessimistic as the gates)
                 key = tuple(a[0])
                 if key not in mc:
@@ -604,9 +615,28 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
                 v[n] = (1, 1) if hs and ls else ((hs & hb) | (ls & ha), (hs & lb) | (ls & la))
         return v
 
+    rf = getattr(arr, "rf_pins", {})
+    mem = {t: [[(1, 1)] * 4 for _ in range(32)] for t in rf}   # RegFile entries, X at power-up
+
+    def rf_write(v):
+        """UserCLK edge: mem[W_ADR] <= D when W_en; an X enable or address makes every
+        entry it may hit X where the value would change."""
+        for t, p in rf.items():
+            eh, el = v[p["en"]]
+            if not eh:
+                continue
+            adr = [v[n] for n in p["W"]]
+            cand = [a for a in range(32) if all((h if (a >> i) & 1 else l) for i, (h, l) in enumerate(adr))]
+            d = [v[n] for n in p["D"]]
+            sure = el == 0 and len(cand) == 1
+            for a in cand:
+                mem[t][a] = list(d) if sure else [old if old == new else (1, 1)
+                                                  for old, new in zip(mem[t][a], d)]
+
     flags, exp = [], []
     for inp in vecs:
         v = comb(inp)
+        rf_write(v)
         nq = {}
         for (t, x), old in q.items():
             tt, i0ci, _ff, rv = luts[t][x]
