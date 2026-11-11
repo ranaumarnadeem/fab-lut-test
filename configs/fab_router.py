@@ -140,14 +140,16 @@ class Cfg:
         return self._om
 
     def succ(self, n):
+        cut = getattr(self, "cut", ())
         for t, _c in self.g.fixed.get(n, ()):
-            yield t
+            if t not in cut:   # constant LUT outputs: no input -> output edge
+                yield t
         for i, k in self.g.readers.get(n, ()):
             if self.sel.get(i) == k:
                 yield self.g.net_of[i]
 
     def preds(self, n):
-        out = list(self.g.fixed_pred.get(n, ()))
+        out = [] if n in getattr(self, "cut", ()) else list(self.g.fixed_pred.get(n, ()))
         i = self.g.mux_of.get(n)
         if i is not None and i in self.sel:
             s = self.g.src(i, self.sel[i])
@@ -309,10 +311,7 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) ->
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
-    sels = fill(g, cfg, open_work, bias)
-    for t, c in getattr(cfg, "lut_const", {}).items():
-        sels[t]["__lut"] = dict(c)
-    return sels
+    return fill(g, cfg, open_work, bias)
 
 
 def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
@@ -355,6 +354,8 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
     sels = sels_of(g, cfg.sel)
     for t in g.arr.io_tiles:
         sels[t]["__cbits"] = CBITS_PATTERN[bias % len(CBITS_PATTERN)]
+    for t, c in getattr(cfg, "lut_const", {}).items():   # before the loop check: constants
+        sels[t]["__lut"] = dict(c)
     if g.arr.cycles(sels):
         moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000))
         print(f"    (array check: {len(moves)} loop moves)", flush=True)
@@ -593,6 +594,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         if w in arr.lut_tiles and e in arr.lut_tiles:
             cfg.lut_const.setdefault(w, {})["H"] = 1
             cfg.lut_const.setdefault(e, {})["H"] = 0
+    cfg.cut = {arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c}
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
@@ -603,9 +605,20 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             continue
         one, zero = arr.canon(w, "LH_O"), arr.canon(e, "LH_O")
         adr = bias % 32
-        for net, val in [(p["en"], 1)] + [(n, (adr >> i) & 1) for port in "WAB" for i, n in enumerate(p[port])]:
-            if route_to(cfg, one if val else zero, {net}):
-                links += 1
+        if route_to(cfg, one, {p["en"]}):
+            links += 1
+        else:
+            fails += 1
+        # address bit i: the same constant on W, A and B (config index bit first, else the
+        # other value: the three ports must agree, the address itself is free)
+        for i in range(5):
+            for val in ((adr >> i) & 1, 1 - ((adr >> i) & 1)):
+                before = set(cfg.sel)
+                if all(route_to(cfg, one if val else zero, {p[port][i]}) for port in "WAB"):
+                    links += 3
+                    break
+                for k in set(cfg.sel) - before:
+                    del cfg.sel[k]
             else:
                 fails += 1
     for y in sorted({t[1] for t in arr.lut_tiles}):
