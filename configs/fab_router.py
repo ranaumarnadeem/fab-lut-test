@@ -592,7 +592,6 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     for r in rf:
         w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
         if w in arr.lut_tiles and e in arr.lut_tiles:
-            cfg.lut_const.setdefault(w, {})["H"] = 1
             cfg.lut_const.setdefault(e, {})["H"] = 0
     cfg.cut = {arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c}
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
@@ -601,9 +600,26 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             cfg.assign((t, f"L{x}_EN"), 0)
     for r, p in rf.items():
         w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
-        if w not in cfg.lut_const or e not in cfg.lut_const:
+        if e not in cfg.lut_const:
             continue
-        one, zero = arr.canon(w, "LH_O"), arr.canon(e, "LH_O")
+        zero = arr.canon(e, "LH_O")
+        # the constant 1: a LUT of the west tile whose four inputs all come from the
+        # constant 0 (a LUT is a mux tree on its inputs: with X inputs even an all-ones
+        # table gives X in the gates, 0 & X = 0 keeps the 0)
+        one = None
+        for x in "HGFEDCBA":
+            before = set(cfg.sel)
+            if all(route_to(cfg, zero, {arr.canon(w, f"L{x}_I{j}")}) for j in range(4)):
+                cfg.lut_const.setdefault(w, {})[x] = 1
+                cfg.cut.add(arr.canon(w, f"L{x}_O"))
+                one = arr.canon(w, f"L{x}_O")
+                links += 4
+                break
+            for k in set(cfg.sel) - before:
+                del cfg.sel[k]
+        if one is None:
+            fails += 1
+            continue
         adr = bias % 32
         if route_to(cfg, one, {p["en"]}):
             links += 1
