@@ -16,3 +16,6 @@ faults/fullfabric*
 rtl/config/
 synth/netlist_cfgtop*
 faults/cfgtop.csv
+rtl/bram/
+synth/netlist_fullbram*
+faults/fullbram.csv

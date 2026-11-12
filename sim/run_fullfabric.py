@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Full demo fabric: backbone configs, registered chains, sampled fault simulation (Phase 12).
 
-  python3 sim/run_fullfabric.py route --configs N [--chains 2] [--extend]
+  python3 sim/run_fullfabric.py [--bram] route --configs N [--chains 2] [--extend]
   python3 sim/run_fullfabric.py faultsim [--sample 10000] [--jobs 4]
   python3 sim/run_fullfabric.py powerup [--sample 400] [--max-u 10]
 
@@ -35,13 +35,21 @@ import fastsim  # noqa: E402
 import fullfabric  # noqa: E402
 import sm_configs as sc  # noqa: E402
 
+NAME = "fullfabric"   # --bram: "fullbram" (the fabric with its BlockRAMs, synth/build_fabbram.sh)
 CFG = ROOT / "configs" / "fab_router_fullfabric.json"
 CKPT = ROOT / "build" / "fab_router_fullfabric_ckpt.json"   # after every config (resume: --extend)
+
+
+def _use(name: str) -> None:
+    global NAME, CFG, CKPT
+    NAME = name
+    CFG = ROOT / "configs" / f"fab_router_{name}.json"
+    CKPT = ROOT / "build" / f"fab_router_{name}_ckpt.json"
 REPORTS = ROOT / "reports"
 
 
 def cmd_route(a) -> None:
-    ff = fullfabric.FullFabric()
+    ff = fullfabric.FullFabric(bram=NAME == "fullbram")
     fr.CHAINS = a.chains
     t0 = time.time()
     prior, plog = [], []
@@ -84,11 +92,11 @@ def build_stims(ff) -> list:
 
 
 def cmd_faultsim(a) -> None:
-    ff = fullfabric.FullFabric()
+    ff = fullfabric.FullFabric(bram=NAME == "fullbram")
     stims = build_stims(ff)
     # fault-free check per config first: a config whose fault-free lane differs from the model
     # or does not settle is left out (reported)
-    nl = fastsim.Netlist("fullfabric")
+    nl = fastsim.Netlist(NAME)
     keep = []
     for st in stims:
         try:
@@ -98,14 +106,14 @@ def cmd_faultsim(a) -> None:
             print(f"  left out: {e}", flush=True)
     print(f"fullfabric: {len(keep)} of {len(stims)} configs pass the fault-free check", flush=True)
     stims = keep
-    faults = list(csv.DictReader((ROOT / "faults" / "fullfabric.csv").open()))
+    faults = list(csv.DictReader((ROOT / "faults" / f"{NAME}.csv").open()))
     smp = sorted(random.Random(1).sample(range(len(faults)), a.sample))
     fl = [faults[j] for j in smp]
     t0 = time.time()
     # a full fabric needs more events to settle one input change (switch-matrix SCCs): 200 x cells
-    cfgs, stat = fastsim.run_faults("fullfabric", stims, fl, a.jobs, limit_factor=200, nl=nl)
+    cfgs, stat = fastsim.run_faults(NAME, stims, fl, a.jobs, limit_factor=200, nl=nl)
     print(f"fullfabric: {len(fl)} sampled faults x {len(cfgs)} configs in {time.time() - t0:.0f} s", flush=True)
-    path = REPORTS / "fullfabric_chain_sample_matrix.csv"
+    path = REPORTS / f"{NAME}_chain_sample_matrix.csv"
     with path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", *cfgs, "any"])
@@ -117,7 +125,7 @@ def cmd_faultsim(a) -> None:
     tot, det = Counter(), Counter()
     for f, st in zip(fl, stat):
         m = re.match(r"Tile_X\d+Y\d+_(?:DSP\.Tile_X\d+Y\d+_)?(\w+?)\.", f["path"])
-        k = m.group(1) if m else "top-level wiring"
+        k = m.group(1) if m else ("BlockRAM" if f["path"].startswith("Inst_BlockRAM") else "top-level wiring")
         d = "D" in st.values()
         for kk in (k, "all"):
             tot[kk] += 1
@@ -136,16 +144,16 @@ def cmd_powerup(a) -> None:
     import gc
     import powerup
     from collections import Counter
-    nl = fastsim.Netlist("fullfabric")   # first: the JSON parse is the memory peak
+    nl = fastsim.Netlist(NAME)   # first: the JSON parse is the memory peak
     gc.collect()
-    ff = fullfabric.FullFabric()
-    rows = list(csv.DictReader((REPORTS / "fullfabric_chain_sample_matrix.csv").open()))
+    ff = fullfabric.FullFabric(bram=NAME == "fullbram")
+    rows = list(csv.DictReader((REPORTS / f"{NAME}_chain_sample_matrix.csv").open()))
     cfgs = [c for c in rows[0] if c.startswith("FF")]
     xo = [r for r in rows if r["any"] == "P"]
     n, det = len(rows), sum(r["any"] == "D" for r in rows)
     pick = sorted(random.Random(2).sample(range(len(xo)), min(a.sample, len(xo))))
     want = {xo[j]["id"] for j in pick}
-    faults = {f["id"]: f for f in csv.DictReader((ROOT / "faults" / "fullfabric.csv").open()) if f["id"] in want}
+    faults = {f["id"]: f for f in csv.DictReader((ROOT / "faults" / f"{NAME}.csv").open()) if f["id"] in want}
     fl = [faults[xo[j]["id"]] for j in pick]
     p_cfgs = {k: [c for c in cfgs if xo[j][c] == "P"] for k, j in enumerate(pick)}
     del rows[:], faults
@@ -154,7 +162,7 @@ def cmd_powerup(a) -> None:
     del ff
     gc.collect()
     t0 = time.time()
-    pu = powerup.PowerUp(nl, stims, ROOT / "synth" / "netlist_fullfabric.json", limit_factor=200)
+    pu = powerup.PowerUp(nl, stims, ROOT / "synth" / f"netlist_{NAME}.json", limit_factor=200)
     v = pu.decide(fl, p_cfgs, jobs=a.jobs, max_u=a.max_u, leave_x=True)
     cnt = Counter(r["verdict"] for r in v.values())
     p = cnt["detected"] / len(fl)
@@ -164,13 +172,14 @@ def cmd_powerup(a) -> None:
           f"|U| median {ks[len(ks) // 2]}, {time.time() - t0:.0f} s")
     print(f"  detected for every power-up state: {100 * p:.1f}% +- {100 * ci:.1f} of the X-only faults;"
           f" estimated exhaustive coverage {100 * (det + p * len(xo)) / n:.2f}% (strict {100 * det / n:.2f}%)")
-    (REPORTS / "fullfabric_powerup.json").write_text(json.dumps(
+    (REPORTS / f"{NAME}_powerup.json").write_text(json.dumps(
         [{"id": fl[k]["id"], "path": fl[k]["path"], "polarity": fl[k]["polarity"], **r} for k, r in v.items()],
         indent=0))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--bram", action="store_true", help="the fabric with its BlockRAMs (netlist fullbram)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("route")
     p.add_argument("--configs", type=int, default=12)
@@ -185,6 +194,8 @@ def main() -> None:
     p.add_argument("--max-u", type=int, default=10)
     p.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
+    if a.bram:
+        _use("fullbram")
     {"route": cmd_route, "faultsim": cmd_faultsim, "powerup": cmd_powerup}[a.cmd](a)
 
 

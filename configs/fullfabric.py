@@ -74,11 +74,14 @@ def _instances(text: str) -> list[tuple[str, str, dict[str, str]]]:
 
 
 class FullFabric(fabric.Array):
-    def __init__(self, n_rand: int = 54):
+    def __init__(self, n_rand: int = 54, bram: bool = False):
+        """bram: the fabric with its 7 BlockRAMs (synth/build_fabbram.sh, netlist fullbram):
+        the RAM_IO data paths become BRAM reads and writes (bel_ops op Q)."""
         self.fabric = True
         self.n_rand = n_rand
         self._cmemo, self._static, self._mop = {}, {}, {}
-        self.name = "fullfabric"
+        self.name = "fullbram" if bram else "fullfabric"
+        self.bram = bram
         self.width = {n: w for _, w, n in __import__("gen_array").tile_ports()}
         top = (FAB / "eFPGA.v").read_text()
         dsp = (FAB / "DSP" / "DSP.v").read_text()
@@ -172,10 +175,36 @@ class FullFabric(fabric.Array):
                             "A": [self.canon(t, f"A_ADR{k}") for k in range(5)],
                             "B": [self.canon(t, f"B_ADR{k}") for k in range(5)],
                             "en": self.canon(t, "W_en")} for t in self.tiles if self.types[t] == "RegFile"}
+        self.bram_pins = self._bram_pins() if bram else {}
         self.tainted = self._taint()
         self.route_max_pop = 3000   # fab_router: cap the Dijkstra exploration per route
         self.route_max_reach = 10000  # and the incremental loop check (exact check per config)
         self.loop_max_moves = 20000
+
+    def _bram_pins(self) -> dict:
+        """BRAM k -> {"rd_data": [32 model nets: the RAM_IO InPass outputs], "rd_addr", "wr_addr",
+        "wr_data", "C": [the RAM_IO OutPass inputs, C0..C5], "tiles"} (eFPGA_top.v wiring)."""
+        top = Path("/home/user/ext/demo/Fabric/eFPGA_top.v").read_text()
+        inst = re.search(r"\neFPGA eFPGA_inst \((.*?)\n\);", top, re.S).group(1)
+        wire = {}   # (bus, index) -> (tile, BEL pin net)
+        for p, bus, i in re.findall(r"\.(Tile_X\d+Y\d+_(?:RAM2FAB|FAB2RAM)\w+)\((\w+)\[(\d+)\]\)", inst):
+            X, Y, loc = re.match(r"Tile_X(\d+)Y(\d+)_(\w+)", p).groups()
+            t = (int(X) - 1, int(Y))
+            # RAM2FAB_Dj_Ik: InPass input -> its output Ok (the fabric side); FAB2RAM_xx_Ok:
+            # OutPass output -> its input Ik (the fabric side)
+            loc = re.sub(r"_I(\d)$", r"_O\1", loc) if loc.startswith("RAM2FAB") else re.sub(r"_O(\d)$", r"_I\1", loc)
+            wire[(bus, int(i))] = (t, self.canon(t, loc))
+        out = {}
+        for k, body in re.findall(r"BlockRAM_1KB Inst_BlockRAM_(\d+) \((.*?)\n\);", top, re.S):
+            pins = {}
+            for pin, bus, hi, lo in re.findall(r"\.(\w+)\((\w+)\[(\d+)(?::(\d+))?\]\)", body):
+                lo = int(lo) if lo else int(hi)
+                pins[pin] = [wire[(bus, j)][1] for j in range(lo, int(hi) + 1)]
+            pins["C"] = [pins.pop(f"C{j}")[0] for j in range(6)]
+            pins["tiles"] = sorted({wire[(bus, int(j))][0] for bus, j in
+                                    re.findall(r"\((\w+)\[(\d+)", body) if (bus, int(j)) in wire})
+            out[int(k)] = pins
+        return out
 
     def bel_ops(self, t) -> dict:
         """DSP_bot: MULADD at config 0 (Q = A * B + C, combinational). RegFile: op F, read
@@ -183,10 +212,18 @@ class FullFabric(fabric.Array):
         D); defined once the test config pins W_en and the addresses (fab_router.backbone,
         constant LUTs). RAM_IO (BRAM data) stays opaque."""
         typ = self.types.get(t)
-        if typ not in ("DSP_bot", "RegFile"):
+        if typ not in ("DSP_bot", "RegFile") and not (typ == "RAM_IO" and self.bram):
             return {}
         c = self.__dict__.setdefault("_belops", {})
         if t in c:
+            return c[t]
+        if typ == "RAM_IO":   # BRAM read data (op Q: state; two-valued model: the write data)
+            c[t] = {}
+            for k, p in self.bram_pins.items():
+                for i, n in enumerate(p["rd_data"]):
+                    tile, loc = n.split("/", 1)
+                    if tile == self.tn(t):
+                        c[t][loc] = ("Q", ([p["wr_data"][i]], (k, i)))
             return c[t]
         if typ == "RegFile":
             p = self.rf_pins[t]

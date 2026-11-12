@@ -600,6 +600,11 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
         if w in arr.lut_tiles and e in arr.lut_tiles:
             cfg.lut_const.setdefault(e, {})["H"] = 0
+    br = getattr(arr, "bram_pins", {})
+    for k, bp in br.items():   # BRAM: the LUT4AB tile west of its upper RAM_IO tile = 0
+        (xr, y1), (_, y2) = bp["tiles"]
+        if (xr - 1, y1) in arr.lut_tiles and (xr - 1, y2) in arr.lut_tiles:
+            cfg.lut_const.setdefault((xr - 1, y1), {})["H"] = 0
     cfg.cut = {arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c}
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
@@ -656,7 +661,64 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                     break
             else:
                 fails += 1
-    cfg.pinned = set(cfg.sel) - sel0 if rf else set()   # RegFile constants and data: never moved
+    # BRAM (fabric with BlockRAMs): C0..C5 = 0 (32-bit ports, write enable wr_data[20], no
+    # output register), read address = write address (a constant, config index mod 256),
+    # write data a constant pattern, wr_data[20] (write enable) from a pad: on the cycles
+    # without a write the read gives the stored word (a read during a write of the same
+    # address is undefined for the macro: X)
+    for k, bp in br.items():
+        (xr, y1), (_, y2) = bp["tiles"]
+        wz, wo = (xr - 1, y1), (xr - 1, y2)
+        if wz not in cfg.lut_const:
+            continue
+        zero = arr.canon(wz, "LH_O")
+        one = None
+        for x in "HGFEDCBA":
+            if x in cfg.lut_const.get(wo, {}):
+                continue
+            before = set(cfg.sel)
+            if all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j}")}, True) for j in range(4)):
+                cfg.lut_const.setdefault(wo, {})[x] = 1
+                cfg.cut.add(arr.canon(wo, f"L{x}_O"))
+                one = arr.canon(wo, f"L{x}_O")
+                break
+            for q in set(cfg.sel) - before:
+                del cfg.sel[q]
+        if one is None:
+            fails += 1
+            continue
+        for n in bp["C"]:
+            if route_to(cfg, zero, {n}, True):
+                links += 1
+            else:
+                fails += 1
+        adr = bias % 256
+        for i in range(8):
+            for val in ((adr >> i) & 1, 1 - ((adr >> i) & 1)):
+                before = set(cfg.sel)
+                if all(route_to(cfg, one if val else zero, {bp[port][i]}, True) for port in ("wr_addr", "rd_addr")):
+                    links += 2
+                    break
+                for q in set(cfg.sel) - before:
+                    del cfg.sel[q]
+            else:
+                fails += 1
+        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y1), yy))
+        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
+        if any(route_to(cfg, src, {bp["wr_data"][20]}, True) for src in pads[(bias + k) % 4:] + pads[:(bias + k) % 4]):
+            links += 1
+        else:
+            fails += 1
+        for i in range(32):
+            if i == 20:
+                continue
+            val = (i + bias) & 1
+            if route_to(cfg, one if val else zero, {bp["wr_data"][i]}, True) or \
+                    route_to(cfg, zero if val else one, {bp["wr_data"][i]}, True):
+                links += 1
+            else:
+                fails += 1
+    cfg.pinned = set(cfg.sel) - sel0 if (rf or br) else set()   # RegFile / BRAM routes: never moved
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
         order = [(t, sc.LUTS[(k + bias) % 8]) for t in row for k in range(8)

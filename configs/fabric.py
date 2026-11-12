@@ -47,7 +47,7 @@ READ_BY = {src: (dx, dy, dst) for dst, (dx, dy, src) in gen_array.FROM.items()}
 def _deps(op: str, a) -> list[str]:
     if op in ("b", "n"):
         return [a]
-    if op in ("c", "q"):
+    if op in ("c", "q", "Q"):   # Q: BRAM read data, state (the read address is registered)
         return []
     if op == "F":   # RegFile read: combinational in the read address only (D: through the clock)
         return list(a[0][1:])
@@ -320,6 +320,8 @@ class Array:
                 v[n] = mc[key][a[1]]
             elif op == "F":   # RegFile read (two-valued model: the written data, D, if already known)
                 v[n] = v.get(a[0][0], 0)
+            elif op == "Q":   # BRAM read (two-valued model: the write data, if already known)
+                v[n] = v.get(a[0][0], 0)
             elif op == "c":
                 v[n] = a
             elif op == "n":
@@ -494,7 +496,7 @@ def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
             if key not in mc:
                 mc[key] = _muladd([v[p] for p in key], NS * nb)
             r = mc[key][a[1]]
-        elif op == "F":
+        elif op in ("F", "Q"):
             r = v.get(a[0][0], 0)
         elif op == "c":
             r = ALL if a else 0
@@ -584,6 +586,13 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
         for n, op, a in ops:
             if op == "n":
                 v[n] = v[a][::-1]
+            elif op == "Q":   # BRAM read: X after a write to the read address, else mem[a1]
+                k, i = a[1]
+                st = bst[k]
+                if st["col"] != (0, 1) or any(h and l for h, l in st["a1"]):
+                    v[n] = (1, 1)
+                else:
+                    v[n] = st["mem"].get(sum(h << j for j, (h, _) in enumerate(st["a1"])), XW)[i]
             elif op == "F":   # RegFile read: mem[address], X for an X address or entry
                 t, port, k = a[1]
                 adr = [v[p] for p in a[0][1:]]
@@ -637,10 +646,43 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
                 mem[t][a] = list(d) if sure else [old if old == new else (1, 1)
                                                   for old, new in zip(mem[t][a], d)]
 
+    # BRAMs (full fabric with BlockRAMs): 256 x 32, X until written; modelled for C = 0
+    # (32-bit ports, write enable wr_data[20], no output register), else every read X
+    br = getattr(arr, "bram_pins", {})
+    XW = [(1, 1)] * 32
+    bst = {k: {"mem": {}, "a1": [(1, 1)] * 8, "col": (1, 1)} for k in br}
+
+    def bram_clock(v):
+        for k, p in br.items():
+            st = bst[k]
+            if any(v[n] != (0, 1) for n in p["C"]):
+                st["mem"], st["a1"], st["col"] = {}, [(1, 1)] * 8, (1, 1)
+                continue
+            eh, el = v[p["wr_data"][20]]
+            wa = [v[n] for n in p["wr_addr"]]
+            ra = [v[n] for n in p["rd_addr"]]
+            if eh:   # a write may happen
+                cand = [a for a in range(256) if all((h if (a >> j) & 1 else l) for j, (h, l) in enumerate(wa))]
+                d = [v[n] for n in p["wr_data"]]
+                sure = el == 0 and len(cand) == 1
+                for a in cand:
+                    old = st["mem"].get(a, XW)
+                    st["mem"][a] = list(d) if sure else [o if o == x else (1, 1) for o, x in zip(old, d)]
+            # read-during-write of the same address (undefined for the macro): X
+            if not eh:
+                col = (0, 1)
+            elif any(h and l for h, l in wa + ra):
+                col = (1, 1)
+            else:
+                same = all(x == y for x, y in zip(wa, ra))
+                col = ((1, 0) if el == 0 else (1, 1)) if same else (0, 1)
+            st["a1"], st["col"] = ra, col
+
     flags, exp = [], []
     for inp in vecs:
         v = comb(inp)
         rf_write(v)
+        bram_clock(v)
         nq = {}
         for (t, x), old in q.items():
             tt, i0ci, _ff, rv = luts[t][x]
