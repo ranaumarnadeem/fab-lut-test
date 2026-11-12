@@ -714,9 +714,11 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
         sh = (bias + k) % len(pads)
         pads = pads[sh:] + pads[:sh]
+        cap, cfg.g.max_pop = cfg.g.max_pop, 60000   # pads are far from the BRAM column
         we = next((src for src in pads if route_to(cfg, src, {bp["wr_data"][20]}, True)), None)
         if we is None:
             fails += 1
+            cfg.g.max_pop = cap
             continue
         links += 1
         for src in [x for x in pads if x != we]:
@@ -730,6 +732,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 del cfg.sel[q]
         else:
             fails += 31
+        cfg.g.max_pop = cap
     cfg.pinned = set(cfg.sel) - sel0 if (rf or br) else set()   # RegFile / BRAM routes: never moved
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
