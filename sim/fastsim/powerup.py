@@ -127,6 +127,7 @@ class PowerUp:
         t0 = time.time()
         bit = {i: nl.net_bit[f["net"]] for i, f in enumerate(faults)}
         pol = {i: int(f["polarity"]) for i, f in enumerate(faults)}
+        need_cones = max_u is None or max_u > full_k
         # 1. U and end-of-run latch values per (fault, config)
         U = defaultdict(set)
         consts = defaultdict(list)
@@ -148,11 +149,12 @@ class PowerUp:
                     l_ = self.lane_bit(sl, lane)
                     u_c = set(np.nonzero(w_ == 0)[0].tolist())
                     U[i] |= u_c
-                    const = {bit[i]: pol[i]}
-                    for k in np.nonzero((w_ == 1) & (h_ != l_))[0].tolist():
-                        if nl.store_is_latch[k]:
-                            const[self.q_bit[k]] = int(h_[k])
-                    consts[i].append(const)
+                    if need_cones:   # end-of-run latch values: only the cones use them
+                        const = {bit[i]: pol[i]}
+                        for k in np.nonzero((w_ == 1) & (h_ != l_))[0].tolist():
+                            if nl.store_is_latch[k]:
+                                const[self.q_bit[k]] = int(h_[k])
+                        consts[i].append(const)
         if verbose:
             print(f"  U computed for {len(p_cfgs)} faults ({time.time() - t0:.1f} s)", flush=True)
         # 2. groups and their outputs
