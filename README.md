@@ -208,6 +208,37 @@ the 200 frames change. Through the parallel `SelfWriteData` port at 50 MHz the 4
 load in about 4-6 ms; bitbang about 0.7 s, UART about 50 s. The 64 vectors per config are
 negligible. No area is added: every test structure is configuration.
 
+### Full fabric with its BlockRAMs
+
+`synth/build_fabbram.sh` adds the 7 BlockRAMs of `eFPGA_top.v` to the full fabric:
+FABulous's `BlockRAM_1KB` wrapper unchanged, its SRAM macro (a blackbox in FABulous, a
+hard macro tested by memory BIST) as a behavioural model without faults: write and read
+address registered on the clock, a read of the address written in the same cycle X
+(undefined for the dual-port macro). 823214 cells, 1170166 faults (13048 in the BRAM
+wrappers). The model reads the BRAMs as 256 x 32 memories, X until written. In the BRAM
+test configs (`run_fullfabric.py --bram`) the C inputs select 32-bit ports (GND inputs of
+the RAM_IO muxes, C4 from a constant LUT or the write enable from a pad), address bits
+1..7 are the same constant on both ports, write address bit 0 comes from a pad p and read
+address bit 0 from NOT p (a LUT with a fixed table), the data from a second pad: a read
+never meets the write of its cycle and returns the other word. (Read address = write
+address was the first try: every write cycle reads X, which the registered XOR chains
+spread everywhere: 36% alone.) Same 10,000 sampled faults, the earlier sets simulated on
+this netlist too:
+
+| part | sampled | MULADD 24 | RegFile 24 | BRAM 24 | **all three, 72** |
+|---|---|---|---|---|---|
+| all | 10000 | 74.1% | 72.6% | 74.7% | **83.8% +- 0.7** |
+| LUT4AB | 6822 | 82.0% | 78.1% | 78.8% | 88.7% +- 0.8 |
+| RAM_IO | 519 | 57.0% | 59.7% | 80.9% | 84.4% +- 3.1 |
+| W_IO | 184 | 79.3% | 84.2% | 87.0% | 89.7% +- 4.4 |
+| DSP (wrapper, top, bottom) | 1198 | 69.5-72.5% | 67.1-72.5% | 69.9-73.0% | 79.0-84.3% |
+| RegFile | 1174 | 43.4% | 54.9% | 55.4% | 63.1% +- 2.8 |
+| BlockRAM wrapper | 95 | 0% | 0% | 21.1% | 21.1% +- 8.2 |
+
+Set cover keeps all 72 configs (32 reach 95% of what they detect). The BRAM wrappers are
+only exercised in 32-bit mode; the narrow port widths, byte masks and the output
+register need configs with other C values.
+
 ### Configuration logic
 
 `synth/build_cfgtop.sh` builds FABulous's configuration path from `eFPGA_top.v` unchanged
@@ -337,6 +368,9 @@ python3 sim/run_fullfabric.py route --configs 12 --chains 2
 python3 sim/run_fullfabric.py faultsim --sample 10000 --jobs 4
 python3 sim/run_fullfabric.py powerup --sample 400
 python3 sim/array_cover.py --matrix reports/fullfabric_chain_sample_matrix.csv
+./synth/build_fabbram.sh
+python3 sim/run_fullfabric.py --bram route --configs 24 --chains 2
+python3 sim/run_fullfabric.py --bram faultsim --sample 10000 --jobs 4
 ```
 
 Configuration logic:
@@ -372,8 +406,8 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-A RAM_IO / BRAM model (opaque in the full-fabric run), RegFile words other than the one a
-config writes, the configuration logic together with the fabric in one simulation (it is
+BRAM narrow port modes and output register, the SRAM macro itself (memory BIST), RegFile
+words other than the one a config writes, the configuration logic together with the fabric in one simulation (it is
 tested against a model of the config memory), bridging faults and timing.
 
 ## License
