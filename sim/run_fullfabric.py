@@ -72,8 +72,8 @@ def cmd_route(a) -> None:
           f"{time.time() - t0:.0f} s -> {CFG.relative_to(ROOT)}")
 
 
-def build_stims(ff) -> list:
-    data = json.loads(CFG.read_text())
+def build_stims(ff, cfg_path: Path | None = None) -> list:
+    data = json.loads((cfg_path or CFG).read_text())
     inv = {ff.tn(t): t for t in ff.tiles}
     stims = []
     for c, cfg in enumerate(data["configs"]):
@@ -93,7 +93,7 @@ def build_stims(ff) -> list:
 
 def cmd_faultsim(a) -> None:
     ff = fullfabric.FullFabric(bram=NAME == "fullbram")
-    stims = build_stims(ff)
+    stims = build_stims(ff, Path(a.configs_from) if a.configs_from else None)
     # fault-free check per config first: a config whose fault-free lane differs from the model
     # or does not settle is left out (reported)
     nl = fastsim.Netlist(NAME)
@@ -113,7 +113,7 @@ def cmd_faultsim(a) -> None:
     # a full fabric needs more events to settle one input change (switch-matrix SCCs): 200 x cells
     cfgs, stat = fastsim.run_faults(NAME, stims, fl, a.jobs, limit_factor=200, nl=nl)
     print(f"fullfabric: {len(fl)} sampled faults x {len(cfgs)} configs in {time.time() - t0:.0f} s", flush=True)
-    path = REPORTS / f"{NAME}_chain_sample_matrix.csv"
+    path = REPORTS / f"{NAME}_chain_sample_matrix{a.tag}.csv"
     with path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", *cfgs, "any"])
@@ -189,6 +189,8 @@ def main() -> None:
     p = sub.add_parser("faultsim")
     p.add_argument("--sample", type=int, default=10000)
     p.add_argument("--jobs", type=int, default=4)
+    p.add_argument("--configs-from", help="another config file (e.g. an earlier set on this netlist)")
+    p.add_argument("--tag", default="", help="suffix of the matrix file")
     p = sub.add_parser("powerup")
     p.add_argument("--sample", type=int, default=400)
     p.add_argument("--max-u", type=int, default=10)
