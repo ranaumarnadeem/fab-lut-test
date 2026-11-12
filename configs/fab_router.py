@@ -666,6 +666,13 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     # write data a constant pattern, wr_data[20] (write enable) from a pad: on the cycles
     # without a write the read gives the stored word (a read during a write of the same
     # address is undefined for the macro: X)
+    def gnd(net):   # select the GND input of the mux driving net (RAM_IO OutPass inputs A, C)
+        i = cfg.g.mux_of.get(net)
+        if i is None:
+            return False
+        ks = [k for k, s_ in enumerate(MM(i).inputs) if s_.kind == "const" and s_.port.startswith("GND")]
+        return bool(ks) and cfg.assign(i, ks[0])
+
     for k, bp in br.items():
         (xr, y1), (_, y2) = bp["tiles"]
         wz, wo = (xr - 1, y1), (xr - 1, y2)
@@ -684,40 +691,45 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 break
             for q in set(cfg.sel) - before:
                 del cfg.sel[q]
-        if one is None:
-            fails += 1
-            continue
-        for n in bp["C"]:
-            if route_to(cfg, zero, {n}, True):
+        for n in bp["C"]:   # C0..C5 = 0: the mux's GND input
+            if gnd(n):
                 links += 1
             else:
                 fails += 1
         adr = bias % 256
-        for i in range(8):
-            for val in ((adr >> i) & 1, 1 - ((adr >> i) & 1)):
+        for i in range(8):   # a 1: routed from the constant 1 to both ports, else 0 (GND)
+            ok = False
+            if (adr >> i) & 1 and one is not None:
                 before = set(cfg.sel)
-                if all(route_to(cfg, one if val else zero, {bp[port][i]}, True) for port in ("wr_addr", "rd_addr")):
-                    links += 2
-                    break
-                for q in set(cfg.sel) - before:
-                    del cfg.sel[q]
+                ok = all(route_to(cfg, one, {bp[port][i]}, True) for port in ("wr_addr", "rd_addr"))
+                if not ok:
+                    for q in set(cfg.sel) - before:
+                        del cfg.sel[q]
+            if ok or (gnd(bp["wr_addr"][i]) and gnd(bp["rd_addr"][i])):
+                links += 2
             else:
                 fails += 1
+        # write enable wr_data[20] from one pad, the other data bits from a second pad
         rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y1), yy))
         pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
-        if any(route_to(cfg, src, {bp["wr_data"][20]}, True) for src in pads[(bias + k) % 4:] + pads[:(bias + k) % 4]):
-            links += 1
-        else:
+        sh = (bias + k) % len(pads)
+        pads = pads[sh:] + pads[:sh]
+        we = next((src for src in pads if route_to(cfg, src, {bp["wr_data"][20]}, True)), None)
+        if we is None:
             fails += 1
-        for i in range(32):
-            if i == 20:
-                continue
-            val = (i + bias) & 1
-            if route_to(cfg, one if val else zero, {bp["wr_data"][i]}, True) or \
-                    route_to(cfg, zero if val else one, {bp["wr_data"][i]}, True):
-                links += 1
-            else:
-                fails += 1
+            continue
+        links += 1
+        for src in [x for x in pads if x != we]:
+            before = set(cfg.sel)
+            got = [route_to(cfg, src, {bp["wr_data"][i]}, True) for i in range(32) if i != 20]
+            if sum(got) >= 24:
+                links += sum(got)
+                fails += len(got) - sum(got)
+                break
+            for q in set(cfg.sel) - before:
+                del cfg.sel[q]
+        else:
+            fails += 31
     cfg.pinned = set(cfg.sel) - sel0 if (rf or br) else set()   # RegFile / BRAM routes: never moved
     for y in sorted({t[1] for t in arr.lut_tiles}):
         row = sorted((t for t in arr.lut_tiles if t[1] == y), key=lambda t: -t[0])
