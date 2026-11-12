@@ -133,8 +133,11 @@ def cmd_powerup(a) -> None:
     """X-only faults of the sample matrix (P in some config, D in none): a seeded sample of
     them through the power-up check (sim/fastsim/powerup.py); faults whose U is larger
     than --max-u are not decided (RegFile memory never written: U in the thousands)."""
+    import gc
     import powerup
     from collections import Counter
+    nl = fastsim.Netlist("fullfabric")   # first: the JSON parse is the memory peak
+    gc.collect()
     ff = fullfabric.FullFabric()
     rows = list(csv.DictReader((REPORTS / "fullfabric_chain_sample_matrix.csv").open()))
     cfgs = [c for c in rows[0] if c.startswith("FF")]
@@ -149,10 +152,8 @@ def cmd_powerup(a) -> None:
     stims = {st.name: st for st in build_stims(ff)}
     stims = [stims[c] for c in cfgs]
     del ff
-    import gc
     gc.collect()
     t0 = time.time()
-    nl = fastsim.Netlist("fullfabric")
     pu = powerup.PowerUp(nl, stims, ROOT / "synth" / "netlist_fullfabric.json", limit_factor=200)
     v = pu.decide(fl, p_cfgs, jobs=a.jobs, max_u=a.max_u)
     cnt = Counter(r["verdict"] for r in v.values())
