@@ -168,35 +168,77 @@ flattens FABulous's own `eFPGA.v`: 577941 gates, 1157594 faults. The fast kernel
 one config of it at 0.8 ms per fault on 2 threads (all faults: about 15 min per config).
 
 Every tile type is modelled from its generated FABulous sources (`configs/tile_model.py`:
-switch matrix, pass-throughs, BEL pins). The DSP's MULADD is modelled at config 0
-(Q = A * B + C, combinational), so its outputs can be routed and observed; RegFile
-(registers X at power-up) and RAM_IO (BRAM data) stay opaque: their outputs, and every net
-they reach through fixed wiring, are never used as a source. The router with the backbone
-(`sim/run_fullfabric.py route`, two chains per row, each ending at a W_IO pad) covers
-63.8% of the model-level items in 24 configs (8.2 h; checkpointed, `--extend --resume`).
-Fault simulation of a seeded random sample of 10,000 faults, every LUT registered (XOR /
-XNOR alternating), 64 clocked vectors on the 28 pads, strict (23 min on 4 threads):
+switch matrix, pass-throughs, BEL pins), and two BELs by their function:
 
-| tile type | sampled | 12 configs, BELs opaque | 12 configs, MULADD model | **24 configs, MULADD model** |
-|---|---|---|---|---|
-| all | 10000 | 63.5% | 65.0% | **74.7% +- 0.9** |
-| LUT4AB | 6935 | 72.8% | 71.4% | 81.7% +- 0.9 |
-| W_IO | 175 | 70.3% | 66.3% | 75.4% +- 6.4 |
-| DSP (wrapper, top, bottom) | 1184 | 31.6-50.6% | 57.5-62.5% | 66.2-76.2% |
-| RAM_IO | 513 | 50.9% | 45.6% | 53.8% +- 4.3 |
-| RegFile | 1178 | 40.8% | 42.2% | 47.5% +- 2.9 |
+- DSP MULADD at config 0: Q = A * B + C, combinational.
+- RegFile: a 32 x 4 memory, X until written. The router makes it defined in every test
+  config: one LUT of each neighbour tile becomes a constant (0, and 1 with all four
+  inputs from the 0: a LUT is a mux tree, so with X inputs even an all-ones table gives
+  X), the constants go to W_en and to the same address on the write and both read ports
+  (config index mod 32), the write data comes from pad inputs. These routes carry values,
+  so they use wires only (never through a LUT), and loop breaking leaves them alone.
 
-Every sampled fault left reaches a pad as X (none stays unobserved); the 24th config still
-adds 0.4 points. The RegFile is the weakest part: its read data is X until written, and its
-address and write-enable inputs have no constant source, so making it defined needs
-routed write cycles in the test configs.
+RAM_IO (BRAM data) stays opaque: its outputs, and every net they reach through fixed
+wiring, are never used as a source. The router with the backbone (`sim/run_fullfabric.py
+route`, two chains per row, each ending at a W_IO pad; checkpointed, `--extend --resume`)
+builds two config sets of 24: MULADD model only (`configs/fab_router_fullfabric_muladd.json`),
+and MULADD + RegFile (`configs/fab_router_fullfabric.json`, 7.8 h). Fault simulation of a
+seeded random sample of 10,000 faults, every LUT registered (XOR / XNOR alternating), 64
+clocked vectors on the 28 pads, strict (16-23 min per set on 4 threads):
+
+| tile type | sampled | 24, BELs opaque at 12 | 24, MULADD | 24, MULADD + RegFile | **both sets, 48** |
+|---|---|---|---|---|---|
+| all | 10000 | 63.5% | 74.7% | 72.4% | **80.5% +- 0.8** |
+| LUT4AB | 6935 | 72.8% | 81.7% | 77.0% | 86.1% +- 0.8 |
+| W_IO | 175 | 70.3% | 75.4% | 78.9% | 82.9% +- 5.6 |
+| DSP (wrapper, top, bottom) | 1184 | 31.6-50.6% | 66.2-76.2% | 65.3-77.4% | 73.5-83.3% |
+| RAM_IO | 513 | 50.9% | 53.8% | 56.9% | 58.5% +- 4.3 |
+| RegFile | 1178 | 40.8% | 47.5% | 55.5% | 61.9% +- 2.8 |
+
+(The first column is the 12-config run before any BEL model.) The RegFile configs give up
+some LUT coverage (their constants take 28 LUTs and routing), but the two sets detect
+different faults; set cover (`sim/array_cover.py --matrix`) keeps all 48, 27 reach 95% of
+what they detect. Every sampled fault left reaches a pad as X. The power-up check on 400
+of them (`run_fullfabric.py powerup`; elements the fault-free run never writes stay X,
+which keeps a detection sound) proves 0.8% +- 0.8 detected for every power-up state: the X
+is not power-up state but RegFile words a config does not write and BRAM data.
 
 Test time: a full config is 200 frames (3,401 words); between consecutive configs 159 of
-the 200 frames change. Through the parallel `SelfWriteData` port at 50 MHz the 24 configs
-load in about 2-3 ms; bitbang about 0.35 s, UART about 25 s. The 64 vectors per config are
+the 200 frames change. Through the parallel `SelfWriteData` port at 50 MHz the 48 configs
+load in about 4-6 ms; bitbang about 0.7 s, UART about 50 s. The 64 vectors per config are
 negligible. No area is added: every test structure is configuration.
 
+### Configuration logic
+
+`synth/build_cfgtop.sh` builds FABulous's configuration path from `eFPGA_top.v` unchanged
+(eFPGA_Config with config_UART, bitbang and ConfigFSM, the 14 frame data registers, the 10
+frame selects) with a latch model of the fabric's ConfigMem in place of the fabric (one
+latch per used config bit, 69,482; no faults on the model): 4,874 gates, 8,606 faults.
+`sim/run_cfgtop.py` loads two test configs through SelfWriteData, two frames through
+bitbang and one through the UART (binary and hex), each with data different from what
+the memory holds; a fault is detected when a config bit, ComActive or ReceiveLED (also
+every 16 clocks) differs. 1.04M steps, 29 min on 3 threads:
+
+| part | faults | strict | config bits left unwritten |
+|---|---|---|---|
+| bitbang | 1356 | 91.3% | 10 |
+| Frame_Data_Reg | 776 | 66.2% | 234 |
+| config_UART | 3680 | 57.4% | 20 |
+| Frame_Select | 126 | 53.2% | 55 |
+| ConfigFSM | 618 | 38.8% | 277 |
+| all | 8606 | **60.5%** | 919 |
+
+A fault that stops frames from being written leaves those config bits at their power-up
+value (X here); on silicon that fabric is almost surely broken, but not for every
+power-up value. Most undetected UART faults are in the checksum, the LED blink counter
+and the hex path, seen only on ReceiveLED.
+
 ### Findings about FABulous
+
+- config_UART's hex mode never delivers a word: in GET_DATA the nibble state goes back to
+  HIGH_NIBBLE on every clock without a stop-bit tick, so the low nibble is never seen
+  (demo and current template, Verilog and VHDL; Icarus on the RTL: binary 1 word, hex 0).
+  Binary mode works.
 
 - After configuration FrameData keeps the last word written (`Frame_Data_Reg` is never
   cleared), and ConfigFSM addresses every frame explicitly, so the frame write order is
@@ -293,6 +335,15 @@ Full demo fabric:
 ./synth/build_fullfabric.sh
 python3 sim/run_fullfabric.py route --configs 12 --chains 2
 python3 sim/run_fullfabric.py faultsim --sample 10000 --jobs 4
+python3 sim/run_fullfabric.py powerup --sample 400
+python3 sim/array_cover.py --matrix reports/fullfabric_chain_sample_matrix.csv
+```
+
+Configuration logic:
+
+```bash
+./synth/build_cfgtop.sh
+python3 sim/run_cfgtop.py faultsim --jobs 3
 ```
 
 Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
@@ -321,9 +372,9 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-RegFile and RAM_IO models (opaque in the full-fabric run; MULADD only at config 0), the configuration logic (ConfigFSM, frame registers: the simulation
-writes FrameData / FrameStrobe directly), the power-up check on the full fabric,
-bridging faults and timing.
+A RAM_IO / BRAM model (opaque in the full-fabric run), RegFile words other than the one a
+config writes, the configuration logic together with the fabric in one simulation (it is
+tested against a model of the config memory), bridging faults and timing.
 
 ## License
 
