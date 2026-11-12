@@ -84,7 +84,7 @@ def build_stims(ff, cfg_path: Path | None = None) -> list:
         luts = {t: {x: (tt, 0, 1, 0) for x in sc.LUTS} for t in ff.lut_tiles}
         for t in ff.lut_tiles:   # constant LUTs (RegFile W_en / addresses): combinational
             for x, val in sels[t].get("__lut", {}).items():
-                luts[t][x] = (0xFFFF if val else 0, 0, 0, 0)
+                luts[t][x] = (val["tt"] if isinstance(val, dict) else 0xFFFF if val else 0, 0, 0, 0)
         stims.append(fabric.stim_clocked(ff, f"FF{c:02d}", sels, sc.frame_order(c % sc.F), None,
                                          list(ff.vecs), luts, partial=True))
         print(f"  FF{c:02d}: {int(stims[-1].sample.sum())} samples", flush=True)

@@ -67,7 +67,7 @@ def config_words() -> dict:
                     for t in ff.lut_tiles}
         for t in ff.lut_tiles:
             for x, val in sels[t].get("__lut", {}).items():
-                lut_bits[t][x] = sc.cell.make_bits(0xFFFF if val else 0)
+                lut_bits[t][x] = sc.cell.make_bits(val["tt"] if isinstance(val, dict) else 0xFFFF if val else 0)
         fr = {}
         for t in ff.tiles:
             typ = ff.types[t]

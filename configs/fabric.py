@@ -56,6 +56,18 @@ def _deps(op: str, a) -> list[str]:
     return list(a)
 
 
+def _lut_bits(tt: int, ins: list[int], full: int) -> int:
+    """Two-valued LUT on bit vectors: OR over the table's 1 entries of the matching minterm."""
+    r = 0
+    for e in range(1 << len(ins)):
+        if (tt >> e) & 1:
+            m = full
+            for j, x in enumerate(ins):
+                m &= x if (e >> j) & 1 else ~x & full
+            r |= m
+    return r
+
+
 def _muladd(vals: list[int], width: int) -> list[int]:
     """MULADD at config 0 (DSP_bot BEL: no registers, unsigned): Q = A * B + C mod 2^20.
     vals: bit vectors (width lanes) of A0..A7, B0..B7, C0..C19 -> Q0..Q19."""
@@ -261,8 +273,11 @@ class Array:
                     st[cn(out)] = ("s", [cn(p) for p in ins])
                 self._static[t] = st
             raw.update(st)
-            for x, val in sel.get("__lut", {}).items():   # constant LUTs (RegFile configs)
-                raw[cn(f"L{x}_O")] = ("c", self.FULL if val else 0)
+            for x, val in sel.get("__lut", {}).items():   # constant / fixed-table LUTs (RegFile, BRAM)
+                if isinstance(val, dict):
+                    raw[cn(f"L{x}_O")] = ("l", ([cn(f"L{x}_I{j}") for j in range(4)], val["tt"]))
+                else:
+                    raw[cn(f"L{x}_O")] = ("c", self.FULL if val else 0)
             for x in sc.LUTS:
                 lc = (luts or {}).get(t, {}).get(x)
                 if lc is None or x in sel.get("__lut", {}):
@@ -320,6 +335,8 @@ class Array:
                 v[n] = mc[key][a[1]]
             elif op == "F":   # RegFile read (two-valued model: the written data, D, if already known)
                 v[n] = v.get(a[0][0], 0)
+            elif op == "l":
+                v[n] = _lut_bits(a[1], [v[q] for q in a[0]], F)
             elif op == "Q":   # BRAM read (two-valued model: the write data, if already known)
                 v[n] = v.get(a[0][0], 0)
             elif op == "c":
@@ -498,6 +515,8 @@ def grade_chunk(arr: Array, sels: dict, only: list, ops=None) -> dict:
             r = mc[key][a[1]]
         elif op in ("F", "Q"):
             r = v.get(a[0][0], 0)
+        elif op == "l":
+            r = _lut_bits(a[1], [v[q] for q in a[0]], ALL)
         elif op == "c":
             r = ALL if a else 0
         elif op == "n":
@@ -647,7 +666,8 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
                                                   for old, new in zip(mem[t][a], d)]
 
     # BRAMs (full fabric with BlockRAMs): 256 x 32, X until written; modelled for C = 0
-    # (32-bit ports, write enable wr_data[20], no output register), else every read X
+    # but C4 (32-bit ports, no output register; C4 = 1: write every cycle, else write
+    # enable wr_data[20]), else every read X
     br = getattr(arr, "bram_pins", {})
     XW = [(1, 1)] * 32
     bst = {k: {"mem": {}, "a1": [(1, 1)] * 8, "col": (1, 1)} for k in br}
@@ -655,10 +675,11 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
     def bram_clock(v):
         for k, p in br.items():
             st = bst[k]
-            if any(v[n] != (0, 1) for n in p["C"]):
+            if any(v[n] != (0, 1) for j, n in enumerate(p["C"]) if j != 4) or v[p["C"][4]] not in ((0, 1), (1, 0)):
                 st["mem"], st["a1"], st["col"] = {}, [(1, 1)] * 8, (1, 1)
                 continue
-            eh, el = v[p["wr_data"][20]]
+            # C4 = 1: write every cycle, else write enable wr_data[20]
+            eh, el = (1, 0) if v[p["C"][4]] == (1, 0) else v[p["wr_data"][20]]
             wa = [v[n] for n in p["wr_addr"]]
             ra = [v[n] for n in p["rd_addr"]]
             if eh:   # a write may happen

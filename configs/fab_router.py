@@ -691,15 +691,19 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 break
             for q in set(cfg.sel) - before:
                 del cfg.sel[q]
-        for n in bp["C"]:   # C0..C5 = 0: the mux's GND input
-            if gnd(n):
-                links += 1
-            else:
-                fails += 1
-        adr = bias % 256
-        for i in range(8):   # a 1: routed from the constant 1 to both ports, else 0 (GND)
+        # C4 = 1 (write every cycle), the other C bits 0 (32-bit ports, no output register);
+        # C4 unroutable: C4 = 0 and the write enable wr_data[20] from a third pad
+        if not all(gnd(n) for j_, n in enumerate(bp["C"]) if j_ != 4):
+            fails += 1
+            continue
+        we_pad = one is None or not route_to(cfg, one, {bp["C"][4]}, True)
+        if we_pad and not gnd(bp["C"][4]):
+            fails += 1
+            continue
+        adr = bias % 128
+        for i in range(1, 8):   # address bits 1..7: the same constant on both ports
             ok = False
-            if (adr >> i) & 1 and one is not None:
+            if (adr >> (i - 1)) & 1 and one is not None:
                 before = set(cfg.sel)
                 ok = all(route_to(cfg, one, {bp[port][i]}, True) for port in ("wr_addr", "rd_addr"))
                 if not ok:
@@ -709,29 +713,56 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 links += 2
             else:
                 fails += 1
-        # write enable wr_data[20] from one pad, the other data bits from a second pad
+        # address bit 0: write p, read NOT p (a LUT of the constant-1 tile, table 0x5555 on
+        # I0 = p, I1..I3 = 0): the read never meets the write of the same cycle (undefined
+        # for the macro) and returns the other word, written on an earlier cycle; the data
+        # (all 32 bits) from a second pad
         rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y1), yy))
         pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
         sh = (bias + k) % len(pads)
         pads = pads[sh:] + pads[:sh]
         cap, cfg.g.max_pop = cfg.g.max_pop, 60000   # pads are far from the BRAM column
-        we = next((src for src in pads if route_to(cfg, src, {bp["wr_data"][20]}, True)), None)
-        if we is None:
+        pa = None
+        for src in pads:
+            for x in "HGFEDCBA":
+                if x in cfg.lut_const.get(wo, {}):
+                    continue
+                before = set(cfg.sel)
+                if route_to(cfg, src, {bp["wr_addr"][0]}, True) and \
+                        route_to(cfg, src, {arr.canon(wo, f"L{x}_I0")}, True) and \
+                        all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j_}")}, True) for j_ in (1, 2, 3)) and \
+                        route_to(cfg, arr.canon(wo, f"L{x}_O"), {bp["rd_addr"][0]}, True):
+                    cfg.lut_const.setdefault(wo, {})[x] = {"tt": 0x5555}
+                    pa = src
+                    break
+                for q in set(cfg.sel) - before:
+                    del cfg.sel[q]
+            if pa is not None:
+                break
+        if pa is None:
             fails += 1
             cfg.g.max_pop = cap
             continue
-        links += 1
-        for src in [x for x in pads if x != we]:
+        links += 6
+        bits = [i for i in range(32) if not (we_pad and i == 20)]
+        pq = None
+        for src in [x for x in pads if x != pa]:
             before = set(cfg.sel)
-            got = [route_to(cfg, src, {bp["wr_data"][i]}, True) for i in range(32) if i != 20]
+            got = [route_to(cfg, src, {bp["wr_data"][i]}, True) for i in bits]
             if sum(got) >= 24:
                 links += sum(got)
                 fails += len(got) - sum(got)
+                pq = src
                 break
             for q in set(cfg.sel) - before:
                 del cfg.sel[q]
         else:
-            fails += 31
+            fails += len(bits)
+        if we_pad:
+            if any(route_to(cfg, src, {bp["wr_data"][20]}, True) for src in pads if src not in (pa, pq)):
+                links += 1
+            else:
+                fails += 1
         cfg.g.max_pop = cap
     cfg.pinned = set(cfg.sel) - sel0 if (rf or br) else set()   # RegFile / BRAM routes: never moved
     for y in sorted({t[1] for t in arr.lut_tiles}):
