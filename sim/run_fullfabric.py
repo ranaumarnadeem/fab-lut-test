@@ -155,7 +155,7 @@ def cmd_powerup(a) -> None:
     gc.collect()
     t0 = time.time()
     pu = powerup.PowerUp(nl, stims, ROOT / "synth" / "netlist_fullfabric.json", limit_factor=200)
-    v = pu.decide(fl, p_cfgs, jobs=a.jobs, max_u=a.max_u)
+    v = pu.decide(fl, p_cfgs, jobs=a.jobs, max_u=a.max_u, leave_x=True)
     cnt = Counter(r["verdict"] for r in v.values())
     p = cnt["detected"] / len(fl)
     ci = 1.96 * math.sqrt(p * (1 - p) / len(fl))

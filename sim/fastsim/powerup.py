@@ -119,15 +119,18 @@ class PowerUp:
 
     def decide(self, faults: list[dict], p_cfgs: dict[int, list[str]], max_group: int = 12,
                verbose: bool = True, full_k: int = 10, jobs: int = 4,
-               max_u: int | None = None) -> dict[int, dict]:
+               max_u: int | None = None, leave_x: bool = False) -> dict[int, dict]:
         """faults: X-only fault rows (net, polarity, id); p_cfgs: fault index -> P configs.
         max_u: faults with a larger U are not decided ("U too large", no cones).
+        leave_x: elements the fault-free run never writes stay X (not enumerated):
+        detected then still means detected for every power-up state, escapes less exact.
         Returns fault index -> {verdict, k, groups}."""
         cs, nl = self.cs, self.nl
         t0 = time.time()
         bit = {i: nl.net_bit[f["net"]] for i, f in enumerate(faults)}
         pol = {i: int(f["polarity"]) for i, f in enumerate(faults)}
         need_cones = max_u is None or max_u > full_k
+        u0 = set()   # never written in the fault-free run (lane 0) of some config: left at X
         # 1. U and end-of-run latch values per (fault, config)
         U = defaultdict(set)
         consts = defaultdict(list)
@@ -140,6 +143,8 @@ class PowerUp:
             for b0 in range(0, len(idx), LANES):
                 part = idx[b0:b0 + LANES]
                 res, _, wr, sh, sl = self.run(c, [(bit[i], pol[i], {}) for i in part])
+                if leave_x:
+                    u0 |= set(np.nonzero(self.lane_bit(wr, 0) == 0)[0].tolist())
                 for j, i in enumerate(part):
                     lane = j + 1
                     if res[lane] & 4:
@@ -155,8 +160,14 @@ class PowerUp:
                             if nl.store_is_latch[k]:
                                 const[self.q_bit[k]] = int(h_[k])
                         consts[i].append(const)
+        if leave_x:
+            # sound: a lane detected with these elements still X is detected for every
+            # value of them (3-valued), so only the rest of U is enumerated
+            for i in U:
+                U[i] -= u0
         if verbose:
-            print(f"  U computed for {len(p_cfgs)} faults ({time.time() - t0:.1f} s)", flush=True)
+            print(f"  U computed for {len(p_cfgs)} faults ({time.time() - t0:.1f} s)"
+                  + (f", {len(u0)} elements never written fault-free left at X" if leave_x else ""), flush=True)
         # 2. groups and their outputs
         plan = {}
         out_bits = set(self.out_bit_pos)
