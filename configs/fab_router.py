@@ -633,27 +633,59 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         if one is None:
             fails += 1
             continue
-        adr = bias % 32
         if route_to(cfg, one, {p["en"]}, True):
             links += 1
         else:
             fails += 1
-        # address bit i: the same constant on W, A and B (config index bit first, else the
-        # other value: the three ports must agree, the address itself is free)
-        for i in range(5):
-            for val in ((adr >> i) & 1, 1 - ((adr >> i) & 1)):
+        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - r[1]), yy))
+        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
+        # address bits 0, 1: write from a pad, both reads from NOT that pad (a LUT of the
+        # west tile as a NAND, table 0x7FFF: the pad on whichever input routes, the other
+        # three from the constant 1 of the same tile): 4 words per config, a read never
+        # returns a word before it is written once (the read misses the word this cycle
+        # writes); bits 2..4 the same constant on W, A, B (config index): 8 configs, 32 words
+        def const_bit(i, want):
+            for val in (want, 1 - want):
                 before = set(cfg.sel)
                 if all(route_to(cfg, one if val else zero, {p[port][i]}, True) for port in "WAB"):
-                    links += 3
+                    return True
+                for q in set(cfg.sel) - before:
+                    del cfg.sel[q]
+            return False
+        for i in range(2):
+            got = False
+            for src in pads[2 * i:2 * i + 6]:
+                for x in "HGFEDCBA":
+                    if x in cfg.lut_const.get(w, {}):
+                        continue
+                    before = set(cfg.sel)
+                    if route_to(cfg, src, {p["W"][i]}, True):
+                        kin = next((kk for kk in range(4)
+                                    if route_to(cfg, src, {arr.canon(w, f"L{x}_I{kk}")}, True)), None)
+                        if kin is not None and \
+                                all(route_to(cfg, one, {arr.canon(w, f"L{x}_I{j}")}, True) for j in range(4) if j != kin) and \
+                                all(route_to(cfg, arr.canon(w, f"L{x}_O"), {p[port][i]}, True) for port in "AB"):
+                            cfg.lut_const.setdefault(w, {})[x] = {"tt": 0x7FFF}   # NAND: NOT pad
+                            got = True
+                            break
+                    for q in set(cfg.sel) - before:
+                        del cfg.sel[q]
+                if got:
                     break
-                for k in set(cfg.sel) - before:
-                    del cfg.sel[k]
+            if got:
+                links += 7
+            elif const_bit(i, 0):
+                links += 3
+            else:
+                fails += 1
+        adr = bias % 8
+        for i in range(2, 5):
+            if const_bit(i, (adr >> (i - 2)) & 1):
+                links += 3
             else:
                 fails += 1
         # write data from pad inputs (defined every vector, no loop through a RegFile):
         # the A / B pads of this row and the next ones
-        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - r[1]), yy))
-        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
         for k in range(4):
             for src in pads[k:] + pads[:k]:
                 if route_to(cfg, src, {p["D"][k]}, True):
@@ -679,27 +711,33 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         if wz not in cfg.lut_const:
             continue
         zero = arr.canon(wz, "LH_O")
-        one = None
+        # C by the config index: write width (C0 C1: 32 / 16 / 8 bit), read width (C2 C3),
+        # output register (C5); C4 = 1 (write every cycle) where it routes, else C4 = 0 and
+        # the write enable wr_data[20] from a pad. The 1s are routed from the constant 1 first
+        # (before its own inputs take the wires), the 0s are the muxes' GND inputs; a 1 that
+        # does not route becomes 0 (another mode)
+        wrc, rdc, c5 = bias % 3, (bias // 3) % 3, (bias // 9) % 2
+        want = [wrc >> 1, wrc & 1, rdc >> 1, rdc & 1, 1, c5]
+        one, cval = None, [0] * 6
         for x in "HGFEDCBA":
             if x in cfg.lut_const.get(wo, {}):
                 continue
             before = set(cfg.sel)
-            if all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j}")}, True) for j in range(4)):
+            o_ = arr.canon(wo, f"L{x}_O")
+            got = {j_: route_to(cfg, o_, {bp["C"][j_]}, True) for j_ in range(6) if want[j_]}
+            if all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j_}")}, True) for j_ in range(4)):
                 cfg.lut_const.setdefault(wo, {})[x] = 1
-                cfg.cut.add(arr.canon(wo, f"L{x}_O"))
-                one = arr.canon(wo, f"L{x}_O")
+                cfg.cut.add(o_)
+                one = o_
+                cval = [int(got.get(j_, False)) for j_ in range(6)]
                 break
             for q in set(cfg.sel) - before:
                 del cfg.sel[q]
-        # C4 = 1 (write every cycle), the other C bits 0 (32-bit ports, no output register);
-        # C4 unroutable: C4 = 0 and the write enable wr_data[20] from a third pad
-        if not all(gnd(n) for j_, n in enumerate(bp["C"]) if j_ != 4):
+        if not all(gnd(n) for j_, n in enumerate(bp["C"]) if not cval[j_]):
             fails += 1
             continue
-        we_pad = one is None or not route_to(cfg, one, {bp["C"][4]}, True)
-        if we_pad and not gnd(bp["C"][4]):
-            fails += 1
-            continue
+        links += 6
+        we_pad = not cval[4]
         adr = bias % 128
         for i in range(1, 8):   # address bits 1..7: the same constant on both ports
             ok = False
@@ -744,22 +782,26 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             cfg.g.max_pop = cap
             continue
         links += 6
-        bits = [i for i in range(32) if not (we_pad and i == 20)]
+        # data: even bits from one pad, odd bits from another (the half / byte selects
+        # wr_data[17:16] and [25:24] then take all four values)
+        used = {pa}
+        for par in (0, 1):
+            bits = [i for i in range(par, 32, 2) if not (we_pad and i == 20)]
+            for src in [x for x in pads if x not in used]:
+                before = set(cfg.sel)
+                got = [route_to(cfg, src, {bp["wr_data"][i]}, True) for i in bits]
+                if sum(got) >= len(bits) - 4:
+                    links += sum(got)
+                    fails += len(got) - sum(got)
+                    used.add(src)
+                    break
+                for q in set(cfg.sel) - before:
+                    del cfg.sel[q]
+            else:
+                fails += len(bits)
         pq = None
-        for src in [x for x in pads if x != pa]:
-            before = set(cfg.sel)
-            got = [route_to(cfg, src, {bp["wr_data"][i]}, True) for i in bits]
-            if sum(got) >= 24:
-                links += sum(got)
-                fails += len(got) - sum(got)
-                pq = src
-                break
-            for q in set(cfg.sel) - before:
-                del cfg.sel[q]
-        else:
-            fails += len(bits)
         if we_pad:
-            if any(route_to(cfg, src, {bp["wr_data"][20]}, True) for src in pads if src not in (pa, pq)):
+            if any(route_to(cfg, src, {bp["wr_data"][20]}, True) for src in pads if src not in used):
                 links += 1
             else:
                 fails += 1

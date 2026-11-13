@@ -605,13 +605,9 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
         for n, op, a in ops:
             if op == "n":
                 v[n] = v[a][::-1]
-            elif op == "Q":   # BRAM read: X after a write to the read address, else mem[a1]
+            elif op == "Q":   # BRAM read data (bram_clock: after each edge)
                 k, i = a[1]
-                st = bst[k]
-                if st["col"] != (0, 1) or any(h and l for h, l in st["a1"]):
-                    v[n] = (1, 1)
-                else:
-                    v[n] = st["mem"].get(sum(h << j for j, (h, _) in enumerate(st["a1"])), XW)[i]
+                v[n] = bst[k]["q"][i]
             elif op == "F":   # RegFile read: mem[address], X for an X address or entry
                 t, port, k = a[1]
                 adr = [v[p] for p in a[0][1:]]
@@ -665,30 +661,86 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
                 mem[t][a] = list(d) if sure else [old if old == new else (1, 1)
                                                   for old, new in zip(mem[t][a], d)]
 
-    # BRAMs (full fabric with BlockRAMs): 256 x 32, X until written; modelled for C = 0
-    # but C4 (32-bit ports, no output register; C4 = 1: write every cycle, else write
-    # enable wr_data[20]), else every read X
+    # BRAMs (full fabric with BlockRAMs): 256 x 32, X until written; BlockRAM_1KB as its
+    # RTL: C0 C1 write width (32 / 16 / 8 bit, half / byte from wr_data[17:16], 3: no
+    # write), C2 C3 read width (half / byte from wr_data[25:24] registered), C4 write every
+    # cycle (else write enable wr_data[20]), C5 output register; an X C bit: every read X
     br = getattr(arr, "bram_pins", {})
     XW = [(1, 1)] * 32
-    bst = {k: {"mem": {}, "a1": [(1, 1)] * 8, "col": (1, 1)} for k in br}
+    bst = {k: {"mem": {}, "a1": [(1, 1)] * 8, "col": (1, 1), "sel": [(1, 1)] * 2,
+               "oreg": list(XW), "q": list(XW)} for k in br}
+
+    def defd(x):
+        return not (x[0] and x[1])
+
+    def num(bits):   # dual-rail bits (LSB first) -> int, None if any X
+        return None if not all(defd(b) for b in bits) else sum(b[0] << j for j, b in enumerate(bits))
+
+    def merge(a, b):
+        return a if a == b else (1, 1)
+
+    def rd_muxed(st, rdc):
+        """BlockRAM_1KB rd_dout_muxed from the current state."""
+        if st["col"] != (0, 1) or not all(defd(b) for b in st["a1"]):
+            dout = list(XW)
+        else:
+            dout = list(st["mem"].get(num(st["a1"]), XW))
+        out = list(dout)
+        sel = st["sel"]
+        if rdc == 1:
+            s0 = sel[0]
+            for i in range(16):
+                lo, hi = dout[i], dout[16 + i]
+                out[i] = lo if s0 == (0, 1) else hi if s0 == (1, 0) else merge(lo, hi)
+        elif rdc == 2:
+            sv = num(sel)
+            for i in range(8):
+                cands = [dout[8 * b + i] for b in range(4)] if sv is None else [dout[8 * sv + i]]
+                r = cands[0]
+                for c in cands[1:]:
+                    r = merge(r, c)
+                out[i] = r
+        return out
 
     def bram_clock(v):
         for k, p in br.items():
             st = bst[k]
-            if any(v[n] != (0, 1) for j, n in enumerate(p["C"]) if j != 4) or v[p["C"][4]] not in ((0, 1), (1, 0)):
-                st["mem"], st["a1"], st["col"] = {}, [(1, 1)] * 8, (1, 1)
+            c = [v[n] for n in p["C"]]
+            if not all(defd(x) for x in c):
+                st.update(mem={}, a1=[(1, 1)] * 8, col=(1, 1), oreg=list(XW), q=list(XW))
                 continue
-            # C4 = 1: write every cycle, else write enable wr_data[20]
-            eh, el = (1, 0) if v[p["C"][4]] == (1, 0) else v[p["wr_data"][20]]
+            c = [x[0] for x in c]
+            wrc, rdc, c4, c5 = 2 * c[0] + c[1], 2 * c[2] + c[3], c[4], c[5]
+            oreg_next = rd_muxed(st, rdc)          # the output register samples before the edge
+            eh, el = (1, 0) if c4 else v[p["wr_data"][20]]
+            if wrc == 3:
+                eh, el = 0, 1                     # mask 0000: nothing written
             wa = [v[n] for n in p["wr_addr"]]
             ra = [v[n] for n in p["rd_addr"]]
             if eh:   # a write may happen
-                cand = [a for a in range(256) if all((h if (a >> j) & 1 else l) for j, (h, l) in enumerate(wa))]
                 d = [v[n] for n in p["wr_data"]]
+                top = num([d[16], d[17]])
+                if wrc == 0:
+                    place = {i: d[i] for i in range(32)}
+                elif wrc == 1:
+                    halves = [0, 1] if top is None else [0 if top == 0 else 1]
+                    place = {}
+                    for hlf in halves:
+                        for i in range(16):
+                            b = 16 * hlf + i
+                            place[b] = d[i] if len(halves) == 1 else merge(place.get(b, d[i]), (1, 1))
+                else:
+                    bytes_ = [0, 1, 2, 3] if top is None else [top]
+                    place = {}
+                    for by in bytes_:
+                        for i in range(8):
+                            place[8 * by + i] = d[i] if len(bytes_) == 1 else (1, 1)
+                cand = [a for a in range(256) if all((h if (a >> j) & 1 else l) for j, (h, l) in enumerate(wa))]
                 sure = el == 0 and len(cand) == 1
                 for a in cand:
                     old = st["mem"].get(a, XW)
-                    st["mem"][a] = list(d) if sure else [o if o == x else (1, 1) for o, x in zip(old, d)]
+                    st["mem"][a] = [place[i] if (sure and i in place) else
+                                    (merge(old[i], place[i]) if i in place else old[i]) for i in range(32)]
             # read-during-write of the same address (undefined for the macro): X
             if not eh:
                 col = (0, 1)
@@ -698,6 +750,9 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
                 same = all(x == y for x, y in zip(wa, ra))
                 col = ((1, 0) if el == 0 else (1, 1)) if same else (0, 1)
             st["a1"], st["col"] = ra, col
+            st["sel"] = [v[p["wr_data"][24]], v[p["wr_data"][25]]]
+            st["oreg"] = oreg_next
+            st["q"] = st["oreg"] if c5 else rd_muxed(st, rdc)
 
     flags, exp = [], []
     for inp in vecs:
