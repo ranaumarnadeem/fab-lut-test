@@ -171,13 +171,26 @@ def _fix_names(m: dict, macros: list) -> tuple[int, int]:
         pre = drv.get(b)
         inside = [n for n in ns if pre and n.startswith(pre)] or ns
         keep[b] = min(inside, key=lambda n: (is_port(n), n.count("."), len(n), n))
-    # a name goes when none of its bits keeps it and every bit keeps another one
+    # a name goes when none of its bits keeps it and every bit keeps another one; a bus
+    # where only some bits go is split into one name per bit first
     gone = 0
     for n in list(m["netnames"]):
-        bits = [b for b in m["netnames"][n]["bits"] if isinstance(b, int)]
-        if bits and all(b in keep and keep[b] != n for b in bits):
+        v = m["netnames"][n]
+        bits = v["bits"]
+        drop = [isinstance(b, int) and b in keep and keep[b] != n for b in bits]
+        if not any(drop):
+            continue
+        if all(drop):
             del m["netnames"][n]
             gone += 1
+            continue
+        off = v.get("offset", 0)
+        del m["netnames"][n]
+        for k, (b, d) in enumerate(zip(bits, drop)):
+            if not d:
+                m["netnames"][f"{n}[{k + off}]"] = {"hide_name": v.get("hide_name", 0), "bits": [b],
+                                                    "attributes": v.get("attributes", {})}
+        gone += 1
     return len(x), gone
 
 
