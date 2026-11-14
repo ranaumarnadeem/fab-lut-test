@@ -1,8 +1,11 @@
-"""fabtest command line (init, info, synth; further commands follow the plan).
+"""fabtest command line (init, info, synth, route, faultsim, report; export follows).
 
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
   python3 -m fabtest synth <work dir> [--jobs 4]
+  python3 -m fabtest route <work dir> [--configs 24] [--chains 2] [--extend]
+  python3 -m fabtest faultsim <work dir> [--sample 2000] [--jobs 4] [--configs-from JSON]
+  python3 -m fabtest report <work dir>
 """
 from __future__ import annotations
 
@@ -43,6 +46,26 @@ def cmd_synth(a) -> None:
     synth.build(spec.load(w), w, a.jobs)
 
 
+def cmd_route(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    pipeline.route(spec.load(w), w, a.configs, a.chains, a.extend)
+
+
+def cmd_faultsim(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    s = spec.load(w)
+    pipeline.faultsim(s, w, a.sample, a.seed, a.chunk, a.jobs, Path(a.configs_from) if a.configs_from else None)
+    print(pipeline.report(s, w), end="")
+
+
+def cmd_report(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    print(pipeline.report(spec.load(w), w), end="")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="fabtest")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -56,5 +79,20 @@ def main(argv=None) -> None:
     p = sub.add_parser("synth", help="gate-level netlist and fault list")
     p.add_argument("work")
     p.add_argument("--jobs", type=int, default=4)
+    p = sub.add_parser("route", help="routed test configs (LUT chain backbone)")
+    p.add_argument("work")
+    p.add_argument("--configs", type=int, default=24)
+    p.add_argument("--chains", type=int, default=2)
+    p.add_argument("--extend", action="store_true", help="add configs to route/configs.json")
+    p = sub.add_parser("faultsim", help="sampled fault simulation, resumable in chunks")
+    p.add_argument("work")
+    p.add_argument("--sample", type=int, default=2000, help="0: every fault")
+    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--chunk", type=int, default=2000)
+    p.add_argument("--jobs", type=int, default=4)
+    p.add_argument("--configs-from", help="a config JSON instead of route/configs.json")
+    p = sub.add_parser("report", help="coverage from the fault simulation results")
+    p.add_argument("work")
     a = ap.parse_args(argv)
-    {"init": cmd_init, "info": cmd_info, "synth": cmd_synth}[a.cmd](a)
+    {"init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
+     "faultsim": cmd_faultsim, "report": cmd_report}[a.cmd](a)

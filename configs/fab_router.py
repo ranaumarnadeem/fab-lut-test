@@ -583,6 +583,22 @@ def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool
 CHAINS = 1   # --chains: chains per row
 
 
+def lut_near(arr, t, side: int, avoid=()) -> tuple | None:
+    """The LUT4AB tile that serves a RegFile / BRAM at t: the nearest one in the same row on
+    the side (-1 west, +1 east), else the nearest anywhere (fewest hops, then lowest y, x)."""
+    luts = [u for u in arr.lut_tiles if u not in avoid]
+    same = [u for u in luts if u[1] == t[1] and (u[0] - t[0]) * side > 0]
+    if same:
+        return min(same, key=lambda u: abs(u[0] - t[0]))
+    return min(luts, key=lambda u: (abs(u[0] - t[0]) + abs(u[1] - t[1]), u[1], u[0])) if luts else None
+
+
+def pads_near(arr, y: int, names) -> list:
+    """Pad nets of the W_IO tiles, rows nearest to y first."""
+    rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y), yy))
+    return [arr.canon((-1, yy), q) for yy in rows for q in names]
+
+
 def backbone(cfg: Cfg, bias: int = 0) -> dict:
     """Observation backbone: per row, the LUTs of the row linked into one chain
     (each LUT output routed into an input of the next LUT, from the east tile to
@@ -596,15 +612,22 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     # the RegFile is then a 4-bit register on one word (AD = BD = D one clock later).
     rf = getattr(arr, "rf_pins", {})
     cfg.lut_const = {}
+    rf_lut = {}
     for r in rf:
-        w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
-        if w in arr.lut_tiles and e in arr.lut_tiles:
+        w = lut_near(arr, r, -1)
+        e = lut_near(arr, r, +1, avoid={w})
+        if w is not None and e is not None:
+            rf_lut[r] = (w, e)
             cfg.lut_const.setdefault(e, {})["H"] = 0
     br = getattr(arr, "bram_pins", {})
+    br_lut = {}
     for k, bp in br.items():   # BRAM: the LUT4AB tile west of its upper RAM_IO tile = 0
-        (xr, y1), (_, y2) = bp["tiles"]
-        if (xr - 1, y1) in arr.lut_tiles and (xr - 1, y2) in arr.lut_tiles:
-            cfg.lut_const.setdefault((xr - 1, y1), {})["H"] = 0
+        (xr, y1), (xr2, y2) = bp["tiles"][0], bp["tiles"][-1]
+        wz = lut_near(arr, (xr, y1), -1)
+        wo = lut_near(arr, (xr2, y2), -1, avoid={wz})
+        if wz is not None and wo is not None:
+            br_lut[k] = (wz, wo)
+            cfg.lut_const.setdefault(wz, {})["H"] = 0
     cfg.cut = {arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c}
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
@@ -612,9 +635,9 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             cfg.assign((t, f"L{x}_EN"), 0)
     sel0 = set(cfg.sel)
     for r, p in rf.items():
-        w, e = (r[0] - 1, r[1]), (r[0] + 1, r[1])
-        if e not in cfg.lut_const:
+        if r not in rf_lut:
             continue
+        w, e = rf_lut[r]
         zero = arr.canon(e, "LH_O")
         # the constant 1: a LUT of the west tile whose four inputs all come from the
         # constant 0 (a LUT is a mux tree on its inputs: with X inputs even an all-ones
@@ -637,8 +660,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             links += 1
         else:
             fails += 1
-        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - r[1]), yy))
-        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
+        pads = pads_near(arr, r[1], ("A_O", "B_O"))
         # address bits 0, 1: write from a pad, both reads from NOT that pad (a LUT of the
         # west tile as a NAND, table 0x7FFF: the pad on whichever input routes, the other
         # three from the constant 1 of the same tile): 4 words per config, a read never
@@ -706,10 +728,10 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         return bool(ks) and cfg.assign(i, ks[0])
 
     for k, bp in br.items():
-        (xr, y1), (_, y2) = bp["tiles"]
-        wz, wo = (xr - 1, y1), (xr - 1, y2)
-        if wz not in cfg.lut_const:
+        if k not in br_lut:
             continue
+        wz, wo = br_lut[k]
+        y1 = bp["tiles"][0][1]
         zero = arr.canon(wz, "LH_O")
         # C by the config index: write width (C0 C1: 32 / 16 / 8 bit), read width (C2 C3),
         # output register (C5); C4 = 1 (write every cycle) where it routes, else C4 = 0 and
@@ -755,8 +777,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         # I0 = p, I1..I3 = 0): the read never meets the write of the same cycle (undefined
         # for the macro) and returns the other word, written on an earlier cycle; the data
         # (all 32 bits) from a second pad
-        rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y1), yy))
-        pads = [arr.canon((-1, yy), f"{q}_O") for yy in rows for q in "AB"]
+        pads = pads_near(arr, y1, ("A_O", "B_O"))
         sh = (bias + k) % len(pads)
         pads = pads[sh:] + pads[:sh]
         cap, cfg.g.max_pop = cfg.g.max_pop, 60000   # pads are far from the BRAM column
@@ -814,7 +835,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         n = len(order)
         segs = [order[i * n // CHAINS:(i + 1) * n // CHAINS] for i in range(CHAINS)]
         # chain ends: a pad output of the row's W_IO each (fabric), else any observed net
-        pads = [arr.canon((-1, y), p) for p in ("A_I_top", "B_I_top", "A_T_top", "B_T_top")] \
+        pads = pads_near(arr, y, ("A_I_top", "B_I_top", "A_T_top", "B_T_top"))[:4] \
             if arr.fabric else []
         for si, seg in enumerate(segs):
             for (ta, xa), (tb, xb) in zip(seg, seg[1:]):
