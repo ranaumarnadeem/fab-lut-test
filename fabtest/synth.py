@@ -97,11 +97,14 @@ def _wrapper(spec, out: Path, have_src: set[str]) -> str | None:
     efpga = spec.d["efpga"]["ports"]
     params = re.search(r"module\s+eFPGA\s*#\s*\((.*?)\)\s*\(", (spec.proj / "Fabric" / "eFPGA.v").read_text(), re.S)
     pmap = top["port_map"]
-    internal = {p.split("[")[0] for p, m in pmap.items() if "wire" in m}
+    # eFPGA ports wired to a macro become internal; others (FrameData / FrameStrobe from the
+    # config logic, chip pins) stay ports of the wrapper
+    mwires = {b for mi in top["macros"] if mi["module"] in have_src for bits in mi["pins"].values() for b in bits}
+    internal = {p.split("[")[0] for p, m in pmap.items() if "wire" in m and m["wire"] in mwires}
     keep = [p for p in efpga if p not in internal]
     wires = {}
     for p, m in pmap.items():
-        if "wire" in m:
+        if "wire" in m and p.split("[")[0] in internal:
             b = m["wire"].split("[")[0]
             k = int(m["wire"].split("[")[1][:-1]) if "[" in m["wire"] else 0
             wires[b] = max(wires.get(b, 0), k + 1)
