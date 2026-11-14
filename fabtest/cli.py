@@ -1,4 +1,4 @@
-"""fabtest command line (fabtest P1: init, info; further commands follow the plan).
+"""fabtest command line (init, info, synth; further commands follow the plan).
 
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
@@ -23,14 +23,18 @@ def cmd_info(a) -> None:
     for y, row in enumerate(s.grid):
         print(f"  Y{y:2d} " + " ".join(f"{(t or '.'):>14s}" for t in row))
     if a.bels:
-        mods = Counter()
-        for _, t in s.tiles():
-            for b in s.bels(t):
-                mods[(b["module"], t)] += 1
-        for (m, t), n in sorted(mods.items()):
-            print(f"  {m:40s} in {t:16s} x{n}")
+        from fabtest import bels as belreg
+        from fabtest.bels import std
+        kinds = belreg.classify(s)
+        count = Counter(t for _, t in s.tiles())
+        for typ in sorted(count):
+            k = kinds[typ]
+            print(f"  {typ:16s} x{count[typ]:<3d} kind {k['kind']}" + (f" ({k['why']})" if k["why"] else ""))
+            for (m, plug), n in sorted(Counter((m, pl) for _, m, pl in k["plugins"]).items()):
+                print(f"      {m:40s} x{n}  {plug}")
         for m in s.d["top"]["macros"]:
-            print(f"  macro {m['module']} {m['inst']}")
+            plug = std.macro_for(m["module"])
+            print(f"  macro {m['module']} {m['inst']}: {plug.name if plug else 'opaque (X source)'}")
 
 
 def cmd_synth(a) -> None:

@@ -182,16 +182,20 @@ class FullFabric(fabric.Array):
         self.invec = {n: sum(((self.vecs[s] >> j) & 1) << s for s in range(self.NS))
                       for j, n in enumerate(self.border_in)}
         self.invec["GND"] = 0
-        self.rf_pins = {t: {"D": [self.canon(t, f"D{k}") for k in range(4)],
-                            "W": [self.canon(t, f"W_ADR{k}") for k in range(5)],
-                            "A": [self.canon(t, f"A_ADR{k}") for k in range(5)],
-                            "B": [self.canon(t, f"B_ADR{k}") for k in range(5)],
-                            "en": self.canon(t, "W_en")} for t in self.tiles if self.types[t] == "RegFile"}
+        self.rf_pins = self._rf_pins()
         self.bram_pins = self._bram_pins() if bram else {}
         self.tainted = self._taint()
         self.route_max_pop = 3000   # fab_router: cap the Dijkstra exploration per route
         self.route_max_reach = 10000  # and the incremental loop check (exact check per config)
         self.loop_max_moves = 20000
+
+    def _rf_pins(self) -> dict:
+        """RegFile tile -> {"D", "W", "A", "B": nets of the BEL pins, "en"}."""
+        return {t: {"D": [self.canon(t, f"D{k}") for k in range(4)],
+                    "W": [self.canon(t, f"W_ADR{k}") for k in range(5)],
+                    "A": [self.canon(t, f"A_ADR{k}") for k in range(5)],
+                    "B": [self.canon(t, f"B_ADR{k}") for k in range(5)],
+                    "en": self.canon(t, "W_en")} for t in self.tiles if self.types[t] == "RegFile"}
 
     def _bram_pins(self) -> dict:
         """BRAM k -> {"rd_data": [32 model nets: the RAM_IO InPass outputs], "rd_addr", "wr_addr",
