@@ -13,7 +13,8 @@ R1: the same configs on the gate-level netlist: the fault-free lane equals the m
 the first 10000 faults of the 50k sample (random.Random(1) over faults/fullbram.csv) get
 exactly the statuses stored in reports/fullbram_chain_sample_matrix_<set>_50k.csv.
 With --spec WORK, R0 / R1 build the model from the fabtest spec and R1 runs on the fabtest
-netlist (WORK/synth). R2: configs 0 and 1 routed from scratch (v3 recipe: --bram, 2 chains) give the selects of
+netlist (WORK/synth): faults on named nets must match exactly; auto-named nets (nNNN) are
+numbered per synth run, so for those only the detected count is compared (within 1%). R2: configs 0 and 1 routed from scratch (v3 recipe: --bram, 2 chains) give the selects of
 tests/golden/demo_r2.json.
 """
 from __future__ import annotations
@@ -24,6 +25,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -39,6 +41,7 @@ SETS = {"muladd": "configs/fab_router_fullfabric_muladd.json",
 PICK = [0, 1]
 SPEC = None   # --spec: a fabtest work dir (the model from the FABulous project copy)
 GOLD = ROOT / "tests" / "golden"
+AUTO = re.compile(r"\.n\d+(\[\d+\])?$")   # yosys auto names
 
 
 def _sha(*parts) -> str:
@@ -105,6 +108,15 @@ def r1() -> bool:
             fastsim.Engine(nl, [st], W=1, limit_factor=200).run_batch([])
         cfgs, stat = fastsim.run_faults("fullbram", sts, fl, 4, limit_factor=200, nl=nl, quiet=True)
         for c in cfgs:
+            if SPEC:   # auto-named nets (nNNN) are numbered per synth run: those only in total
+                named = [(r, s) for r, f, s in zip(rows, fl, stat) if not AUTO.search(f["path"])]
+                bad = sum(1 for r, s in named if r[c] != s[c])
+                auto = [(r, s) for r, f, s in zip(rows, fl, stat) if AUTO.search(f["path"])]
+                dd = sum(s[c] == "D" for _, s in auto) - sum(r[c] == "D" for r, _ in auto)
+                print(f"  R1 {name} {c}: {len(named) - bad} of {len(named)} named statuses equal; "
+                      f"auto-named D {dd:+d} of {len(auto)}", flush=True)
+                ok &= bad == 0 and abs(dd) <= len(auto) // 100
+                continue
             bad = sum(1 for r, s in zip(rows, stat) if r[c] != s[c])
             print(f"  R1 {name} {c}: {len(stat) - bad} of {len(stat)} statuses equal", flush=True)
             ok &= bad == 0
