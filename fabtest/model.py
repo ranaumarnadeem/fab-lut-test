@@ -110,13 +110,14 @@ class GenericFabric(fullfabric.FullFabric):
         return ops
 
     def _unmodelled(self) -> dict:
-        """type -> [(BEL instance, plugin, outputs without an op)] for the report."""
+        """type -> [(BEL instance, plugin, fabric-side outputs without an op)] for the report
+        (outputs to external tile ports, e.g. OutPass to a macro, are not counted)."""
         out = {}
         for typ in sorted(set(self.types.values())):
             ts = [t for t in self.tiles if self.types[t] == typ]
             for plug, b in self.bels(typ):
                 ops = self.bel_ops(ts[0]) if ts else {}
-                miss = [n for n in b.pins_out.values() if n not in ops]
+                miss = [n for q, n in b.pins_out.items() if b.prefix + q in b.internal_out and n not in ops]
                 if miss:
                     out.setdefault(typ, []).append((b.inst, plug.name, len(miss)))
         return out

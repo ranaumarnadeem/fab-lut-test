@@ -26,6 +26,7 @@ class Bel:
     pins_in: dict
     pins_out: dict
     features: list
+    internal_out: list   # outputs into the switch matrix (not external tile ports)
 
 
 class Plugin:
@@ -65,5 +66,5 @@ def bels_of(gt, spec_type: dict) -> list[Bel]:
             return p[:-1] if p not in known and p.endswith("0") and p[:-1] in known else p
         pi = {pin(p): n for n, p in gt.bel_in.items() if p.split(".", 1)[0] == inst}
         po = {pin(p): n for n, p in gt.bel_out.items() if p.split(".", 1)[0] == inst}
-        out.append(Bel(b["prefix"], b["module"], inst, pi, po, b.get("features", [])))
+        out.append(Bel(b["prefix"], b["module"], inst, pi, po, b.get("features", []), list(b["outputs"])))
     return out
