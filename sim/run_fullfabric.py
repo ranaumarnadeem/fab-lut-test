@@ -72,11 +72,14 @@ def cmd_route(a) -> None:
           f"{time.time() - t0:.0f} s -> {CFG.relative_to(ROOT)}")
 
 
-def build_stims(ff, cfg_path: Path | None = None) -> list:
+def build_stims(ff, cfg_path: Path | None = None, only: list[int] | None = None, quiet: bool = False) -> list:
+    """Clocked chain stimuli of a config set; only: these config indices."""
     data = json.loads((cfg_path or CFG).read_text())
     inv = {ff.tn(t): t for t in ff.tiles}
     stims = []
     for c, cfg in enumerate(data["configs"]):
+        if only is not None and c not in only:
+            continue
         sels = {inv[n]: s for n, s in cfg.items()}
         for t in ff.tiles:
             sels.setdefault(t, {})
@@ -87,7 +90,8 @@ def build_stims(ff, cfg_path: Path | None = None) -> list:
                 luts[t][x] = (val["tt"] if isinstance(val, dict) else 0xFFFF if val else 0, 0, 0, 0)
         stims.append(fabric.stim_clocked(ff, f"FF{c:02d}", sels, sc.frame_order(c % sc.F), None,
                                          list(ff.vecs), luts, partial=True))
-        print(f"  FF{c:02d}: {int(stims[-1].sample.sum())} samples", flush=True)
+        if not quiet:
+            print(f"  FF{c:02d}: {int(stims[-1].sample.sum())} samples", flush=True)
     return stims
 
 

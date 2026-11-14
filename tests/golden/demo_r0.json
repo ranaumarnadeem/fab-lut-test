@@ -1,0 +1,42 @@
+{
+ "muladd:0": {
+  "grade": "f86f063f8d8456bfd19dc683b460915d49447a8b",
+  "items": 50164,
+  "stim": "3cdaf6480b1468b121c814d0d453e62e77a5c1bc"
+ },
+ "muladd:1": {
+  "grade": "4b6253a2f6aa2e1ed283fc3c88080ab743e3a88d",
+  "items": 55313,
+  "stim": "e11c7b7754752b695114d00b01cb0088ad387dc4"
+ },
+ "regfile:0": {
+  "grade": "19e005577917251ae0e874e51a7efa556677319a",
+  "items": 46676,
+  "stim": "73f44e0aa312339269a76a5500e8beb04bde5e0f"
+ },
+ "regfile:1": {
+  "grade": "fbe25bedc3a7d183f8cff7392cc85c70f21f94cd",
+  "items": 47485,
+  "stim": "977edba537fdbd2a6b25dd68504b5da9f38a974e"
+ },
+ "v2:0": {
+  "grade": "34b680a0aa0a826ff48772c4b3198137ee07b8c5",
+  "items": 47597,
+  "stim": "476d1d839e2a485fc326b1c02bc191a5ea0ad066"
+ },
+ "v2:1": {
+  "grade": "0acfddab4d8a591d21e02f8a4997001fe22ab7e1",
+  "items": 39825,
+  "stim": "58820d2997889e28ccd07ab1cc60f0b3ba056bf0"
+ },
+ "v3:0": {
+  "grade": "ecfabfd21296e5e91010f83b22ff912bf127bcc6",
+  "items": 43895,
+  "stim": "4f21ae1ecdf665ea467bffb2c4ea7f2eb0942fa8"
+ },
+ "v3:1": {
+  "grade": "3a1407118b96d633bcc216b4a1e0fdf52f6b4ae9",
+  "items": 42641,
+  "stim": "e4dbd007ed4b62a2bfe830acbc65e8530e7cea62"
+ }
+}
