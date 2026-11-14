@@ -67,8 +67,8 @@ def _run(top: str, sources: list[Path], outdir: Path) -> Path:
 
 def _top_modules(spec) -> list[str]:
     """Module types eFPGA.v instantiates (tile types not inside a supertile, supertiles)."""
-    text = (spec.proj / "Fabric" / "eFPGA.v").read_text()
-    return sorted(set(re.findall(r"\n\s*(\w+)\s+Tile_X\d+Y\d+_\w+\s*\(", text)))
+    text = re.sub(r"`ifdef EMULATION.*?`endif", "", (spec.proj / "Fabric" / "eFPGA.v").read_text(), flags=re.S)
+    return sorted(set(re.findall(r"(?:\(\*\s*keep\s*\*\)\s*)?\b(\w+)\s+Tile_X\d+Y\d+_\w+\s*\(", text)) - {"module"})
 
 
 def _sources(spec, mod: str) -> list[Path]:
@@ -139,7 +139,7 @@ def _fix_names(m: dict) -> tuple[int, int]:
     m["cells"] = {re.sub(r"^eFPGA_inst\.", "", n): v for n, v in m["cells"].items()}
     drv = {}
     for cn, c in m["cells"].items():
-        for p, d in c["port_directions"].items():
+        for p, d in c.get("port_directions", {}).items():
             if d == "output":
                 for b in c["connections"][p]:
                     if isinstance(b, int):
