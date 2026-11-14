@@ -55,6 +55,9 @@ def _script(top: str, sources: list[Path], out: Path) -> str:
 
 def _run(top: str, sources: list[Path], outdir: Path) -> Path:
     out = outdir / top
+    j = out.with_suffix(".json")
+    if j.exists() and all(j.stat().st_mtime > p.stat().st_mtime for p in sources):
+        return j   # up to date
     ys = outdir / f"{top}.ys"
     ys.write_text(_script(top, sources, out))
     r = subprocess.run([yosys(), "-q", "-l", str(outdir / f"{top}.log"), "-s", str(ys)],
@@ -125,7 +128,7 @@ def _wrapper(spec, out: Path, have_src: set[str]) -> str | None:
     return str(path)
 
 
-def _fix_names(m: dict) -> tuple[int, int]:
+def _fix_names(m: dict, macros: list) -> tuple[int, int]:
     """xgen cells -> undriven outputs on input XSRC[]; one name per net bit."""
     x = [c for c, v in m["cells"].items() if v["type"] == "xgen"]
     xbits = [m["cells"][c]["connections"]["y"][0] for c in x]
@@ -150,13 +153,21 @@ def _fix_names(m: dict) -> tuple[int, int]:
         for b in v["bits"]:
             if isinstance(b, int):
                 names.setdefault(b, []).append(n)
+    # only nets the wrapper adds names to (a name outside every tile instance): tile-to-tile
+    # nets keep all their names, gen_faults resolves those itself
+    macro_ports = {f"{mi['inst']}.{pin}" for mi in macros for pin in mi["pins"]}
+
+    def is_port(n):
+        base = n.split("[")[0]
+        return base in macro_ports or ".memory_cell." in n and base.rsplit(".", 1)[-1][:-1] in (
+            "addr", "din", "dout", "clk", "csb", "web", "wmask")
     keep: dict[int, str] = {}
     for b, ns in names.items():
-        if len(ns) < 2 or any(n in ports for n in ns):
+        if len(ns) < 2 or any(n in ports for n in ns) or all(n.startswith("Tile_") for n in ns):
             continue
         pre = drv.get(b)
         inside = [n for n in ns if pre and n.startswith(pre)] or ns
-        keep[b] = min(inside, key=lambda n: (n.count("."), len(n), n))
+        keep[b] = min(inside, key=lambda n: (is_port(n), n.count("."), len(n), n))
     # a name goes when none of its bits keeps it and every bit keeps another one
     gone = 0
     for n in list(m["netnames"]):
@@ -205,7 +216,7 @@ def build(spec, work: Path, jobs: int = 4) -> Path:
         raise SystemExit(f"fabtest synth: yosys failed on the top:\n{(out / 'top.log').read_text()[-3000:]}")
     d = json.loads((out / "raw.json").read_text())
     m = d["modules"][top]
-    nx, gone = _fix_names(m)
+    nx, gone = _fix_names(m, spec.d["top"]["macros"])
     d["modules"] = {top: m}
     (out / "netlist.json").write_text(json.dumps(d))
     (out / "raw.json").unlink()
