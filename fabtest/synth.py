@@ -97,10 +97,11 @@ def _wrapper(spec, out: Path, have_src: set[str]) -> str | None:
     efpga = spec.d["efpga"]["ports"]
     params = re.search(r"module\s+eFPGA\s*#\s*\((.*?)\)\s*\(", (spec.proj / "Fabric" / "eFPGA.v").read_text(), re.S)
     pmap = top["port_map"]
-    # eFPGA ports wired to a macro become internal; others (FrameData / FrameStrobe from the
-    # config logic, chip pins) stay ports of the wrapper
-    mwires = {b for mi in top["macros"] if mi["module"] in have_src for bits in mi["pins"].values() for b in bits}
-    internal = {p.split("[")[0] for p, m in pmap.items() if "wire" in m and m["wire"] in mwires}
+    # eFPGA ports on a wire bus that reaches a macro become internal (bits no macro reads
+    # dangle, as in eFPGA_top); others (FrameData / FrameStrobe, chip pins) stay ports
+    mbus = {b.split("[")[0] for mi in top["macros"] if mi["module"] in have_src
+            for bits in mi["pins"].values() for b in bits}
+    internal = {p.split("[")[0] for p, m in pmap.items() if "wire" in m and m["wire"].split("[")[0] in mbus}
     keep = [p for p in efpga if p not in internal]
     wires = {}
     for p, m in pmap.items():
@@ -169,7 +170,10 @@ def _fix_names(m: dict, macros: list) -> tuple[int, int]:
         if len(ns) < 2 or any(n in ports for n in ns) or all(n.startswith("Tile_") for n in ns):
             continue
         pre = drv.get(b)
-        inside = [n for n in ns if pre and n.startswith(pre)] or ns
+        # a name inside the driver's instance, but not inside a model (keep mem_dout over
+        # memory_cell.dout0: model cells are left out of the fault list)
+        inside = ([n for n in ns if pre and n.startswith(pre) and ".memory_cell." not in n]
+                  or [n for n in ns if ".memory_cell." not in n] or ns)
         keep[b] = min(inside, key=lambda n: (is_port(n), n.count("."), len(n), n))
     # a name goes when none of its bits keeps it and every bit keeps another one; a bus
     # where only some bits go is split into one name per bit first

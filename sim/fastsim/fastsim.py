@@ -56,9 +56,10 @@ def build_lib() -> ctypes.CDLL:
 class Netlist:
     """Flat arrays of one generic-gate netlist for the kernel."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, path: Path | str | None = None):
+        """name: synth/netlist_<name>.json, or path: any netlist JSON (fabtest synth)."""
         self.name = name
-        _, mod = gen_faults.load_top(ROOT / "synth" / f"netlist_{name}.json", None)
+        _, mod = gen_faults.load_top(Path(path) if path else ROOT / "synth" / f"netlist_{name}.json", None)
         bits = gen_faults.analyse(mod)
         self.net_bit: dict[str, int] = {}
         for b, e in bits.items():

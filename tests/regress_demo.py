@@ -12,7 +12,8 @@ tests/golden/demo_r0.json.
 R1: the same configs on the gate-level netlist: the fault-free lane equals the model, and
 the first 10000 faults of the 50k sample (random.Random(1) over faults/fullbram.csv) get
 exactly the statuses stored in reports/fullbram_chain_sample_matrix_<set>_50k.csv.
-R2: configs 0 and 1 routed from scratch (v3 recipe: --bram, 2 chains) give the selects of
+With --spec WORK, R0 / R1 build the model from the fabtest spec and R1 runs on the fabtest
+netlist (WORK/synth). R2: configs 0 and 1 routed from scratch (v3 recipe: --bram, 2 chains) give the selects of
 tests/golden/demo_r2.json.
 """
 from __future__ import annotations
@@ -89,7 +90,13 @@ def r1() -> bool:
     smp = sorted(random.Random(1).sample(range(len(faults)), 50000))[:10000]
     fl = [faults[j] for j in smp]
     del faults
-    nl = fastsim.Netlist("fullbram")
+    if SPEC:   # the fabtest netlist: same faults, looked up by (path, polarity, type, pin)
+        key = lambda r: (r["path"], r["polarity"], r["type"], r["pin"])
+        new = {key(r): r for r in csv.DictReader((Path(SPEC) / "synth" / "faults.csv").open())}
+        fl = [dict(new[key(f)], id=f["id"]) for f in fl]
+        nl = fastsim.Netlist("fullbram", Path(SPEC) / "synth" / "netlist.json")
+    else:
+        nl = fastsim.Netlist("fullbram")
     ok = True
     for name, sts in stims.items():
         rows = list(csv.DictReader((ROOT / "reports" / f"fullbram_chain_sample_matrix_{name}_50k.csv").open()))[:10000]
