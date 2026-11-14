@@ -235,9 +235,27 @@ this netlist too:
 | RegFile | 1174 | 43.4% | 54.9% | 55.4% | 63.1% +- 2.8 |
 | BlockRAM wrapper | 95 | 0% | 0% | 21.1% | 21.1% +- 8.2 |
 
-Set cover keeps all 72 configs (32 reach 95% of what they detect). The BRAM wrappers are
-only exercised in 32-bit mode; the narrow port widths, byte masks and the output
-register need configs with other C values.
+A third set (`configs/fab_router_fullbram_v3.json`) also varies the BRAM modes per config
+(C0..C3 write and read width 32 / 16 / 8 bit, C5 output register; even and odd data bits
+from two pads, so the half / byte selects take every value; the model follows the
+wrapper's RTL in every mode) and has the RegFile write 4 words per config (address bits
+0, 1 from pads, the reads through NAND LUTs on the other inputs' constant 1: the read
+never meets the word written this cycle; bits 2..4 by config index). 50,000 sampled
+faults, the four sets on the netlist with BlockRAMs:
+
+| part | sampled | MULADD | RegFile | BRAM v2 | BRAM v3 | **all four, 96** |
+|---|---|---|---|---|---|---|
+| all | 50000 | 73.8% | 72.2% | 74.2% | 70.9% | **86.0% +- 0.3** |
+| LUT4AB | 34402 | 81.2% | 77.2% | 77.7% | 72.9% | 89.0% +- 0.3 |
+| W_IO | 902 | 82.9% | 84.6% | 85.9% | 85.6% | 91.0% +- 1.9 |
+| RAM_IO | 2588 | 57.6% | 59.2% | 80.8% | 78.9% | 86.4% +- 1.3 |
+| DSP (wrapper, top, bottom) | 5722 | 71.2-75.0% | 68.5-76.8% | 69.8-76.3% | 64.9-69.7% | 81.5-88.7% |
+| RegFile | 5747 | 44.8% | 55.4% | 56.6% | 59.2% | 73.6% +- 1.1 |
+| BlockRAM wrapper | 588 | 0% | 0% | 27.2% | 51.9% | 52.6% +- 4.0 |
+
+Every fault left reaches a pad as X in some config (none stays unobserved). Set cover
+keeps all 96; 39 reach 95% of what they detect, 70 reach 99%. Loading 96 configs through
+the parallel port at 50 MHz takes about 7-13 ms per chip (39 configs: 3-5 ms).
 
 ### Configuration logic
 
@@ -406,8 +424,8 @@ python3 faults/tile_regions.py tile_generic
 
 ## Not covered yet
 
-BRAM narrow port modes and output register, the SRAM macro itself (memory BIST), RegFile
-words other than the one a config writes, the configuration logic together with the fabric in one simulation (it is
+the SRAM macro itself (memory BIST), the faults that only reach a pad as X (power-up
+values, words not yet written), the configuration logic together with the fabric in one simulation (it is
 tested against a model of the config memory), bridging faults and timing.
 
 ## License
