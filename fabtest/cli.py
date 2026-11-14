@@ -2,6 +2,7 @@
 
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
+  python3 -m fabtest synth <work dir> [--jobs 4]
 """
 from __future__ import annotations
 
@@ -32,6 +33,12 @@ def cmd_info(a) -> None:
             print(f"  macro {m['module']} {m['inst']}")
 
 
+def cmd_synth(a) -> None:
+    from fabtest import spec, synth
+    w = Path(a.work)
+    synth.build(spec.load(w), w, a.jobs)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="fabtest")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -42,5 +49,8 @@ def main(argv=None) -> None:
     p = sub.add_parser("info", help="show what fabtest knows about a fabric")
     p.add_argument("work")
     p.add_argument("--bels", action="store_true")
+    p = sub.add_parser("synth", help="gate-level netlist and fault list")
+    p.add_argument("work")
+    p.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args(argv)
-    {"init": cmd_init, "info": cmd_info}[a.cmd](a)
+    {"init": cmd_init, "info": cmd_info, "synth": cmd_synth}[a.cmd](a)

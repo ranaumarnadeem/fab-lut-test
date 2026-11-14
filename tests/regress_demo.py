@@ -36,6 +36,7 @@ SETS = {"muladd": "configs/fab_router_fullfabric_muladd.json",
         "v2": "configs/fab_router_fullbram_v2.json",
         "v3": "configs/fab_router_fullbram_v3.json"}
 PICK = [0, 1]
+SPEC = None   # --spec: a fabtest work dir (the model from the FABulous project copy)
 GOLD = ROOT / "tests" / "golden"
 
 
@@ -46,11 +47,21 @@ def _sha(*parts) -> str:
     return h.hexdigest()
 
 
+def _fabric():
+    """FullFabric of the demo with its BlockRAMs; from a fabtest spec when --spec is given."""
+    import fullfabric
+    spec = None
+    if SPEC:
+        sys.path.insert(0, str(ROOT))
+        from fabtest import spec as specmod
+        spec = specmod.load(Path(SPEC))
+    return fullfabric.FullFabric(bram=True, spec=spec)
+
+
 def r0(record: bool) -> bool:
     import fabric
-    import fullfabric
     import run_fullfabric as rf
-    ff = fullfabric.FullFabric(bram=True)
+    ff = _fabric()
     inv = {ff.tn(t): t for t in ff.tiles}
     got = {}
     for name, path in SETS.items():
@@ -69,10 +80,9 @@ def r0(record: bool) -> bool:
 
 def r1() -> bool:
     import fastsim
-    import fullfabric
     import run_fullfabric as rf
     t0 = time.time()
-    ff = fullfabric.FullFabric(bram=True)
+    ff = _fabric()
     stims = {name: rf.build_stims(ff, ROOT / path, only=PICK, quiet=True) for name, path in SETS.items()}
     del ff
     faults = list(csv.DictReader((ROOT / "faults" / "fullbram.csv").open()))
@@ -97,8 +107,7 @@ def r1() -> bool:
 
 def r2(record: bool) -> bool:
     import fab_router as fr
-    import fullfabric
-    ff = fullfabric.FullFabric(bram=True)
+    ff = _fabric()
     fr.CHAINS = 2
     configs, _, total, log, _ = fr.route_all(ff, 2, do_polish=False, verbose=False,
                                              seed=lambda cfg, b: fr.backbone(cfg, b))
@@ -127,7 +136,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", choices=["R0", "R1", "R2"], default="R0")
     ap.add_argument("--record", action="store_true", help="write the golden instead of comparing")
+    ap.add_argument("--spec", help="fabtest work dir: build the model from its spec")
     a = ap.parse_args()
+    global SPEC
+    SPEC = a.spec
     ok = {"R0": lambda: r0(a.record), "R1": r1, "R2": lambda: r2(a.record)}[a.level]()
     sys.exit(0 if ok else 1)
 

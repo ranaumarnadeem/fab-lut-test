@@ -45,16 +45,18 @@ def _strip(text: str) -> str:
     return re.sub(r"/\*.*?\*/", "", re.sub(r"//[^\n]*", "", text), flags=re.S)
 
 
-def _ports(text: str, mod: str) -> dict[str, tuple[str, int]]:
-    """port -> (direction, width) of module `mod` (FABulous generated headers)."""
+def _ports(text: str, mod: str, params: dict | None = None) -> dict[str, tuple[str, int]]:
+    """port -> (direction, width) of module `mod` (FABulous generated headers); parameter
+    names in ranges from `params` (default the demo's 32 / 20)."""
+    params = params or {"FrameBitsPerRow": 32, "MaxFramesPerCol": 20}
     text = _strip(text)
     m = re.search(rf"module\s+{mod}\b.*?\((.*?)\);", text, re.S)
     hdr = m.group(1)
-    hdr = hdr[hdr.rfind("#") + 1:] if False else hdr
     out = {}
     for d, hi, lo, n in re.findall(r"(input|output)\s+(?:wire\s+)?(?:\[\s*([^:\]]+):\s*(\d+)\s*\]\s*)?(\w+)", hdr):
         if hi:
-            hi = hi.replace("FrameBitsPerRow", "32").replace("MaxFramesPerCol", "20")
+            for k, v in params.items():
+                hi = hi.replace(k, str(v))
             w = eval(hi, {}, {}) - int(lo) + 1   # only integer arithmetic from the header
         else:
             w = 1
@@ -74,27 +76,43 @@ def _instances(text: str) -> list[tuple[str, str, dict[str, str]]]:
 
 
 class FullFabric(fabric.Array):
-    def __init__(self, n_rand: int = 54, bram: bool = False):
-        """bram: the fabric with its 7 BlockRAMs (synth/build_fabbram.sh, netlist fullbram):
-        the RAM_IO data paths become BRAM reads and writes (bel_ops op Q)."""
+    def __init__(self, n_rand: int = 54, bram: bool = False, spec=None):
+        """bram: the fabric with its BlockRAMs (synth/build_fabbram.sh, netlist fullbram):
+        the RAM_IO data paths become BRAM reads and writes (bel_ops op Q).
+        spec: a fabtest FabricSpec (fabtest/spec.py): paths, geometry and frame parameters
+        from the FABulous project copy; without it the demo copy under rtl/."""
         self.fabric = True
         self.n_rand = n_rand
         self._cmemo, self._static, self._mop = {}, {}, {}
         self.name = "fullbram" if bram else "fullfabric"
         self.bram = bram
-        self.width = {n: w for _, w, n in __import__("gen_array").tile_ports()}
-        top = (FAB / "eFPGA.v").read_text()
-        dsp = (FAB / "DSP" / "DSP.v").read_text()
-        self.top_ports = _ports(top, "eFPGA")
+        if spec is not None:
+            self.type_dir = {t: Path(v["dir"]) for t, v in spec.types.items()}
+            self.efpga_v = spec.proj / "Fabric" / "eFPGA.v"
+            self.top_v = spec.proj / "Fabric" / "eFPGA_top.v"
+            super_v = {n: Path(v["dir"]) / f"{n}.v" for n, v in spec.supertiles.items()}
+            self.R, self.C = spec.rows, spec.cols
+            self.frame_bits, self.frames = spec.params["frame_bits"], spec.params["frames"]
+        else:
+            self.type_dir = dict(TYPE_DIR, LUT4AB=ROOT / "rtl", W_IO=ROOT / "rtl" / "W_IO")
+            self.efpga_v = FAB / "eFPGA.v"
+            self.top_v = Path("/home/user/ext/demo/Fabric/eFPGA_top.v")
+            super_v = {"DSP": FAB / "DSP" / "DSP.v"}
+            self.R, self.C = 16, 10
+            self.frame_bits, self.frames = 32, 20
+        self.params = {"FrameBitsPerRow": self.frame_bits, "MaxFramesPerCol": self.frames}
+        top = self.efpga_v.read_text()
+        self.super_text = {n: p.read_text() for n, p in super_v.items()}
+        self.top_ports = _ports(top, "eFPGA", self.params)
         self.types: dict = {}        # tile -> type name
         self.gen: dict = {}          # type -> TileType (generic types)
         conns: list = []             # (tile, port, expression in the eFPGA scope)
         for typ, inst, cn in _instances(top):
             X, Y = map(int, re.match(r"Tile_X(\d+)Y(\d+)_", inst).groups())
-            if typ == "DSP":
-                # supertile: DSP port <p> is the eFPGA expression; inside, sub-tiles connect
-                # to DSP ports or internal wires (top2bot) by name
-                inner = _instances(dsp)
+            if typ in self.super_text:
+                # supertile: its port <p> is the eFPGA expression; inside, sub-tiles connect
+                # to the supertile's ports or internal wires (e.g. top2bot) by name
+                inner = _instances(self.super_text[typ])
                 for styp, sinst, scn in inner:
                     dx, dy = map(int, re.match(r"Tile_X(\d+)Y(\d+)_", sinst).groups())
                     t = (X + dx - 1, Y + dy)
@@ -112,17 +130,12 @@ class FullFabric(fabric.Array):
                     conns.append((t, p, e))
         for typ in set(self.types.values()):
             if typ not in ("LUT4AB", "W_IO"):
-                self.gen[typ] = tile_model.TileType(TYPE_DIR[typ], typ)
+                self.gen[typ] = tile_model.TileType(self.type_dir[typ], typ)
         # port widths and directions per type
         self.tports = {}
         for typ in set(self.types.values()):
-            if typ == "LUT4AB":
-                txt, mod = (ROOT / "rtl" / "LUT4AB.v").read_text(), "LUT4AB"
-            elif typ == "W_IO":
-                txt, mod = (ROOT / "rtl" / "W_IO" / "W_IO.v").read_text(), "W_IO"
-            else:
-                txt, mod = (TYPE_DIR[typ] / f"{typ}.v").read_text(), typ
-            self.tports[typ] = _ports(txt, mod)
+            txt, mod = (self.type_dir[typ] / f"{typ}.v").read_text(), typ
+            self.tports[typ] = _ports(txt, mod, self.params)
         # wire bit -> driver: (tile, output port bit) or ("PAD", top input port)
         drv, readers = {}, []
         for t, p, e in conns:
@@ -154,7 +167,6 @@ class FullFabric(fabric.Array):
         self.other_tiles = sorted((t for t, ty in self.types.items() if ty not in ("LUT4AB", "W_IO")),
                                   key=lambda t: (t[1], t[0]))
         self.tiles = self.lut_tiles + self.io_tiles + self.other_tiles
-        self.R, self.C = 16, 10
         import wio_model as wm
         self.border_in = [f"PAD/{self.out_or_pad(t, p)}" for t in self.io_tiles for p in wm.PADS_IN]
         self.border_out = [self.net(t, o) for t in self.io_tiles for o in wm.PADS_OUT + wm.CBITS]
@@ -184,7 +196,7 @@ class FullFabric(fabric.Array):
     def _bram_pins(self) -> dict:
         """BRAM k -> {"rd_data": [32 model nets: the RAM_IO InPass outputs], "rd_addr", "wr_addr",
         "wr_data", "C": [the RAM_IO OutPass inputs, C0..C5], "tiles"} (eFPGA_top.v wiring)."""
-        top = Path("/home/user/ext/demo/Fabric/eFPGA_top.v").read_text()
+        top = self.top_v.read_text()
         inst = re.search(r"\neFPGA eFPGA_inst \((.*?)\n\);", top, re.S).group(1)
         wire = {}   # (bus, index) -> (tile, BEL pin net)
         for p, bus, i in re.findall(r"\.(Tile_X\d+Y\d+_(?:RAM2FAB|FAB2RAM)\w+)\((\w+)\[(\d+)\]\)", inst):
@@ -323,11 +335,13 @@ class FullFabric(fabric.Array):
     # ------------------------------------------------------------ stimulus
 
     def stim(self, name: str, sels: dict, order: list[int], lut_bits: dict | None = None):
-        """Config write through FrameData[512] (row y: bits 32 y ..) and FrameStrobe[200]
-        (column X: bits 20 X ..), column by column, then the vectors (eFPGA.v)."""
+        """Config write through FrameData[rows x 32] (row y: bits 32 y ..) and
+        FrameStrobe[cols x 20] (column X: bits 20 X ..), column by column, then the
+        vectors (eFPGA.v)."""
         import fastsim
         import wio_model as wm
-        in_names = [f"FrameData[{k}]" for k in range(512)] + [f"FrameStrobe[{k}]" for k in range(200)] + \
+        fdw, fsw = self.R * self.frame_bits, self.C * self.frames
+        in_names = [f"FrameData[{k}]" for k in range(fdw)] + [f"FrameStrobe[{k}]" for k in range(fsw)] + \
                    [self.port(n) for n in self.border_in] + ["UserCLK"]
         nb = len(self.border_in)
         words = {}
@@ -344,15 +358,15 @@ class FullFabric(fabric.Array):
         def row(fd, strobe, inp):
             r = np.zeros(len(in_names), dtype=np.uint8)
             for y, w in fd.items():
-                for k in range(32):
-                    r[32 * y + k] = (w >> k) & 1
+                for k in range(self.frame_bits):
+                    r[self.frame_bits * y + k] = (w >> k) & 1
             if strobe is not None:
-                r[512 + 20 * strobe[0] + strobe[1]] = 1
+                r[fdw + self.frames * strobe[0] + strobe[1]] = 1
             for j in range(nb):
-                r[712 + j] = (inp >> j) & 1
+                r[fdw + fsw + j] = (inp >> j) & 1
             return r
         fd = {}
-        for X in range(10):
+        for X in range(self.C):
             col = [t for t in words if t[0] + 1 == X]
             if not col:
                 continue
