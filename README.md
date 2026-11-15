@@ -257,6 +257,11 @@ Every fault left reaches a pad as X in some config (none stays unobserved). Set 
 keeps all 96; 39 reach 95% of what they detect, 70 reach 99%. Loading 96 configs through
 the parallel port at 50 MHz takes about 7-13 ms per chip (39 configs: 3-5 ms).
 
+With the rotated, shared pinning (below), 96 configs routed by `fabtest route` in one run
+reach **89.1% +- 0.3** on the same 50,000 faults (every fault in every config,
+`scripts/compare_with_stored.py`): LUT4AB 92.0%, RegFile 79.3%, DSP 81.5-89.6%, RAM_IO
+86.8%, W_IO 92.2%, BlockRAM wrapper 81.6%. Both 96-config sets together: 91.5%.
+
 ### Configuration logic
 
 `synth/build_cfgtop.sh` builds FABulous's configuration path from `eFPGA_top.v` unchanged
@@ -311,9 +316,12 @@ LUTs cover 64 of F2's 64 LUTs and 610 of the demo's 672.
 | F2, all faults | 49.1% | **70.9%** |
 | F1, all faults | 82.4% | **85.8%** |
 | demo, 24 configs, random 10k of the 50k sample | 70.7% (v3) | **77.7%** |
+| demo, 96 configs, the 50k sample, every fault in every config | 86.0% (four sets) | **89.1%** |
 
 On the demo every part gains (LUT4AB 73.1 -> 81.0, DSP 61.4 -> 66.5, RAM_IO 77.2 -> 82.5,
 BlockRAM 54.4 -> 84.2); routing covers 423,530 items in 24 configs (v3: 389,647).
+With 96 configs RegFile goes from 73.6% to 79.3% and the BlockRAM wrapper from 52.6% to
+81.6%; 39 configs reach 95% of the union, 70 reach 99%, as before.
 
 ### Findings about FABulous
 
