@@ -168,9 +168,13 @@ def _fix_names(m: dict, macros: list) -> tuple[int, int]:
             "addr", "din", "dout", "clk", "csb", "web", "wmask")
     keep: dict[int, str] = {}
     for b, ns in names.items():
-        if len(ns) < 2 or any(n in ports for n in ns) or all(n.startswith("Tile_") for n in ns):
-            continue
         pre = drv.get(b)
+        if len(ns) < 2 or any(n in ports for n in ns):
+            continue
+        if all(n.startswith("Tile_") for n in ns) and pre is not None:
+            continue   # driven tile-to-tile net: gen_faults picks the driver's name
+        # (undriven: a ring of wires through the tiles, e.g. 4-wires bouncing between the
+        # N / S term tiles of a short fabric; no driver to pick a name: keep one here)
         # a name inside the driver's instance, but not inside a model (keep mem_dout over
         # memory_cell.dout0: model cells are left out of the fault list)
         inside = ([n for n in ns if pre and n.startswith(pre) and ".memory_cell." not in n]

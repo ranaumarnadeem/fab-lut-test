@@ -271,6 +271,13 @@ class FullFabric(fabric.Array):
         seeds = [self.canon(t, n) for t in self.other_tiles for n in self.gen[self.types[t]].bel_out
                  if n not in self.bel_ops(t)]
         seeds += [self.canon(t, q) for t in self.io_tiles for q in wm.Q_SOURCES]
+        # rings of fixed wires (no mux, no BEL: e.g. the 4-wires of a fabric only two rows
+        # high, bounced between its N and S term tiles): undriven in the RTL, X
+        from fabtest.sim.graph import tarjan
+        nodes = sorted(set(succ) | {m for v in succ.values() for m in v})
+        self.rings = {n for c in tarjan(nodes, lambda n: succ.get(n, ()))
+                      if len(c) > 1 or c[0] in succ.get(c[0], ()) for n in c}
+        seeds += sorted(self.rings)
         out, stack = set(seeds), list(seeds)
         while stack:
             n = stack.pop()

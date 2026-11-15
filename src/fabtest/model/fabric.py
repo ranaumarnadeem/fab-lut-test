@@ -164,6 +164,9 @@ class Array:
                 else:
                     idx = [cn(f"L{x}_Ci") if lc[1] else cn(f"L{x}_I0")] + [cn(f"L{x}_I{j}") for j in (1, 2, 3)]
                     raw[cn(f"L{x}_O")] = ("l", (idx, lc[0]))
+        for n in getattr(self, "rings", ()):   # undriven wire rings: no value (tainted, never read)
+            if n in raw:
+                raw[n] = ("c", 0)
         deps = {n: _deps(op, a) for n, (op, a) in raw.items()}
         order, state = [], {}
         for n0 in sorted(raw):

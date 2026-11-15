@@ -1,0 +1,4 @@
+NULL,N_term_single,N_term_single,N_term_single,N_term_RAM_IO
+W_IO,LUT4AB,LUT4AB,LUT4AB,RAM_IO
+W_IO,LUT4AB,LUT4AB,LUT4AB,RAM_IO
+NULL,S_term_single,S_term_single,S_term_single,S_term_RAM_IO
