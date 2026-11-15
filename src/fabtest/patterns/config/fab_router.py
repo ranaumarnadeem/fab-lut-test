@@ -618,14 +618,23 @@ def _drop_consts(cfg, n_before: dict) -> None:
         del cfg.consts[v][n:]
 
 
+def _tile_of(arr, net: str):
+    """The tile of a fabric net (<tile name>/<local>), or None (a pad)."""
+    m = arr.__dict__.get("_tile_by_name")
+    if m is None:
+        m = arr._tile_by_name = {arr.tn(t): t for t in arr.tiles}
+    return m.get(net.split("/", 1)[0])
+
+
 def route_const(cfg, val: int, targets: list, near, bias: int) -> bool:
     """Route the constant val (0 / 1) to every net of targets (wires only, one source for
-    all): an existing constant of the config pool (cfg.consts) within CONST_RADIUS of `near`,
-    nearest first, else a new constant LUT in one of the LUT tiles nearest to `near` (tile
-    and letter rotated by bias). A constant 0 is a LUT with table 0 (X inputs are fine: 0 & X
+    all): an existing constant of the config pool (cfg.consts) within CONST_RADIUS of the
+    targets' tile (else `near`), nearest first, else a new constant LUT in one of the LUT
+    tiles nearest to it (tile and letter rotated by bias). A constant 0 is a LUT with table 0 (X inputs are fine: 0 & X
     = 0); a 1 needs its four inputs from a 0 (with X inputs an all-ones table gives X in the
     gates)."""
     arr = cfg.g.arr
+    near = _tile_of(arr, targets[0]) or near   # the pins' tile (a macro spans several)
 
     def dist(t):
         return abs(t[0] - near[0]) + abs(t[1] - near[1])
