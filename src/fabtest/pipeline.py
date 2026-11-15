@@ -170,9 +170,14 @@ def report(spec, run: Path) -> str:
         for kk in (k, "all"):
             tot[kk] += 1
             det[kk] += d
-    L = [f"fabtest report: {len(rows)} of {meta['of']} faults sampled (seed {meta['seed']}), {len(cfgs)} configs"]
+    every = len(rows) == meta["of"]
+    L = [f"fabtest report: all {len(rows)} faults, {len(cfgs)} configs" if every else
+         f"fabtest report: {len(rows)} of {meta['of']} faults sampled (seed {meta['seed']}), {len(cfgs)} configs"]
     for k in sorted(tot, key=lambda k: (k != "all", -tot[k])):
         p = det[k] / tot[k]
+        if every:   # every fault simulated: exact
+            L.append(f"  {k:20s} {tot[k]:8d} faults:  {100 * p:6.2f}%")
+            continue
         ci = 1.96 * math.sqrt(p * (1 - p) / tot[k])
         L.append(f"  {k:20s} {tot[k]:8d} sampled: {100 * p:6.2f}% +- {100 * ci:.2f}")
     left = json.loads((fdir / "configs.json").read_text()).get("left_out", []) if (fdir / "configs.json").exists() else []
