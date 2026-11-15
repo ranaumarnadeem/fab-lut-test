@@ -33,12 +33,10 @@ than `max_group` stops the decision for that fault (reported, not sampled).
 from __future__ import annotations
 
 import itertools
-import sys
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.patterns.faults import gen_faults  # noqa: E402
 
 # cell type -> output pin, input pins (all other pins of known cells are inputs)

@@ -1,6 +1,6 @@
 """GenericFabric: the fabric model from a fabtest spec and the BEL plugins (fabtest P3).
 
-configs/fullfabric.FullFabric with the tile-type checks replaced by the plugin registry
+model/fullfabric.FullFabric with the tile-type checks replaced by the plugin registry
 (fabtest/bels): BEL ops, RegFile pins and macro pins (BlockRAM_1KB) come from the plugins
 matched to the spec's BELs and eFPGA_top macros; a BEL or macro no plugin models stays
 opaque (outputs tainted). The lut / io kinds still need the type names LUT4AB / W_IO.
@@ -8,10 +8,7 @@ opaque (outputs tainted). The lut / io kinds still need the type names LUT4AB / 
 from __future__ import annotations
 
 import re
-import sys
-from pathlib import Path
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
 
 from fabtest.model import fullfabric  # noqa: E402
 

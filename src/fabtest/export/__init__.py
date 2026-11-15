@@ -29,10 +29,9 @@ import pickle
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-from fabtest.paths import REPO as ROOT, TB  # noqa: E402
+from fabtest.paths import TB  # noqa: E402
 
 HEADER = "00AAFF01000000010000000000000000FAB0FAB1"
 HEX_BYTES = 16384
@@ -290,7 +289,7 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
     kept = set(json.loads(fsj.read_text())["kept"]) if fsj.exists() and only is None else None
     nl = None
     manifest = {"spec": str(work / "spec.json"), "fabulous_version": spec.d.get("fabulous_version"),
-                "configs": str(cfg_path), "frame_order": "canonical" if canonical else "fault-simulated",
+                "config_set": str(cfg_path), "frame_order": "canonical" if canonical else "fault-simulated",
                 "configs": {}, "left_out": []}
     runs = []
     ins = outs = None

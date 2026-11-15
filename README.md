@@ -326,6 +326,7 @@ scripts/fabtest info build/fabtest/<fabric> --bels      # tiles, BELs and the pl
 scripts/fabtest synth build/fabtest/<fabric>            # gate-level netlist and fault list
 scripts/fabtest route build/fabtest/<fabric> --run r1 --configs 24
 scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
+scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest bitgen-check build/fabtest/<fabric> --run r1 --only 0,1,2,3
@@ -348,9 +349,9 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 | path | contents |
 |---|---|
 | `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `bels/` (BEL plugins), `pipeline.py` (route, faultsim, report) |
-| `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`), `data/` |
-| `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`, `sm_router.py`); `faults/`: fault list generator |
-| `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py` |
+| `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
+| `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
+| `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py` |
 | `src/fabtest/synth/` | netlist flow (yosys templates, techmaps) |
 | `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
 | `rtl/` | input RTL: LUT4AB, W_IO and term tile copies, the demo fabric copy, `bram/sram_model.v` |

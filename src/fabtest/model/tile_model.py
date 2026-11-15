@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Generic switch-matrix model of any FABulous tile type (Phase 12).
+"""Generic switch-matrix model of any FABulous tile type.
 
-configs/sm_model.py and configs/wio_model.py, without the tile-specific
+model/sm_model.py and model/wio_model.py, without the tile-specific
 parts: from the generated <Tile>.v, <Tile>_switch_matrix.v and (if the tile
-has config) <Tile>_ConfigMem.v (rtl/tile_parse.py), plus the BEL module
+has config) <Tile>_ConfigMem.v (model/tile_parse.py), plus the BEL module
 files for the BEL pin directions. Every switch-matrix output becomes an
 sm_model.SMMux (sink: tile output, BEL input or jump wire; sources: tile
 input, BEL output, jump wire or constant), every `assign X_i[a:b] =
 Y_i[c:d];` of <Tile>.v a pass-through. Termination tiles (no ConfigMem):
 direct wires only.
 
-The LUT4AB result equals configs/sm_model.MUXES (sources, sinks, select
-bits) and configs/sm_configs.PASS: `python3 configs/tile_model.py check`.
+The LUT4AB result equals model/sm_model.MUXES (sources, sinks, select bits) and
+model/sm_configs.PASS (fabtest's lut kind checks a project's LUT4AB against the model).
 """
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.model import sm_model  # noqa: E402
 from fabtest.model import tile_parse as tp  # noqa: E402
 

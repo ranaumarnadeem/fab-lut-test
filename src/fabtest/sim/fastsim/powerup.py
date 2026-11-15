@@ -30,14 +30,12 @@ from __future__ import annotations
 
 import ctypes
 import itertools
-import sys
 import time
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.sim.fastsim import fastsim  # noqa: E402
 
 _p = fastsim._p
@@ -264,12 +262,3 @@ class PowerUp:
         if verbose:
             print(f"  decided {len(verdict)} faults ({time.time() - t0:.1f} s)", flush=True)
         return verdict
-
-
-def x_only(rows: list[dict], cfgs: list[str]) -> dict[int, list[str]]:
-    out = {}
-    for j, r in enumerate(rows):
-        st = [r[c] for c in cfgs]
-        if "D" not in st and "P" in st:
-            out[j] = [c for c in cfgs if r[c] == "P"]
-    return out

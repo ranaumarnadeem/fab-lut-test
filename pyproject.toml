@@ -17,4 +17,4 @@ fabtest = "fabtest.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-fabtest = ["model/data/*", "synth/*.ys.in", "synth/*.v", "sim/fastsim/*.c"]
+fabtest = ["synth/*.ys.in", "synth/*.v", "sim/fastsim/*.c"]

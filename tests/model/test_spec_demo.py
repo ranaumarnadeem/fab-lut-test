@@ -19,7 +19,7 @@ from common import ROOT, demo_work  # noqa: E402,F401
 
 
 def main() -> None:
-    from fabtest import project, spec as specmod
+    from fabtest import spec as specmod
     w = Path(sys.argv[1]) if len(sys.argv) > 1 else demo_work()
     s = specmod.load(w)
     from fabtest.model import fullfabric

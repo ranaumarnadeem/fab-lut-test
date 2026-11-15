@@ -130,7 +130,7 @@ def r2(record: bool) -> bool:
     from fabtest.patterns.config import fab_router as fr
     ff = _fabric()
     fr.CHAINS = 2
-    configs, _, total, log, _ = fr.route_all(ff, 2, do_polish=False, verbose=False,
+    configs, _, total, log, _ = fr.route_all(ff, 2, verbose=False,
                                              seed=lambda cfg, b: fr.backbone(cfg, b))
     got = {f"cfg{c}": {"sels": _sha(json.dumps(cf, sort_keys=True)), "gain": log[c]["gain"]}
            for c, cf in enumerate(configs)}

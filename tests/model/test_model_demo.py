@@ -21,7 +21,7 @@ from common import ROOT, demo_work  # noqa: E402,F401
 def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quick = "--quick" in sys.argv
-    from fabtest import project, spec as specmod
+    from fabtest import spec as specmod
     from fabtest.model.generic import GenericFabric
     from fabtest.model import fullfabric
     from fabtest.sim import stimuli as rf

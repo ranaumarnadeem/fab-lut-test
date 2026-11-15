@@ -4,9 +4,9 @@ Every BEL of a tile type is matched, by module name, to one plugin; a BEL no plu
 matches gets `opaque`: its outputs carry X whatever the config (tainted, never routed
 through), and its faults are reported as untested. A tile type then gets a kind:
 
-  lut      the LUT4AB model (configs/sm_model.py, fabric.M): 8 x lut4c + mux8lut
-  io       the W_IO model (configs/wio_model.py): io_pad + config_access
-  generic  configs/tile_model.TileType, BEL ops from the plugins
+  lut      the LUT4AB model (model/sm_model.py, fabric.M): 8 x lut4c + mux8lut
+  io       the W_IO model (model/wio_model.py): io_pad + config_access
+  generic  model/tile_model.TileType, BEL ops from the plugins
 
 lut / io need the tile to equal the hand model (config memory, mux sources and select
 bits); a variant of those tiles falls back to generic with its BELs opaque.
@@ -14,7 +14,6 @@ bits); a variant of those tiles falls back to generic with its BELs opaque.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from fabtest.bels.base import Plugin
@@ -33,7 +32,7 @@ def for_module(module: str) -> Plugin:
 
 
 def same_tile(a, b) -> list[str]:
-    """Differences between two parsed tiles (rtl/tile_parse.Tile): config memory map,
+    """Differences between two parsed tiles (model/tile_parse.Tile): config memory map,
     mux sources and select bits, tile ports."""
     out = []
     if a.configmem != b.configmem:

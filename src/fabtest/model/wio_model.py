@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Switch-matrix and BEL model of the W_IO tile (Phase 10d).
+"""Switch-matrix and BEL model of the W_IO tile.
 
 From the FABulous-generated files in rtl/W_IO (copied from the demo fabric,
-ext/demo/Tile/W_IO), parsed by rtl/tile_parse.py, in the form of
-configs/sm_model.py (SMMux, Source, SelBit), so the array model and router
+ext/demo/Tile/W_IO), parsed by model/tile_parse.py, in the form of
+model/sm_model.py (SMMux, Source, SelBit), so the array model and router
 treat W_IO muxes like LUT4AB muxes.
 
 VERIFY (rtl/W_IO): W_IO.v instances Inst_A/B_IO_1_bidirectional_frame_config_pass
@@ -21,8 +21,6 @@ inputs, X until clocked) are never selected by the combinational flow
 from __future__ import annotations
 
 import re
-import sys
-from pathlib import Path
 
 from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.model import sm_model  # noqa: E402

@@ -1,39 +1,26 @@
 #!/usr/bin/env python3
-"""Switch-matrix model of the LUT4AB tile (Phase 8 step 1).
+"""Switch-matrix model of the LUT4AB tile.
 
 Built only from the files FABulous generated for the tile (rtl/LUT4AB.v,
-rtl/LUT4AB_switch_matrix.v, rtl/LUT4AB_ConfigMem.v, parsed by
-rtl/tile_parse.py) and the mux models (rtl/models_pack.v). The VERIFY
-findings behind every rule here are in NOTES.md, "Phase 8 step 1".
-
-For every switch-matrix output (a mux or a direct wire):
-  - output net and what it drives: a tile output port, a BEL input (LUT I0..I3,
-    Ci, SR, EN; MUX8LUT A..H, S0..S3) or an internal jump wire (J*_BEG, read
-    back by the switch matrix as J*_END),
-  - ordered inputs (A0 first), each classified as tile input port, jump wire,
-    BEL output (LUT O / Co, MUX8LUT M_*) or constant (GND0 / VCC0),
-  - fan-in, select config bits S0.. with tile config bit, frame and FrameData
-    position, and the code -> input table (binary, S0 = LSB), including codes
-    that select padding (none in this tile) or a constant.
-
-Run: python3 configs/sm_model.py [--md FILE] [--json FILE]
+LUT4AB_switch_matrix.v, LUT4AB_ConfigMem.v, parsed by model/tile_parse.py) and the mux
+models (rtl/models_pack.v). For every switch-matrix output (a mux or a direct wire):
+  - output net and what it drives: a tile output port, a BEL input (LUT I0..I3, Ci, SR,
+    EN; MUX8LUT A..H, S0..S3) or an internal jump wire (J*_BEG, read back as J*_END),
+  - ordered inputs (A0 first), each a tile input port, jump wire, BEL output (LUT O / Co,
+    MUX8LUT M_*) or constant (GND0 / VCC0),
+  - fan-in, select config bits S0.. with tile config bit, frame and FrameData position,
+    and the code -> input table (binary, S0 = LSB).
 """
 from __future__ import annotations
 
-import argparse
-import json
 import re
-import sys
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field
 
 from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.model import tile_parse  # noqa: E402
 
 TILE_NAME = "LUT4AB"
 RTL = ROOT / "rtl"
-from fabtest.paths import DATA  # noqa: E402
-ROUTING_JSON = DATA / "tile_routing.json"
 CONST_RE = re.compile(r"(GND|VCC)\d*")
 
 
@@ -74,10 +61,6 @@ class SMMux:
         if not 0 <= k < self.fan_in:
             raise ValueError(f"{self.out}: input {k} of {self.fan_in}")
         return {s.tile_bit: (k >> i) & 1 for i, s in enumerate(self.sel)}
-
-    def decode(self, bits: dict[int, int]) -> int:
-        """Selected input index for the given tile config bits (missing = 0)."""
-        return sum(bits.get(s.tile_bit, 0) << i for i, s in enumerate(self.sel))
 
 
 def _bel_pins(tile_v: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -152,84 +135,6 @@ def build() -> tuple[tile_parse.Tile, dict[str, SMMux]]:
             raise SystemExit(f"{name}: padding pins {padded} do not match {len(m.inputs)} of {n_codes}")
         out[name] = SMMux(name, net, sink, bel, m.kind, [source(p) for p in m.inputs], sel, codes)
     return tile, out
-
-
-def check(tile: tile_parse.Tile, muxes: dict[str, SMMux]) -> list[str]:
-    """Self-checks; returns findings for NOTES, raises on inconsistency."""
-    notes = []
-    nbits = int(re.search(r"parameter NoConfigBits=(\d+)",
-                          (RTL / f"{TILE_NAME}_switch_matrix.v").read_text()).group(1))
-    used = [s.local for m in muxes.values() for s in m.sel]
-    if sorted(used) != list(range(nbits)):
-        dup = sorted({b for b in used if used.count(b) > 1})
-        missing = sorted(set(range(nbits)) - set(used))
-        raise SystemExit(f"select bits: duplicates {dup[:5]}, not selects {missing[:5]}")
-    notes.append(f"all {nbits} switch-matrix config bits are mux selects, each used once")
-    for m in muxes.values():
-        if m.model != "direct" and m.fan_in != 1 << len(m.sel) and "GND0 (padding)" not in m.codes:
-            raise SystemExit(f"{m.out}: fan-in {m.fan_in} with {len(m.sel)} select bits")
-        # contiguous select bits, S0 lowest (gen_switchmatrix.py)
-        loc = [s.local for s in m.sel]
-        if loc != list(range(loc[0], loc[0] + len(loc))) if loc else False:
-            raise SystemExit(f"{m.out}: select bits not contiguous: {loc}")
-    # test routing: every constrained bit is a select, and its value picks the path input
-    r = json.loads(ROUTING_JSON.read_text())
-    owner = {s.tile_bit: m for m in muxes.values() for s in m.sel}
-    fixed = {int(b): v for b, v in r["switch_matrix_bits_set"].items()}
-    bad = [b for b in fixed if b not in owner]
-    if bad:
-        raise SystemExit(f"test-routing bits that are not selects: {bad[:10]}")
-    hops = 0
-    for route in r["routes"]:
-        for h in route["hops"]:
-            m = muxes[h["mux"]]
-            if m.code_for(h["input"]) != {int(b): v for b, v in h["sel"].items()}:
-                raise SystemExit(f"{h['mux']}: routing select {h['sel']} != code for input {h['input']}")
-            if m.decode(fixed) != h["input"]:
-                raise SystemExit(f"{h['mux']}: fixed bits decode to {m.decode(fixed)}, path uses {h['input']}")
-            hops += 1
-    notes.append(f"test routing: {len(fixed)} constrained bits, all selects; "
-                 f"{hops} path hops decode to the path input")
-    return notes
-
-
-def summary(tile: tile_parse.Tile, muxes: dict[str, SMMux]) -> dict:
-    from collections import Counter
-    real = [m for m in muxes.values() if m.model != "direct"]
-    return {
-        "outputs": len(muxes),
-        "direct": sum(m.model == "direct" for m in muxes.values()),
-        "muxes": len(real),
-        "by_model": dict(Counter(m.model for m in real)),
-        "fan_in_hist": dict(sorted(Counter(m.fan_in for m in real).items())),
-        "max_fan_in": max(m.fan_in for m in real),
-        "select_bits": sum(len(m.sel) for m in real),
-        "sinks": dict(Counter(m.sink for m in muxes.values())),
-        "sinks_mux_only": dict(Counter(m.sink for m in real)),
-        "bel_inputs": dict(Counter(m.bel.split(".")[1].rstrip("0123456789") for m in muxes.values()
-                                   if m.sink == "bel_input")),
-        "sources": dict(Counter(s.kind for s in {(s.port, s.kind): s for m in muxes.values()
-                                                  for s in m.inputs}.values())),
-        "padded_codes": sum(c == "GND0 (padding)" for m in real for c in m.codes),
-        "const_codes": [(m.out, k, s.port) for m in real for k, s in enumerate(m.inputs)
-                        if s.kind == "const"],
-        "frames": dict(sorted(Counter(s.frame for m in real for s in m.sel).items())),
-    }
-
-
-def markdown(muxes: dict[str, SMMux]) -> str:
-    def src(s: Source) -> str:
-        return {"tile_input": s.net, "jump": f"{s.net} (J)", "const": s.port,
-                "bel_output": f"{s.net} ({s.bel})"}[s.kind]
-
-    lines = ["| output | drives | model | fan-in | inputs A0.. | selects S0..: tile bit (frame, FrameData) |",
-             "|---|---|---|---|---|---|"]
-    for m in muxes.values():
-        drv = {"tile_output": "tile out", "jump": "jump", "bel_input": m.bel}[m.sink]
-        sel = ", ".join(f"{s.tile_bit} ({s.frame}, {s.frame_data})" for s in m.sel) or "-"
-        lines.append(f"| {m.net} | {drv} | {m.model} | {m.fan_in} | "
-                     f"{', '.join(src(s) for s in m.inputs)} | {sel} |")
-    return "\n".join(lines) + "\n"
 
 
 TILE, MUXES = build()

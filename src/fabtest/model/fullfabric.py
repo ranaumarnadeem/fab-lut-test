@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-"""Model of the full FABulous demo fabric from its generated eFPGA.v (Phase 12).
+"""Model of the full FABulous demo fabric from its generated eFPGA.v.
 
 rtl/fabric/eFPGA.v (copied from ext/demo/Fabric) instantiates 196 tiles; the DSP
 supertile (rtl/fabric/DSP/DSP.v) holds DSP_top and DSP_bot. Every tile input
 bit is resolved through the instance connections (both hierarchy levels) to
 the tile output bit that drives it, a top-level input port (border) or
-nothing (tied 0). Tile models: LUT4AB (configs/sm_configs.py), W_IO
-(configs/wio_model.py), every other type configs/tile_model.TileType (BEL
+nothing (tied 0). Tile models: LUT4AB (model/sm_configs.py), W_IO
+(model/wio_model.py), every other type model/tile_model.TileType (BEL
 outputs never selected: RegFile, DSP MULADD, RAM_IO pass BELs are not modelled).
 
 Coordinates: model (x, y) = eFPGA (X - 1, Y), so the W_IO column is x = -1 as
-in configs/fabric.Array (fabric mode) and the router / stimulus code applies
+in model/fabric.Array (fabric mode) and the router / stimulus code applies
 unchanged. Border: the 28 W_IO pads in; the W_IO pad outputs and Config_access
 bits out (the RAM2FAB / FAB2RAM ports face the BRAMs).
 
-Interface: configs/fabric.Array (ops, grade, cycles, stim, seq_expected).
+Interface: model/fabric.Array (ops, grade, cycles, stim, seq_expected).
 """
 from __future__ import annotations
 
 import math
 import random
 import re
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -325,8 +324,6 @@ class FullFabric(fabric.Array):
             return self.canon(d[0], d[1])
         return self.net(t, n)
 
-    def read_inside(self, t, o):
-        return True
 
     def port(self, n: str) -> str:
         if n.startswith("PAD/"):
@@ -357,7 +354,6 @@ class FullFabric(fabric.Array):
         FrameStrobe[cols x 20] (column X: bits 20 X ..), column by column, then the
         vectors (eFPGA.v)."""
         from fabtest.sim.fastsim import fastsim
-        from fabtest.model import wio_model as wm
         fdw, fsw = self.R * self.frame_bits, self.C * self.frames
         in_names = [f"FrameData[{k}]" for k in range(fdw)] + [f"FrameStrobe[{k}]" for k in range(fsw)] + \
                    [self.port(n) for n in self.border_in] + ["UserCLK"]

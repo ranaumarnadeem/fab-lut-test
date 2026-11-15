@@ -1,7 +1,7 @@
 """Plugins for the standard FABulous BELs (fabtest P3).
 
 lut4c, mux8lut, io_pad, config_access: modelled by the lut / io tile kinds (configs/
-sm_model.py, configs/wio_model.py); listed here so they are matched and labelled.
+sm_model.py, model/wio_model.py); listed here so they are matched and labelled.
 pass4: RAM_IO In/OutPass4 (outputs X unless a macro drives them, e.g. BlockRAM_1KB).
 muladd: DSP_bot MULADD at config 0 (op M: Q = A * B + C, 8 x 8 + 20 bits).
 regfile32x4: RegFile_32x4 read ports (op F; fabric.seq_expected keeps the memory).

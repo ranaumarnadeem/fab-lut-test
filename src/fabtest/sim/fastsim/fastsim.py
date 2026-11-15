@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
 """Fast fault simulation: bit-parallel C kernel (fsim.c), many faults per pass.
 
-  python3 sim/fastsim/fastsim.py faultsim <netlist> --suite sm|lut [--sequence] [--jobs N] [--W 4]
-  python3 sim/fastsim/fastsim.py compare  <netlist> --suite sm|lut [--sequence]
-
-Same semantics as the Icarus flow (sim/run_tile.py, sim/run_sm.py): strict
-3-valued simulation, X-pessimistic latch / flop models (sim/seq_models.v),
-faults forced from t = 1 ns, statuses D / P / U / T per (fault, config). Unlike
-the Icarus flow every fault is simulated in every config (no stop at the first
-D), so the matrix is complete. Generic-gate netlists only (tile_generic,
-tile_generic_br).
-
-Writes reports/<netlist><tag>_fast_matrix.csv; `compare` checks it against the
-Icarus matrix reports/<netlist><tag>_matrix.csv (configs not run there, "-",
-are skipped).
+Strict 3-valued simulation, X-pessimistic latch / flop models, faults forced from the
+first step, statuses D (detected: a definite 0 / 1 difference at an observed output),
+P (possibly: X against a definite value), U / T (undetected / timeout) per (fault, config).
+Every fault is simulated in every config, so the matrix is complete.
+Netlist: the generic-gate JSON of fabtest synth; Stim: one config's stimulus (inputs per
+step, sample flags, expected outputs); run_faults: the fault list over all stimuli,
+threaded (ctypes releases the GIL during the kernel call).
 """
 from __future__ import annotations
 
-import argparse
-import csv
 import ctypes
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 

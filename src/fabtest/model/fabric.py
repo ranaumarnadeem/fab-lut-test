@@ -1,46 +1,22 @@
 #!/usr/bin/env python3
-"""Model of an R x C LUT4AB array (Phase 10), wired as rtl/gen_array.py.
+"""Fabric model: nets, ops and evaluation of a set of tile configs (base of FullFabric).
 
-Nets: "X<x>Y<y>/<tile net>" (tile nets as configs/sm_configs.py). A tile
-input with a neighbour inside the array is the neighbour's output net (the
-same wire); one without is a border input. A tile routing output with no
-reader inside the array is a border output (observed). The switch matrix,
-LUTs (XOR, combinational unless given), MUX8LUT and pass-throughs of every
-tile as in the tile model; the array model is their composition, evaluated
-bit-parallel over the samples.
-
-Fabric mode (fabric=True, rtl/gen_array.py --fabric): a W_IO column west of
-column 0 (tiles (-1, y), named IOY<y>, configs/wio_model.py), N_term above the
-north row and S_term below the south row as wires (a north-row <S>END is the
-tile's own <N>BEG, bits reversed; south row likewise; south-row Ci = GND), the
-east edge open (W*END inputs 0, E*BEG outputs not observed). Border inputs: the
-W_IO pads; border outputs: the W_IO pad outputs (I_top, T_top) and
-Config_access bits. With at most 10 pads every config applies all 2^pads
-input vectors.
-
-Config writing (FABulous frame-based config, ext/demo/Fabric/eFPGA.v):
-FrameData_R<y> feeds row y west to east, FrameStrobe_C<x> column x south to
-north. A frame write of column x puts every row's word for that column's
-tile on FrameData_R<y> and pulses FrameStrobe_C<x>[f]: per column, per frame,
-data / strobe / release, as in the single-tile flow.
+Nets: "<tile>/<tile net>"; a tile input is the net of the output that drives it. The
+switch matrix, LUTs (XOR, combinational unless given), MUX8LUT and pass-throughs of every
+tile as in the tile model; the fabric model is their composition, evaluated bit-parallel
+over the input vectors (ops / run), graded per mux code (grade) and, with the flops and
+memories as three-valued state, clocked (seq_expected, stim_clocked). The fabric itself
+(tiles, wiring, border, stimulus layout) comes from the subclass (fullfabric.FullFabric,
+generic.GenericFabric).
 """
 from __future__ import annotations
 
-import math
-import re
-import sys
-from pathlib import Path
 
 import numpy as np
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
-from fabtest.model import array_wiring as gen_array  # noqa: E402
 from fabtest.model import sm_configs as sc  # noqa: E402
 
 M = sc.MUXES
-REAL = [o for o, m in M.items() if m.model != "direct"]
-TILE_IN = set(sc.INPUTS)
-READ_BY = {src: (dx, dy, dst) for dst, (dx, dy, src) in gen_array.FROM.items()}
 
 
 def _deps(op: str, a) -> list[str]:
@@ -84,65 +60,8 @@ def _muladd(vals: list[int], width: int) -> list[int]:
             for k in range(20)]
 
 
-def _split(n: str) -> tuple[str, str]:
-    m = re.fullmatch(r"(\w+)(\[\d+\])", n)
-    return (m.group(1), m.group(2)) if m else (n, "")
-
-
 class Array:
-    def __init__(self, R: int, C: int, n_rand: int = 0, fabric: bool = False):
-        """n_rand: random vectors (seeded) after the 2 W code vectors, in the
-        model and the stimulus. fabric: W_IO west, N / S term, east open."""
-        self.R, self.C = R, C
-        self.n_rand = n_rand
-        self.fabric = fabric
-        self._cmemo: dict = {}
-        self._static: dict = {}
-        self._mop: dict = {}
-        self.name = f"{'fabric' if fabric else 'array'}_{R}x{C}"
-        self.width = {n: w for _, w, n in gen_array.tile_ports()}
-        self.lut_tiles = [(x, y) for y in range(R) for x in range(C)]
-        self.io_tiles = [(-1, y) for y in range(R)] if fabric else []
-        self.tiles = self.lut_tiles + self.io_tiles
-        if fabric:
-            from fabtest.model import wio_model as wm
-            self.border_in = [self.net(t, p) for t in self.io_tiles for p in wm.PADS_IN]
-            self.border_out = [self.net(t, o) for t in self.io_tiles for o in wm.PADS_OUT + wm.CBITS]
-        else:
-            self.border_in = [self.net(t, p) for t in self.tiles for p in sc.INPUTS
-                              if self.canon(t, p) == self.net(t, p)]
-            self.border_out = [self.net(t, o) for t in self.tiles for o in sc.OUTPUTS if not self.read_inside(t, o)]
-        self.W = math.ceil(math.log2(len(self.border_in) + 2))
-        nb = len(self.border_in)
-        if fabric and nb <= 10:
-            self.vecs = list(range(1 << nb))     # every input combination
-        else:
-            codes = {n: j + 1 for j, n in enumerate(self.border_in)}
-            self.vecs = [sum(((codes[n] >> b) & 1) << j for j, n in enumerate(self.border_in)) for b in range(self.W)]
-            full = (1 << nb) - 1
-            self.vecs += [v ^ full for v in self.vecs]
-        import random
-        rnd = random.Random(9000 + R * 100 + C)
-        self.vecs += [rnd.getrandbits(nb) for _ in range(n_rand)]
-        self.NS = len(self.vecs)
-        self.FULL = (1 << self.NS) - 1
-        self.invec = {n: sum(((self.vecs[t] >> j) & 1) << t for t in range(self.NS))
-                      for j, n in enumerate(self.border_in)}
-        self.invec["GND"] = 0
 
-    def MT(self, t) -> dict:
-        """Mux table of the tile at t (W_IO or LUT4AB)."""
-        if t[0] < 0:
-            from fabtest.model import wio_model
-            return wio_model.MUXES
-        return M
-
-    def ttype(self, t) -> str:
-        return "W_IO" if t[0] < 0 else "LUT4AB"
-
-    def generic(self, t):
-        """configs/tile_model.TileType of a tile of another type (full fabric), else None."""
-        return None
 
     def forbidden_src(self, t, o: str, k: int) -> bool:
         """Code k of mux o of tile t selects a source with an unknown value (never selected):
@@ -161,22 +80,14 @@ class Array:
             return s.net in wio_model.Q_SOURCES
         return False
 
-    def bel_ops(self, t) -> dict:
-        """Modelled BELs of a generic tile: BEL output net -> op (none here)."""
-        return {}
 
     def real(self, t) -> list[str]:
         return [o for o, m in self.MT(t).items() if m.model != "direct"]
 
-    @staticmethod
-    def tn(t) -> str:
-        return f"IOY{t[1]}" if t[0] < 0 else f"X{t[0]}Y{t[1]}"
 
     def net(self, t, n: str) -> str:
         return f"{self.tn(t)}/{n}"
 
-    def inside(self, x: int, y: int) -> bool:
-        return 0 <= x < self.C and 0 <= y < self.R
 
     def canon(self, t, n: str) -> str:
         """Array net of tile net n: a driven tile input is the neighbour's output."""
@@ -186,39 +97,6 @@ class Array:
             r = self._cmemo[key] = self._canon(t, n)
         return r
 
-    def _canon(self, t, n: str) -> str:
-        x, y = t
-        if x < 0:   # W_IO: the west-going wires come from tile (0, y)
-            base, idx = _split(n)
-            if base in gen_array.WIO_W:
-                return self.canon((0, y), gen_array.WIO_W[base] + idx)
-            return self.net(t, n)
-        if n in TILE_IN:
-            base, idx = _split(n)
-            dx, dy, src = gen_array.FROM[base]
-            nx, ny = x + dx, y + dy
-            if self.inside(nx, ny):
-                return self.net((nx, ny), src + idx)
-            if self.fabric:
-                k = int(idx[1:-1]) if idx else 0
-                w = self.width.get(base, 1)
-                if base in gen_array.N_TERM and y == 0:
-                    return self.canon(t, f"{gen_array.N_TERM[base]}[{w - 1 - k}]")
-                if base in gen_array.S_TERM and y == self.R - 1:
-                    return self.canon(t, f"{gen_array.S_TERM[base]}[{w - 1 - k}]")
-                if base in gen_array.WIO_E and x == 0:
-                    return self.net((-1, y), gen_array.WIO_E[base] + idx)
-                return "GND"      # south-row Ci (S_term Co0 = GND0), east edge W*END
-        return self.net(t, n)
-
-    def read_inside(self, t, o: str) -> bool:
-        base, _ = _split(o)
-        dx, dy, _dst = READ_BY[base]
-        return self.inside(t[0] - dx, t[1] - dy)
-
-    def port(self, n: str) -> str:
-        """Array port bit of a border net ("X0Y0/N1END[3]" -> "X0Y0_N1END[3]")."""
-        return n.replace("/", "_")
 
     # ------------------------------------------------------------ model
 
@@ -249,7 +127,7 @@ class Array:
                 for n in gt.bel_out:
                     raw.setdefault(cn(n), bel.get(n, ("c", 0)))
                 continue
-            if self.ttype(t) == "W_IO":   # W_IO BELs (configs/wio_model.py)
+            if self.ttype(t) == "W_IO":   # W_IO BELs (model/wio_model.py)
                 from fabtest.model import wio_model as wm
                 for p in "AB":
                     raw[cn(f"{p}_O")] = ("b", cn(f"{p}_O_top"))
@@ -388,71 +266,13 @@ class Array:
 
     # ------------------------------------------------------------ stimulus
 
-    def stim(self, name: str, sels: dict, order: list[int], lut_bits: dict | None = None):
-        """fastsim.Stim for one array config: config write, then the 2 W vectors."""
-        from fabtest.sim.fastsim import fastsim
-        R, C = self.R, self.C
-        ncw = 20 if self.fabric else 0
-        in_names = [f"FrameData_R{y}[{k}]" for y in range(R) for k in range(32)] + \
-                   [f"FrameStrobe_C{x}[{k}]" for x in range(C) for k in range(20)] + \
-                   [f"FrameStrobe_CW[{k}]" for k in range(ncw)] + \
-                   [self.port(n) for n in self.border_in] + ["UserCLK"]
-        nb = len(self.border_in)
-        words = {t: sc.frame_words(sc.config_word(sels[t], (lut_bits or {}).get(t))) for t in self.lut_tiles}
-        if self.fabric:
-            from fabtest.model import wio_model as wm
-            for t in self.io_tiles:
-                words[t] = wm.frame_words(wm.config_word(sels[t], sels[t].get("__cbits", 0)))
-        rows = []
-
-        def row(fd: dict[int, int], strobe: tuple[int, int] | None, inp: int, clk: int = 0):
-            r = np.zeros(len(in_names), dtype=np.uint8)
-            for y, w in fd.items():
-                for k in range(32):
-                    r[y * 32 + k] = (w >> k) & 1
-            if strobe:
-                x, f = strobe
-                r[R * 32 + (C if x < 0 else x) * 20 + f] = 1
-            base = R * 32 + C * 20 + ncw
-            for j in range(nb):
-                r[base + j] = (inp >> j) & 1
-            r[-1] = clk
-            return r
-
-        sample = []
-        fd = {y: 0 for y in range(R)}
-        if self.fabric:   # the W_IO column first (frames 0..3)
-            from fabtest.model import wio_model as wm
-            for f in [f for f in order if f < wm.N_FRAMES]:
-                fd = {y: words[(-1, y)][f] for y in range(R)}
-                rows += [row(fd, None, 0), row(fd, (-1, f), 0), row(fd, None, 0)]
-                sample += [0, 0, 0]
-        for x in range(C):
-            for f in order:
-                fd = {y: words[(x, y)][f] for y in range(R)}
-                rows += [row(fd, None, 0), row(fd, (x, f), 0), row(fd, None, 0)]
-                sample += [0, 0, 0]
-        rows.append(row(fd, None, 0))
-        sample.append(0)
-        for v in self.vecs:
-            rows.append(row(fd, None, v))
-            sample.append(1)
-        vals = self.run(self.ops(sels))
-        expected = ["".join(str((vals[n] >> t) & 1) for n in self.border_out) for t in range(self.NS)]
-        return fastsim.Stim(name, in_names, np.array(rows), np.array(sample, dtype=np.uint8),
-                            [self.port(n) for n in self.border_out], expected)
-
 
 # ---------------------------------------------------------------- grading
 
-def work_items(o: str, k: int) -> set:
-    """Model-level items of code k of LUT4AB mux o (as configs/sm_router.work_items)."""
-    from fabtest.patterns.config import sm_router
-    return sm_router.work_items(o, k)
-
 
 def work_items_m(m, k: int) -> set:
-    """sm_router.work_items for any mux object (LUT4AB or W_IO)."""
+    """Model-level items of code k of a mux (LUT4AB, W_IO or any tile type): the stuck-at
+    and select faults that selecting k and observing the output would show."""
     def cv(s):
         return 0 if s.port.startswith("GND") else 1
     s = m.inputs[k]

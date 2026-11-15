@@ -1,9 +1,9 @@
 """BEL plugin interface (fabtest P3).
 
-A plugin models one kind of BEL for the generic tile kind (configs/tile_model.TileType):
+A plugin models one kind of BEL for the generic tile kind (model/tile_model.TileType):
 
   ops(fab, t, bel)    tile-local output net -> fabric.Array op (two-valued model; codes
-                      b c n x l q m s M F Q of configs/fabric.py)
+                      b c n x l q m s M F Q of model/fabric.py)
   pins(fab, t, bel)   pin groups the router and the sequential model need (RegFile: D, W,
                       A, B, en), or None
 

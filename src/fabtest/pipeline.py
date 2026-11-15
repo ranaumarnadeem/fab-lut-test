@@ -22,13 +22,11 @@ import os
 import random
 import re
 import shutil
-import sys
 import time
 from collections import Counter
 from pathlib import Path
 
 os.environ.setdefault("FASTSIM_OSC", "local")
-from fabtest.paths import REPO as ROOT  # noqa: E402
 
 
 def run_dir(work: Path, name: str | None, create: bool = False) -> Path:
@@ -81,7 +79,7 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
     def save(cs, lg, total, left):
         out.write_text(json.dumps({"configs": prior + cs, "log": plog + lg, "chains": chains,
                                    "items": {"total": total, "shown": total - left}}, indent=0))
-    configs, open_work, total, log, _ = fr.route_all(ff, n_configs, do_polish=False, prior=prior or None,
+    configs, open_work, total, log, _ = fr.route_all(ff, n_configs, prior=prior or None,
                                                      seed=lambda cfg, b: fr.backbone(cfg, b),
                                                      idx0=len(prior), checkpoint=save)
     done = total - sum(len(v) for v in open_work.values())

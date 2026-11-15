@@ -11,7 +11,6 @@ switch-matrix ports, e.g. `N1END[0]`, `J2MID_ABa_BEG[0]`, `LA_I0`, `Ci[0]`.
 from __future__ import annotations
 
 import re
-from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,19 +40,6 @@ class Mux:
     inputs: list[str]   # switch-matrix ports, A0 first
     sel: list[int]      # switch-matrix local config bits, S0 first
     kind: str           # "direct" or the cus_mux module name
-
-    def select_for(self, k: int) -> dict[int, int]:
-        """Local config bit values that make input k drive the output."""
-        if self.kind == "direct":
-            if k != 0:
-                raise ValueError("direct wire has one input")
-            return {}
-        n = len(self.inputs)
-        if n != 1 << len(self.sel):
-            raise SystemExit(f"{self.out}: {n} inputs for {len(self.sel)} select bits")
-        # cus_mux21: S ? A1 : A0; cus_mux41/81/161: binary S[n-1..0] picks A[S]
-        # (models_pack.v: S0 selects within pairs, S1 the pair, S2/S3 above).
-        return {b: (k >> i) & 1 for i, b in enumerate(self.sel)}
 
 
 BLOCK_RE = re.compile(r"//switch matrix multiplexer (\w+) MUX-(\d+)\n(.*?)(?=\n //switch matrix multiplexer |\Z)", re.S)
@@ -106,9 +92,6 @@ class Tile:
     tile_outputs: set[str] = field(default_factory=set)  # tile output port bits
     bels: dict[str, tuple[int, int]] = field(default_factory=dict)  # BEL -> (lo, hi) config bits
 
-    def tile_bits_for(self, sm_bits: dict[int, int]) -> dict[int, int]:
-        return {self.sm_base + b: v for b, v in sm_bits.items()}
-
 
 def parse_tile(tile_dir: Path, name: str) -> Tile:
     tv = (tile_dir / f"{name}.v").read_text()
@@ -148,68 +131,3 @@ def parse_tile(tile_dir: Path, name: str) -> Tile:
 
 
 # ---------------------------------------------------------------- routing
-
-def max_flow_paths(edges: list[tuple[str, str]], sources: list[str], sinks: list[str],
-                   node_cap: dict[str, int] | None = None) -> list[list[str]]:
-    """Vertex-disjoint paths (unit node capacity) from distinct sources to sinks.
-
-    Edmonds-Karp on the split-node graph. Returns one path per sink reached.
-    """
-    INF = 10 ** 9
-    cap: dict[tuple[str, str], int] = {}
-    # dicts as ordered sets: the result must not depend on hash order
-    adj: dict[str, dict[str, None]] = {}
-
-    def add(u: str, v: str, c: int) -> None:
-        cap[(u, v)] = cap.get((u, v), 0) + c
-        cap.setdefault((v, u), 0)
-        adj.setdefault(u, {})[v] = None
-        adj.setdefault(v, {})[u] = None
-
-    nodes = list(dict.fromkeys([u for e in edges for u in e] + list(sources) + list(sinks)))
-    for n in nodes:
-        add(f"{n}#in", f"{n}#out", (node_cap or {}).get(n, 1))
-    for u, v in edges:
-        add(f"{u}#out", f"{v}#in", 1)
-    for s in sources:
-        add("SRC", f"{s}#in", 1)
-    for t in sinks:
-        add(f"{t}#out", "SNK", 1)
-
-    flow = 0
-    while True:
-        prev = {"SRC": None}
-        q = deque(["SRC"])
-        while q and "SNK" not in prev:
-            u = q.popleft()
-            for v in adj.get(u, ()):
-                if v not in prev and cap[(u, v)] > 0:
-                    prev[v] = u
-                    q.append(v)
-        if "SNK" not in prev:
-            break
-        v = "SNK"
-        while prev[v] is not None:
-            u = prev[v]
-            cap[(u, v)] -= 1
-            cap[(v, u)] += 1
-            v = u
-        flow += 1
-
-    # Recover paths from residual capacities on original edges.
-    used = {(u, v) for (u, v) in edges if cap[(f"{u}#out", f"{v}#in")] == 0}
-    succ: dict[str, str] = {}
-    for u, v in used:
-        succ.setdefault(u, v)
-    paths = []
-    for s in sources:
-        if cap[("SRC", f"{s}#in")] != 0:
-            continue
-        path, n = [s], s
-        while n not in sinks:
-            n = succ[n]
-            path.append(n)
-        paths.append(path)
-    if len(paths) != flow:
-        raise SystemExit("path recovery failed")
-    return paths
