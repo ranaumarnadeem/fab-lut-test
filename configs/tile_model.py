@@ -126,7 +126,7 @@ class TileType:
         return v
 
     def frame_words(self, cfg: dict[int, int]) -> list[int]:
-        words = [0] * 20
+        words = [0] * self.n_frames
         for b, val in cfg.items():
             f, d = self.configmem[b]
             if val:

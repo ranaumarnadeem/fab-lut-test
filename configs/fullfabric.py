@@ -338,6 +338,21 @@ class FullFabric(fabric.Array):
 
     # ------------------------------------------------------------ stimulus
 
+    def frame_words(self, sels: dict, lut_bits: dict | None = None) -> dict:
+        """tile -> config word per frame (bit k = FrameData row bit k) of the tiles with
+        config bits. lut_bits: tile -> LUT -> configs.make_bits value."""
+        import wio_model as wm
+        words = {}
+        for t in self.tiles:
+            typ = self.types[t]
+            if typ == "LUT4AB":
+                words[t] = sc.frame_words(sc.config_word(sels[t], (lut_bits or {}).get(t)))
+            elif typ == "W_IO":
+                words[t] = wm.frame_words(wm.config_word(sels[t], sels[t].get("__cbits", 0)))
+            elif self.gen[typ].configmem:
+                words[t] = self.gen[typ].frame_words(self.gen[typ].config_word(sels[t]))
+        return words
+
     def stim(self, name: str, sels: dict, order: list[int], lut_bits: dict | None = None):
         """Config write through FrameData[rows x 32] (row y: bits 32 y ..) and
         FrameStrobe[cols x 20] (column X: bits 20 X ..), column by column, then the
@@ -348,15 +363,7 @@ class FullFabric(fabric.Array):
         in_names = [f"FrameData[{k}]" for k in range(fdw)] + [f"FrameStrobe[{k}]" for k in range(fsw)] + \
                    [self.port(n) for n in self.border_in] + ["UserCLK"]
         nb = len(self.border_in)
-        words = {}
-        for t in self.tiles:
-            typ = self.types[t]
-            if typ == "LUT4AB":
-                words[t] = sc.frame_words(sc.config_word(sels[t], (lut_bits or {}).get(t)))
-            elif typ == "W_IO":
-                words[t] = wm.frame_words(wm.config_word(sels[t], sels[t].get("__cbits", 0)))
-            elif self.gen[typ].configmem:
-                words[t] = self.gen[typ].frame_words(self.gen[typ].config_word(sels[t]))
+        words = self.frame_words(sels, lut_bits)
         rows, sample = [], []
 
         def row(fd, strobe, inp):
