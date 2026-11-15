@@ -175,6 +175,24 @@ class Cfg:
                     stack.append(t)
         return False
 
+    def path_muxes(self, a, b) -> list:
+        prev, stack = {a: None}, [a]
+        while stack:
+            n = stack.pop()
+            if n == b:
+                out = []
+                while n is not None:
+                    i = self.g.mux_of.get(n)
+                    if i is not None and i in self.sel:
+                        out.append(i)
+                    n = prev[n]
+                return out
+            for t in self.succ(n):
+                if t not in prev:
+                    prev[t] = n
+                    stack.append(t)
+        return []
+
 
     def assign(self, i, k) -> bool:
         if i in self.sel:
