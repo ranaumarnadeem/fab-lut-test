@@ -101,14 +101,15 @@ def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chu
     fdir = run / "faultsim"
     fdir.mkdir(parents=True, exist_ok=True)
     stims = _stims(spec, run / "configs.json")
-    nl = fastsim.Netlist(spec.name if hasattr(spec, "name") else "fabtest", work / "synth" / "netlist.json")
+    nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
+    ff_res = fastsim.fault_free(nl, stims, jobs)
     keep = []
     for st in stims:
-        try:
-            fastsim.Engine(nl, [st], W=1, limit_factor=200).run_batch([])
+        err = ff_res[st.name]
+        if err is None:
             keep.append(st)
-        except RuntimeError as e:
-            print(f"  left out {st.name}: {e}", flush=True)
+        else:
+            print(f"  left out {st.name}: {err}", flush=True)
     print(f"fabtest faultsim: {len(keep)} of {len(stims)} configs pass the fault-free check", flush=True)
     (fdir / "configs.json").write_text(json.dumps({"kept": [s.name for s in keep],
                                                    "left_out": [s.name for s in stims if s not in keep]}))

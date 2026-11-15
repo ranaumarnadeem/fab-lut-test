@@ -12,7 +12,9 @@ threaded (ctypes releases the GIL during the kernel call).
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
+import pickle
 import subprocess
 import time
 from pathlib import Path
@@ -42,13 +44,46 @@ def build_lib() -> ctypes.CDLL:
     return lib
 
 
+def _netlist_cache(path: Path) -> Path | None:
+    """Cache file of a netlist JSON: keyed by its path, size and mtime and by the code that
+    builds the arrays (this file, gen_faults.py). FASTSIM_NETLIST_CACHE=0: no cache."""
+    if os.environ.get("FASTSIM_NETLIST_CACHE", "1") == "0" or not path.exists():
+        return None
+    st = path.stat()
+    h = hashlib.sha1(f"{path.resolve()}:{st.st_size}:{st.st_mtime_ns}".encode())
+    for src in (Path(__file__), Path(gen_faults.__file__)):
+        h.update(src.read_bytes())
+    return ROOT / "build" / "cache" / "netlist" / f"{path.stem}-{h.hexdigest()[:16]}.pkl"
+
+
 class Netlist:
     """Flat arrays of one generic-gate netlist for the kernel."""
 
     def __init__(self, name: str, path: Path | str | None = None):
-        """name: synth/netlist_<name>.json, or path: any netlist JSON (fabtest synth)."""
+        """name: build/netlists/netlist_<name>.json, or path: any netlist JSON (fabtest synth).
+        The built arrays are cached (build/cache/netlist, keyed by the JSON and this code):
+        a later load of the same netlist takes seconds instead of a minute."""
+        path = Path(path) if path else ROOT / "build" / "netlists" / f"netlist_{name}.json"
+        cache = _netlist_cache(path)
+        if cache is not None and cache.exists():
+            try:
+                with cache.open("rb") as fh:
+                    self.__dict__.update(pickle.load(fh))
+                self.name = name
+                return
+            except (OSError, EOFError, pickle.UnpicklingError, AttributeError):
+                pass
+        self._build(name, path)
+        if cache is not None:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(f".tmp{os.getpid()}")
+            with tmp.open("wb") as fh:
+                pickle.dump(self.__dict__, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(cache)
+
+    def _build(self, name: str, path: Path) -> None:
         self.name = name
-        _, mod = gen_faults.load_top(Path(path) if path else ROOT / "build" / "netlists" / f"netlist_{name}.json", None)
+        _, mod = gen_faults.load_top(path, None)
         bits = gen_faults.analyse(mod)
         self.net_bit: dict[str, int] = {}
         for b, e in bits.items():
@@ -205,11 +240,14 @@ class Engine:
 
     def run_batch(self, batch: list[tuple[int, int]]) -> list[list[str]]:
         """batch: [(net bit, polarity)] (at most 64 W - 1) -> per config, a status per fault"""
+        return [self.run_one(batch, ci) for ci in range(len(self.prepared))]
+
+    def run_one(self, batch: list[tuple[int, int]], ci: int) -> list[str]:
+        """The batch under config ci only (run_faults runs (batch, config) pairs in parallel)."""
         lib, nl, W = self.lib, self.nl, self.W
         fnet = np.array([b for b, _ in batch] or [0], dtype=np.int32)
         fpol = np.array([p for _, p in batch] or [0], dtype=np.int32)
-        out = []
-        for st, in_nets, out_nets, rows, sample in self.prepared:
+        for st, in_nets, out_nets, rows, sample in self.prepared[ci:ci + 1]:
             res = np.zeros(64 * W, dtype=np.uint8)
             ns = int(sample.sum())
             gold = np.zeros(ns * len(out_nets), dtype=np.uint8)
@@ -232,8 +270,7 @@ class Engine:
                     raise RuntimeError(f"{st.name}: fault-free lane differs from the model at sample {bad}")
                 self.checked.add(st.name)
             v = res[1:len(batch) + 1]
-            out.append(np.where(v & 1, "D", np.where(v & 4, "T", np.where(v & 2, "P", "U"))).tolist())
-        return out
+            return np.where(v & 1, "D", np.where(v & 4, "T", np.where(v & 2, "P", "U"))).tolist()
 
 
 def collapse(nl: Netlist, items: list[tuple[int, int]], observed: set[int]) -> list[int]:
@@ -280,6 +317,21 @@ def collapse(nl: Netlist, items: list[tuple[int, int]], observed: set[int]) -> l
     return reps
 
 
+def fault_free(nl: Netlist, stims: list, jobs: int = os.cpu_count() or 1, limit_factor: int = 200) -> dict:
+    """Fault-free run of every stimulus, in parallel threads: name -> None (the netlist
+    gives the model's expected outputs) or the error message (left out)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(st):
+        try:
+            Engine(nl, [st], W=1, limit_factor=limit_factor).run_batch([])
+            return st.name, None
+        except RuntimeError as e:
+            return st.name, str(e)
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        return dict(ex.map(one, stims))
+
+
 def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = os.cpu_count() or 1,
                W: int = 8, do_collapse: bool = True, nl: Netlist | None = None, quiet: bool = False,
                limit_factor: int = 20):
@@ -298,13 +350,14 @@ def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = 
     eng = Engine(nl, stims, W, limit_factor=limit_factor)
     t0 = time.time()
     from concurrent.futures import ThreadPoolExecutor
+    pairs = [(bi, ci) for bi in range(len(batches)) for ci in range(len(stims))]   # all in parallel
     with ThreadPoolExecutor(max_workers=jobs) as ex:
-        results = list(ex.map(lambda bt: eng.run_batch([items[k] for k in bt]), batches))
+        results = list(ex.map(lambda p: eng.run_one([items[k] for k in batches[p[0]]], p[1]), pairs))
     status: dict[int, dict[str, str]] = {}
     cfgs = [s.name for s in stims]
-    for bt, res in zip(batches, results):
-        for j, k in enumerate(bt):
-            status[k] = {c: res[ci][j] for ci, c in enumerate(cfgs)}
+    for (bi, ci), res in zip(pairs, results):
+        for j, k in enumerate(batches[bi]):
+            status.setdefault(k, {})[cfgs[ci]] = res[j]
     dt = time.time() - t0
     if not quiet:
         print(f"{netlist}: {len(items)} faults ({len(todo)} after collapsing) x {len(cfgs)} configs "

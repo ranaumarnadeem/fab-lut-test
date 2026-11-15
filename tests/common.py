@@ -1,8 +1,12 @@
 """Shared locations of the demo tests (imported by every test: puts src/ on sys.path)."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# the tests check stimulus generation itself: never from the stimulus cache
+os.environ.setdefault("FABTEST_STIM_CACHE", "0")
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "src") not in sys.path:

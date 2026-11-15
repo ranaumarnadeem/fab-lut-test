@@ -287,27 +287,25 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
     idx = only if only is not None else list(range(len(data["configs"])))
     fsj = run / "faultsim" / "configs.json"
     kept = set(json.loads(fsj.read_text())["kept"]) if fsj.exists() and only is None else None
-    nl = None
     manifest = {"spec": str(work / "spec.json"), "fabulous_version": spec.d.get("fabulous_version"),
                 "config_set": str(cfg_path), "frame_order": "canonical" if canonical else "fault-simulated",
                 "configs": {}, "left_out": []}
     runs = []
     ins = outs = None
+    stims = {c: rf.build_stim(ff, data, c) for c in idx}
+    if kept is None:   # no fault simulation of these configs: check them here
+        nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
+        res = fastsim.fault_free(nl, list(stims.values()))
+        kept = {n for n, err in res.items() if err is None}
+        for n, err in res.items():
+            if err is not None:
+                print(f"  {n} left out: {err}", flush=True)
+        del nl
     for c in idx:
         name = f"FF{c:02d}"
         sels, order, luts = rf.config_setup(ff, data, c)
-        st = rf.build_stims(ff, cfg_path, only=[c], quiet=True)[0]
-        if kept is not None:
-            ok = name in kept
-        else:
-            if nl is None:
-                nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
-            try:
-                fastsim.Engine(nl, [st], W=1, limit_factor=200).run_batch([])
-                ok = True
-            except RuntimeError as e:
-                print(f"  {name} left out: {e}", flush=True)
-                ok = False
+        st = stims[c]
+        ok = name in kept
         if not ok:
             manifest["left_out"].append(name)
             continue
