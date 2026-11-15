@@ -1,4 +1,4 @@
-"""fabtest command line (init, info, synth, route, faultsim, report; export follows).
+"""fabtest command line (init, info, synth, route, faultsim, report, export).
 
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
@@ -6,6 +6,8 @@
   python3 -m fabtest route <work dir> [--configs 24] [--chains 2] [--extend]
   python3 -m fabtest faultsim <work dir> [--sample 2000] [--jobs 4] [--configs-from JSON]
   python3 -m fabtest report <work dir>
+  python3 -m fabtest export <work dir> [--configs-from JSON] [--only 0,1] [--canonical]
+  python3 -m fabtest bitgen-check <work dir> [--configs-from JSON] [--only 0,1,2,3]
 """
 from __future__ import annotations
 
@@ -66,6 +68,26 @@ def cmd_report(a) -> None:
     print(pipeline.report(spec.load(w), w), end="")
 
 
+def _only(x):
+    return [int(v) for v in x.split(",")] if x else None
+
+
+def cmd_export(a) -> None:
+    from fabtest import export, spec
+    w = Path(a.work)
+    export.export(spec.load(w), w, Path(a.configs_from) if a.configs_from else None, _only(a.only), a.canonical)
+
+
+def cmd_bitgen_check(a) -> None:
+    import sys
+    from fabtest import export, spec
+    w = Path(a.work)
+    ok = export.bitgen_check(spec.load(w), w, Path(a.configs_from) if a.configs_from else None,
+                             _only(a.only) or [0, 1])
+    print(f"fabtest bitgen-check: {'pass' if ok else 'FAIL'}")
+    sys.exit(0 if ok else 1)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="fabtest")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -93,6 +115,16 @@ def main(argv=None) -> None:
     p.add_argument("--configs-from", help="a config JSON instead of route/configs.json")
     p = sub.add_parser("report", help="coverage from the fault simulation results")
     p.add_argument("work")
+    p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
+    p.add_argument("work")
+    p.add_argument("--configs-from", help="a config JSON instead of route/configs.json")
+    p.add_argument("--only", help="config indices, e.g. 0,1")
+    p.add_argument("--canonical", action="store_true", help="frames 0..F-1 (bit_gen order)")
+    p = sub.add_parser("bitgen-check", help="canonical .bin = FABulous bit_gen of the FASM")
+    p.add_argument("work")
+    p.add_argument("--configs-from")
+    p.add_argument("--only", help="config indices (default 0,1)")
     a = ap.parse_args(argv)
     {"init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
-     "faultsim": cmd_faultsim, "report": cmd_report}[a.cmd](a)
+     "faultsim": cmd_faultsim, "report": cmd_report, "export": cmd_export,
+     "bitgen-check": cmd_bitgen_check}[a.cmd](a)
