@@ -7,3 +7,4 @@ PLAN.md
 results/
 experiments/
 *.egg-info/
+fabtest_results_*.tar.gz
