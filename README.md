@@ -285,18 +285,35 @@ and the hex path, seen only on ReceiveLED.
 ### Other fabrics (validation fabrics F1, F2)
 
 fabtest on two fabrics generated from the demo tiles with other layouts
-(`tests/fabrics/make.py`, FABulous `run_fab`), every fault simulated:
+(`tests/fabrics/make.py`, FABulous `run_fab`), every fault simulated, 24 configs:
 
-| fabric | layout | faults | 24 configs | Icarus replay | bit_gen |
+| fabric | layout | faults | coverage | Icarus replay | bit_gen |
 |---|---|---|---|---|---|
-| F1 | 4 x 5: W_IO, 3 x LUT4AB, RAM_IO, 1 BlockRAM | 71,402 | **82.4%** | 24 / 24 | byte-equal |
-| F2 | 6 x 5: RegFile next to W_IO and at the east edge, no DSP | 159,906 | **49.1%** | 24 / 24 | byte-equal |
+| F1 | 4 x 5: W_IO, 3 x LUT4AB, RAM_IO, 1 BlockRAM | 71,402 | **85.8%** | 24 / 24 | byte-equal |
+| F2 | 6 x 5: RegFile next to W_IO and at the east edge, no DSP | 159,906 | **70.9%** | 24 / 24 | byte-equal |
 
 What the demo did not show: a fabric two rows high bounces its 4-wires between the N and
 S term tiles into undriven rings (F1: 336 nets), and FABulous leaves the west-going inputs
-of the east column open (F2: 192); both are X in the model and the netlist. F2's coverage
-is low because the RegFile pinning (constant and NAND LUTs in the neighbour tiles) takes
-half of its 8 LUT tiles' LUTs out of the observation chains.
+of the east column open (F2: 192); both are X in the model and the netlist.
+
+### Pinning: shared constants, rotated per config
+
+RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
+mux that reaches them has a GND / VCC input) and helper LUTs (NOT pad). Taking them always
+from the same neighbour tiles and letters kept the same LUTs out of the observation chains
+and the same pinned routes in every config (F2: the same 22 LUTs in all 24 configs, 49.1%).
+Now a pin takes a constant of the config within two tiles before a new one is made, and
+the helper tiles, letters and pads rotate with the config: over 24 configs the borrowed
+LUTs cover 64 of F2's 64 LUTs and 610 of the demo's 672.
+
+| | before | after |
+|---|---|---|
+| F2, all faults | 49.1% | **70.9%** |
+| F1, all faults | 82.4% | **85.8%** |
+| demo, 24 configs, random 10k of the 50k sample | 70.7% (v3) | **77.7%** |
+
+On the demo every part gains (LUT4AB 73.1 -> 81.0, DSP 61.4 -> 66.5, RAM_IO 77.2 -> 82.5,
+BlockRAM 54.4 -> 84.2); routing covers 423,530 items in 24 configs (v3: 389,647).
 
 ### Findings about FABulous
 

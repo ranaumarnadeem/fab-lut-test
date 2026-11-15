@@ -1,11 +1,11 @@
 {
  "cfg0": {
-  "gain": 43851,
-  "sels": "edcc636cc881dbb5bb3dcba49ac8f60a3a57b6d8"
+  "gain": 53406,
+  "sels": "aa54bcd2c8092e34c17d3cdb8e2ae072dbd111e1"
  },
  "cfg1": {
-  "gain": 34922,
-  "sels": "178254938aa1fb6677b96dd11dd7c0c2441c6aed"
+  "gain": 37537,
+  "sels": "45e7cb4ed2a63fe64df0a5c5dd5b218a7e9024d0"
  },
  "total": 700708
 }
