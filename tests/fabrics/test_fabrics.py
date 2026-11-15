@@ -39,20 +39,16 @@ def main() -> None:
         if not (proj / "Fabric" / "eFPGA.v").exists():
             subprocess.run([sys.executable, str(HERE / "make.py"), name], check=True)
         w = project.init(proj)
-        steps = [("synth", ["synth", w, "--jobs", "2"])]
+        if run("synth", w, "--jobs", "2").returncode != 0:
+            fails.append(f"{name}: synth")
+            continue
         run_dir = TEST_RUNS / name
         if run_dir.exists():
             shutil.rmtree(run_dir)
-        steps.append(("route", ["route", w, "--run", "_test", "--configs", n_cfg]))
-        for step, cmd in steps:
-            if run(*cmd).returncode != 0:
-                fails.append(f"{name}: {step}")
-        # the run lives in results/<fabric>/_test (fabtest's run layout); move it to scratch
-        res = pipeline.run_dir(w, "_test")
-        run_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(res), run_dir)
+        run_dir.mkdir(parents=True)
         from fabtest import export, spec
         s = spec.load(w)
+        pipeline.route(s, run_dir, n_cfg, 2)
         pipeline.faultsim(s, w, run_dir, sample=sample, chunk=sample, jobs=2)
         kept = (run_dir / "faultsim" / "configs.json").read_text()
         if '"left_out": []' not in kept:
