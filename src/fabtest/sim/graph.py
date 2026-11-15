@@ -43,3 +43,32 @@ def tarjan(nodes: list[str], succ) -> list[list[str]]:
                         break
                 out.append(comp)
     return out
+
+
+class LoopGraph:
+    """Pure-Python twin of native LoopGraph (native/loops.cpp): node i depends on succ[i];
+    set_succ changes one node, first_cycle returns the first loop SCC of tarjan (roots in
+    index order), or []."""
+
+    def __init__(self, succ: list[list[int]]):
+        self.succ = [list(s) for s in succ]
+
+    def set_succ(self, v: int, s: list[int]) -> None:
+        self.succ[v] = list(s)
+
+    def __len__(self) -> int:
+        return len(self.succ)
+
+    def first_cycle(self) -> list[int]:
+        succ = self.succ
+        for comp in tarjan(range(len(succ)), lambda n: succ[n]):
+            if len(comp) > 1 or comp[0] in succ[comp[0]]:
+                return comp
+        return []
+
+
+def loop_graph(succ: list[list[int]]):
+    """The native LoopGraph when it builds, else the Python one."""
+    from fabtest import native
+    mod = native.load()
+    return mod.LoopGraph(succ) if mod is not None else LoopGraph(succ)

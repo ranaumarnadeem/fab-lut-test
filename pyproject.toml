@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Configuration-based manufacturing test generation for FABulous eFPGA fabrics"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = ["numpy"]
+dependencies = ["numpy", "pybind11"]
 
 [project.scripts]
 fabtest = "fabtest.cli:main"
@@ -17,4 +17,4 @@ fabtest = "fabtest.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-fabtest = ["synth/*.ys.in", "synth/*.v", "sim/fastsim/*.c"]
+fabtest = ["synth/*.ys.in", "synth/*.v", "sim/fastsim/*.c", "native/*.cpp"]

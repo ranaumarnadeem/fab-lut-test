@@ -20,6 +20,7 @@ QUICK = {
     "r0": [T / "patterns" / "regress_demo.py", "--level", "R0"],
     "model": [T / "model" / "test_model_demo.py", "--quick"],
     "cli": [T / "cli" / "test_cli.py"],
+    "loops": [T / "patterns" / "test_loop_graph.py", "--moves", "10"],
     "export": [T / "export" / "test_export_demo.py"],
 }
 FULL = {

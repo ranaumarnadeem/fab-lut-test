@@ -235,32 +235,47 @@ class Array:
         """Move one switch-matrix mux per array-level loop to its next input
         (smallest fan-in first, as sm_configs.break_loops) until none is left.
         pinned: (tile, mux) never moved (routes a config depends on, e.g. constants)."""
+        from fabtest.sim.graph import loop_graph
         log, moves = [], {}
+        # the dependency graph of every net, built once; a move changes one mux output's
+        # dependency (the same graph cycles() rebuilds, and the same first loop)
+        d = {n: _deps(op, a) for n, op, a in self.ops(sels, luts)}
+        names = sorted(d)
+        idx = {n: j for j, n in enumerate(names)}
+        lg = loop_graph([[idx[p] for p in d[n] if p in idx] for n in names])
+        muxes = []   # (tile, mux, model, index of its output net)
+        for t in self.tiles:
+            for o in self.real(t):
+                m = self.MT(t)[o]
+                j = idx.get(self.canon(t, m.net))
+                if j is not None:
+                    muxes.append((t, o, m, j))
         for _ in range(max_moves):
-            comps = self.cycles(sels, luts)
-            if not comps:
+            comp = set(lg.first_cycle())
+            if not comp:
                 return log
-            comp = comps[0]
             cand = []
-            for t in self.tiles:
-                for o in self.real(t):
-                    m = self.MT(t)[o]
-                    if self.canon(t, m.net) not in comp or (t, o) in pinned:
-                        continue
-                    s = m.inputs[sels[t][o]]
-                    if s.kind != "const" and self.canon(t, s.net) in comp and moves.get((t, o), 0) < m.fan_in - 1:
-                        cand.append((m.fan_in, self.tn(t), o, t))
+            for t, o, m, j in muxes:
+                if j not in comp or (t, o) in pinned:
+                    continue
+                s = m.inputs[sels[t][o]]
+                if s.kind != "const" and idx.get(self.canon(t, s.net)) in comp and moves.get((t, o), 0) < m.fan_in - 1:
+                    cand.append((m.fan_in, self.tn(t), o, t, j))
             if not cand:
-                raise SystemExit(f"array loop {sorted(comp)[:6]} has no movable mux")
-            _, _, o, t = min(cand)
+                raise SystemExit(f"array loop {sorted(names[j] for j in comp)[:6]} has no movable mux")
+            _, _, o, t, j = min(cand)
             old = sels[t][o]
-            fan = self.MT(t)[o].fan_in
+            m = self.MT(t)[o]
+            fan = m.fan_in
             k = (old + 1) % fan
             while self.forbidden_src(t, o, k) and k != old:   # never move onto an unknown source
                 k = (k + 1) % fan
                 moves[(t, o)] = moves.get((t, o), 0) + 1
             sels[t][o] = k
             moves[(t, o)] = moves.get((t, o), 0) + 1
+            s = m.inputs[k]
+            src = None if s.kind == "const" else idx.get(self.canon(t, s.net))
+            lg.set_succ(j, [] if src is None else [src])
             log.append((self.tn(t), o, old, sels[t][o], len(comp)))
         raise SystemExit("array loop breaking did not converge")
 
