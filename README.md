@@ -282,6 +282,22 @@ value (X here); on silicon that fabric is almost surely broken, but not for ever
 power-up value. Most undetected UART faults are in the checksum, the LED blink counter
 and the hex path, seen only on ReceiveLED.
 
+### Other fabrics (validation fabrics F1, F2)
+
+fabtest on two fabrics generated from the demo tiles with other layouts
+(`tests/fabrics/make.py`, FABulous `run_fab`), every fault simulated:
+
+| fabric | layout | faults | 24 configs | Icarus replay | bit_gen |
+|---|---|---|---|---|---|
+| F1 | 4 x 5: W_IO, 3 x LUT4AB, RAM_IO, 1 BlockRAM | 71,402 | **82.4%** | 24 / 24 | byte-equal |
+| F2 | 6 x 5: RegFile next to W_IO and at the east edge, no DSP | 159,906 | **49.1%** | 24 / 24 | byte-equal |
+
+What the demo did not show: a fabric two rows high bounces its 4-wires between the N and
+S term tiles into undriven rings (F1: 336 nets), and FABulous leaves the west-going inputs
+of the east column open (F2: 192); both are X in the model and the netlist. F2's coverage
+is low because the RegFile pinning (constant and NAND LUTs in the neighbour tiles) takes
+half of its 8 LUT tiles' LUTs out of the observation chains.
+
 ### Findings about FABulous
 
 - config_UART's hex mode never delivers a word: in GET_DATA the nibble state goes back to
