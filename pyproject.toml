@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabtest"
+version = "0.1.0"
+description = "Configuration-based manufacturing test generation for FABulous eFPGA fabrics"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.scripts]
+fabtest = "fabtest.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fabtest = ["model/data/*", "synth/*.ys.in", "synth/*.v", "sim/fastsim/*.c"]

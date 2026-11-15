@@ -305,122 +305,62 @@ and the hex path, seen only on ReceiveLED.
 
 Tested on Ubuntu 24.04 (Linux or WSL).
 
-- FABulous (a fabric generated with `FABulous create-project demo` and
-  `run_FABulous_fabric`; the LUT4AB files used are copied into `rtl/`)
-- Yosys 0.66 (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.12
-- sky130 cell models and Liberty (for the sky130 cell netlists only)
+- FABulous, with the fabric generated (`FABulous -p <project> run "load_fabric; run_fab"`):
+  fabtest reads the project and its generated RTL, it does not run FABulous
+- Yosys (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.10+ with numpy, a C
+  compiler (the fault simulation kernel is built on first use)
 
-`env.sh` sets the tool and PDK paths; by default it expects them in `../ext`. Source it
-first:
+`scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
+on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix
+is the likely route) will live in `package/`.
 
 ```bash
-. ./env.sh
+. scripts/env.sh
 ```
-
-The synthesized netlists and fault lists are checked in, so the simulation steps run
-without a synthesis setup.
 
 ## Running
 
-Cell (one LUT4c), all four netlists:
-
 ```bash
-python3 sim/run.py check
-python3 sim/run.py faultsim generic
-python3 sim/run.py exhaust generic --configs BC1 D0C D1 --suffix _rec
-python3 sim/analyze.py
+scripts/fabtest init /path/to/fabulous_project          # copy + parse -> build/fabtest/<fabric>
+scripts/fabtest info build/fabtest/<fabric> --bels      # tiles, BELs and the plugin of each
+scripts/fabtest synth build/fabtest/<fabric>            # gate-level netlist and fault list
+scripts/fabtest route build/fabtest/<fabric> --run r1 --configs 24
+scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
+scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
+results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
+scripts/fabtest bitgen-check build/fabtest/<fabric> --run r1 --only 0,1,2,3
 ```
 
-Tile, LUT configs:
+`scripts/run_demo.sh` does init, synth, faultsim, export and the Icarus replay on the demo
+fabric with a stored config set. Every run writes its own directory `results/<fabric>/<run>/`
+(`configs.json`, `faultsim/`, `report.txt`, `export/`); `faultsim` and `export` take
+`--configs-from JSON` to start a run from a stored config set. `results/` is local.
+
+Tests (the demo fabric; R1 needs the stored 50k-fault run in `results/`, local):
 
 ```bash
-python3 sim/run_tile.py check
-python3 sim/run_tile.py faultsim tile_generic --jobs 4
-python3 sim/run_conesplit.py run tile_generic --only . --xonly --jobs 4
-python3 sim/tile_analyze.py
-```
-
-Tile, switch-matrix baseline:
-
-```bash
-python3 sim/sm_verify.py
-python3 sim/run_sm.py check
-python3 sim/run_sm.py faultsim tile_generic --jobs 4
-python3 sim/run_sm.py faultsim tile_generic --sequence --jobs 4
-python3 sim/run_conesplit.py run tile_generic --suite sm --only . --xonly --exclude 'FrameStrobe\[[0-9]+\]' --jobs 4
-python3 sim/sm_analyze.py
-```
-
-Tile, routed switch-matrix configs:
-
-```bash
-python3 configs/sm_router.py
-python3 sim/run_sm.py --suite router faultsim tile_generic --jobs 4
-python3 sim/run_sm.py --suite router faultsim tile_generic --sequence --jobs 4
-python3 sim/run_sm.py --suite clocked faultsim tile_generic --jobs 4
-python3 sim/rt_analyze.py
-```
-
-Arrays (the netlists and fault lists are built, not checked in):
-
-```bash
-./synth/build_array.sh 3 3
-python3 configs/fab_router.py 3 3 --no-polish
-python3 sim/run_array.py faultsim 3 3 --suite router --tag _nopolish --jobs 4
-python3 sim/run_array.py faultsim 3 3 --suite merged --tag _nopolish --jobs 4
-python3 sim/run_array.py faultsim 3 3 --suite clocked --jobs 4
-python3 sim/run_array.py faultsim 3 3 --suite lut --jobs 4
-python3 sim/run_array.py report
-python3 sim/array_check.py 3 3 --suite router
-python3 sim/array_cover.py 3 3 --suites merged_nopolish lut router_nopolish clocked
-./synth/build_wio.sh && ./synth/build_fabric.sh 4 3
-python3 configs/fab_router.py 4 3 --fabric --no-polish
-python3 sim/array_powerup.py 3 3
-```
-
-Full demo fabric:
-
-```bash
-./synth/build_fullfabric.sh
-python3 sim/run_fullfabric.py route --configs 12 --chains 2
-python3 sim/run_fullfabric.py faultsim --sample 10000 --jobs 4
-python3 sim/run_fullfabric.py powerup --sample 400
-python3 sim/array_cover.py --matrix reports/fullfabric_chain_sample_matrix.csv
-./synth/build_fabbram.sh
-python3 sim/run_fullfabric.py --bram route --configs 24 --chains 2
-python3 sim/run_fullfabric.py --bram faultsim --sample 10000 --jobs 4
-```
-
-Configuration logic:
-
-```bash
-./synth/build_cfgtop.sh
-python3 sim/run_cfgtop.py faultsim --jobs 3
-```
-
-Results go to `reports/`. Tile fault simulation uses the C kernel in `sim/fastsim`
-by default (about 1 s for all 20,890 `tile_generic_br` faults on the 16 SM configs, 4
-threads) and runs 20 random faults through Icarus as a reference check (`--check N`, 0
-turns it off). `--engine icarus` runs everything through Icarus (about 4.5 hours for
-`tile_generic_br` on 4 cores; checkpointed, resumes after an interruption).
-
-Rebuilding from scratch (needs the full setup):
-
-```bash
-./synth/run_synth.sh
-python3 faults/gen_faults.py synth/netlist_generic.json --out faults/generic.csv
-python3 faults/tile_regions.py tile_generic
+python3 tests/run_all.py             # quick, about 5 min
+python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay
 ```
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `rtl/` | FABulous LUT4AB tile files, cell and tile wrappers, `tile_parse.py` |
-| `synth/` | Yosys scripts and the synthesized netlists (sky130 cells, generic gates, branch variants) |
-| `faults/` | fault list generator, fault lists, tile fault regions |
-| `configs/` | config models: cell (`configs.py`), tile LUT configs (`tile_configs.py`), test routing, switch-matrix model (`sm_model.py`), baseline (`sm_configs.py`) and router (`sm_router.py`, `sm_router.json`), clocked SR / EN configs (`sm_clocked.py`) |
-| `sim/` | runners (`run.py`, `run_tile.py`, `run_sm.py`), exhaustive power-up (`run_conesplit.py`), loop check, analysis |
+| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `bels/` (BEL plugins), `pipeline.py` (route, faultsim, report) |
+| `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`), `data/` |
+| `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`, `sm_router.py`); `faults/`: fault list generator |
+| `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py` |
+| `src/fabtest/synth/` | netlist flow (yosys templates, techmaps) |
+| `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
+| `rtl/` | input RTL: LUT4AB, W_IO and term tile copies, the demo fabric copy, `bram/sram_model.v` |
+| `tb/` | testbench templates (`fabtest_tb.v.in`, `sram_sim.v`) |
+| `tests/` | `run_all.py`; `model/`, `patterns/` (R0 / R1 / R2), `export/`, `cli/`, `rtl/` (Icarus replay), `golden/` (reference hashes and the four config sets) |
+| `scripts/` | `env.sh`, `fabtest`, `run_demo.sh` |
+| `package/` | packaging (placeholder) |
+
+The results above up to the full fabric were produced with research scripts of the earlier
+phases (the script names in those sections); they are retired from the repository.
 
 ## Not covered yet
 

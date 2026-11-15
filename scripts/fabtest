@@ -1,0 +1,4 @@
+#!/bin/bash
+# fabtest from the checkout, without installing: scripts/fabtest <command> ...
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m fabtest "$@"

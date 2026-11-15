@@ -1,0 +1,62 @@
+// fabtest testbench template (filled in by fabtest export): replay of one exported test
+// config on eFPGA_top: load the bitstream through SelfWriteData, apply the vectors, compare
+`timescale 1ps/1ps
+module fabtest_tb;
+localparam NI = @NI@, NO = @NO@, NV_MAX = 4096;
+@DECL@
+always #500000 CLK = ~CLK;
+eFPGA_top dut (
+@CONN@
+);
+reg [7:0] bitstream [0:@HEX_LAST@];
+reg [NI + 2 * NO - 1:0] vec [0:NV_MAX - 1];
+reg [NI + 2 * NO - 1:0] v_all;
+reg [NI - 1:0] v;
+reg [NO - 1:0] e, m;
+wire [NO - 1:0] obs = @OBS@;
+integer i, nv, bad, xbad, nb;
+reg [1023:0] hexf, vecf;
+initial begin
+    if (!$value$plusargs("hex=%s", hexf)) $fatal(1, "+hex= missing");
+    if (!$value$plusargs("vec=%s", vecf)) $fatal(1, "+vec= missing");
+    if (!$value$plusargs("nbytes=%d", nb)) nb = @HEX_BYTES@;
+    if (!$value$plusargs("nv=%d", nv)) $fatal(1, "+nv= missing");
+    $readmemh(hexf, bitstream);
+    $readmemb(vecf, vec);
+    resetn = 1'b0;
+    repeat (10) @(posedge CLK);
+    resetn = 1'b1;
+    repeat (20) @(posedge CLK);
+    for (i = 0; i < nb; i = i + 4) begin
+        SelfWriteData <= {bitstream[i], bitstream[i + 1], bitstream[i + 2], bitstream[i + 3]};
+        repeat (2) @(posedge CLK);
+        SelfWriteStrobe <= 1'b1;
+        @(posedge CLK);
+        SelfWriteStrobe <= 1'b0;
+        repeat (2) @(posedge CLK);
+    end
+    repeat (10) @(posedge CLK);
+    bad = 0; xbad = 0;
+    @(negedge CLK);
+    for (i = 0; i < nv; i = i + 1) begin
+        v_all = vec[i];
+        v = v_all[NI - 1:0];
+        e = v_all[NI + NO - 1:NI];
+        m = v_all[NI + 2 * NO - 1:NI + NO];
+@DRIVE@
+        @(posedge CLK);
+        @(negedge CLK);
+        if (((obs ^ e) & m) !== {NO{1'b0}}) begin
+            if (^((obs ^ e) & m) === 1'bx)
+                xbad = xbad + 1;   // X on a checked output (RTL X pessimism or a real X)
+            else
+                bad = bad + 1;
+            if (bad + xbad <= 10)
+                $display("MISMATCH vector %0d: got %b want %b mask %b", i, obs, e, m);
+        end
+    end
+    if (bad == 0 && xbad == 0) $display("PASS %0d vectors", nv);
+    else $display("FAIL %0d mismatches, %0d with X (of %0d vectors)", bad, xbad, nv);
+    $finish;
+end
+endmodule

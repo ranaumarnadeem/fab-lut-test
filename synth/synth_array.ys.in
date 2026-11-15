@@ -1,7 +1,0 @@
-read_json synth/netlist_tile_generic.json
-read_verilog rtl/array_@A@.v
-hierarchy -top array_top
-flatten -noscopeinfo
-stat
-write_json synth/netlist_array_@A@.json
-write_verilog -noattr -noexpr -nohex -nodec synth/netlist_array_@A@.v

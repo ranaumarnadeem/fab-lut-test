@@ -1,21 +1,9 @@
 build/
 __pycache__/
 *.pyc
-# Internal docs and results: kept locally, not published
+# Local only: notes, run results, experiments
 NOTES.md
 PLAN.md
-reports/
-synth/netlist_array_*
-faults/array_*
-rtl/array_*.v
-synth/netlist_fabric_*
-faults/fabric_*
-rtl/fabric_*.v
-synth/netlist_fullfabric*
-faults/fullfabric*
-rtl/config/
-synth/netlist_cfgtop*
-faults/cfgtop.csv
-rtl/bram/
-synth/netlist_fullbram*
-faults/fullbram.csv
+results/
+experiments/
+*.egg-info/
