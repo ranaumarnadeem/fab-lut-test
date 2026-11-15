@@ -72,6 +72,7 @@ public:
         for (int32_t v : nets) if (v >= 0 && v < n_) cut_[v] = 1;
     }
     void add_cut(int32_t v) { if (v >= 0 && v < n_) cut_[v] = 1; }
+    void del_cut(int32_t v) { if (v >= 0 && v < n_) cut_[v] = 0; }
     void set_open(const std::vector<Code>& codes, const std::vector<int32_t>& muxes) {
         for (auto& c : open_code_) std::fill(c.begin(), c.end(), 0);
         std::fill(open_mux_.begin(), open_mux_.end(), 0);
@@ -246,6 +247,7 @@ void init_router(py::module_& m) {
         .def("pop_obs", &Router::pop_obs)
         .def("set_cut", &Router::set_cut)
         .def("add_cut", &Router::add_cut)
+        .def("del_cut", &Router::del_cut)
         .def("set_open", &Router::set_open)
         .def("last_end", &Router::last_end)
         .def("mark", &Router::mark)

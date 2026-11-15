@@ -146,6 +146,9 @@ class Cfg:
     def add_cut(self, n) -> None:
         self.cut.add(n)
 
+    def del_cut(self, n) -> None:
+        self.cut.discard(n)
+
     def _open_muxes(self, open_work: dict) -> set:
         """Muxes with open work (cached per open_work dict; it does not change during a config)."""
         if getattr(self, "_om_src", None) is not open_work:
@@ -390,6 +393,9 @@ class NativeCfg(Cfg):
     def add_cut(self, n) -> None:
         self._r.add_cut(self._id(n))
 
+    def del_cut(self, n) -> None:
+        self._r.del_cut(self._id(n))
+
     def _mark(self, n):
         self._r.mark(self._id(n))
 
@@ -429,8 +435,7 @@ def sels_of(g: Graph, sel: dict) -> dict:
 
 def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
     cfg = make_cfg(g)
-    if seed is not None:
-        seed(cfg, bias)
+    g.last_seed = seed(cfg, bias) if seed is not None else None
 
     def work(i):
         return sum(len(open_work.get((*i, k), ())) for k in range(MM(i).fan_in))
@@ -554,14 +559,19 @@ def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool
 CHAINS = 1   # --chains: chains per row
 
 
-def lut_near(arr, t, side: int, avoid=()) -> tuple | None:
-    """The LUT4AB tile that serves a RegFile / BRAM at t: the nearest one in the same row on
-    the side (-1 west, +1 east), else the nearest anywhere (fewest hops, then lowest y, x)."""
+def lut_rank(arr, t, side: int, n: int = 3, avoid=()) -> list:
+    """The n LUT4AB tiles nearest to a RegFile / BRAM at t: same row on the side (-1 west,
+    +1 east) first by distance, then any by distance (hops, then y, x)."""
     luts = [u for u in arr.lut_tiles if u not in avoid]
-    same = [u for u in luts if u[1] == t[1] and (u[0] - t[0]) * side > 0]
-    if same:
-        return min(same, key=lambda u: abs(u[0] - t[0]))
-    return min(luts, key=lambda u: (abs(u[0] - t[0]) + abs(u[1] - t[1]), u[1], u[0])) if luts else None
+    same = sorted((u for u in luts if u[1] == t[1] and (u[0] - t[0]) * side > 0), key=lambda u: abs(u[0] - t[0]))
+    rest = sorted((u for u in luts if u not in same), key=lambda u: (abs(u[0] - t[0]) + abs(u[1] - t[1]), u[1], u[0]))
+    return (same + rest)[:n]
+
+
+def lut_near(arr, t, side: int, avoid=()) -> tuple | None:
+    """The LUT4AB tile that serves a RegFile / BRAM at t (lut_rank's first)."""
+    r = lut_rank(arr, t, side, 1, avoid)
+    return r[0] if r else None
 
 
 def pads_near(arr, y: int, names) -> list:
@@ -570,127 +580,159 @@ def pads_near(arr, y: int, names) -> list:
     return [arr.canon((-1, yy), q) for yy in rows for q in names]
 
 
+def _rot(seq, k: int) -> list:
+    seq = list(seq)
+    return seq[k % len(seq):] + seq[:k % len(seq)] if seq else seq
+
+
+CONST_RADIUS = 2   # tiles: a pinned pin takes an existing constant this close before a new one
+
+
+def letters(bias: int) -> list:
+    """LUT letters for constant / helper LUTs in config `bias` (rotated: different LUTs leave
+    the chains in different configs)."""
+    return _rot("HGFEDCBA", 3 * bias)
+
+
+def _undo(cfg, before: set) -> None:
+    for q in set(cfg.sel) - before:
+        del cfg.sel[q]
+
+
+def _free_luts(cfg, tiles, bias):
+    """(tile, letter) not yet used as a constant or helper LUT, in rotation order."""
+    for t in tiles:
+        for x in letters(bias):
+            if x not in cfg.lut_const.get(t, {}):
+                yield t, x
+
+
+def _drop_consts(cfg, n_before: dict) -> None:
+    """Forget the constant LUTs created since n_before (their routes were undone): the LUTs
+    are free again (no constant, not cut)."""
+    for v, n in n_before.items():
+        for t, out in cfg.consts[v][n:]:
+            x = out.rsplit("/", 1)[1][1]
+            cfg.lut_const.get(t, {}).pop(x, None)
+            cfg.del_cut(out)
+        del cfg.consts[v][n:]
+
+
+def route_const(cfg, val: int, targets: list, near, bias: int) -> bool:
+    """Route the constant val (0 / 1) to every net of targets (wires only, one source for
+    all): an existing constant of the config pool (cfg.consts) within CONST_RADIUS of `near`,
+    nearest first, else a new constant LUT in one of the LUT tiles nearest to `near` (tile
+    and letter rotated by bias). A constant 0 is a LUT with table 0 (X inputs are fine: 0 & X
+    = 0); a 1 needs its four inputs from a 0 (with X inputs an all-ones table gives X in the
+    gates)."""
+    arr = cfg.g.arr
+
+    def dist(t):
+        return abs(t[0] - near[0]) + abs(t[1] - near[1])
+
+    def to_all(src):
+        before = set(cfg.sel)
+        if all(route_to(cfg, src, {n}, True) for n in targets):
+            return True
+        _undo(cfg, before)
+        return False
+    for t, net in sorted(cfg.consts[val], key=lambda e: (dist(e[0]), e[1])):
+        if dist(t) <= CONST_RADIUS and to_all(net):
+            return True
+    ranked = _rot(lut_rank(arr, near, -1, 3), bias)
+    for t, x in _free_luts(cfg, ranked, bias):
+        out = arr.canon(t, f"L{x}_O")
+        before = set(cfg.sel)
+        n_before = {v: len(cfg.consts[v]) for v in (0, 1)}
+        if not to_all(out):   # the targets first, before the LUT's own inputs take the wires
+            continue
+        if val == 1 and not route_const(cfg, 0, [arr.canon(t, f"L{x}_I{j}") for j in range(4)], t, bias):
+            _undo(cfg, before)
+            _drop_consts(cfg, n_before)
+            continue
+        cfg.lut_const.setdefault(t, {})[x] = val
+        cfg.add_cut(out)
+        cfg.consts[val].append((t, out))
+        return True
+    return False
+
+
 def backbone(cfg: Cfg, bias: int = 0) -> dict:
     """Observation backbone: per row, the LUTs of the row linked into one chain
     (each LUT output routed into an input of the next LUT, from the east tile to
     the west tile, LA..LH within a tile, rotated by bias), the chain end routed
     to the border (a W_IO pad in a fabric). With XOR LUTs every input of a chain
-    LUT is then observable at the border. Returns a report."""
+    LUT is then observable at the border. RegFiles and BlockRAMs are pinned to defined
+    values first, from constants shared through the config (route_const) and helper LUTs
+    in nearby tiles, both rotated per config. Returns a report."""
     arr = cfg.g.arr
     links = fails = 0
-    # RegFile (full fabric): LUT H of the west neighbour = 1, of the east neighbour = 0,
-    # routed to W_en and to all three address ports (address = config index mod 32):
-    # the RegFile is then a 4-bit register on one word (AD = BD = D one clock later).
-    rf = getattr(arr, "rf_pins", {})
     cfg.lut_const = {}
-    rf_lut = {}
-    for r in rf:
-        w = lut_near(arr, r, -1)
-        e = lut_near(arr, r, +1, avoid={w})
-        if w is not None and e is not None:
-            rf_lut[r] = (w, e)
-            cfg.lut_const.setdefault(e, {})["H"] = 0
+    cfg.consts = {0: [], 1: []}
+    cfg.set_cut(())
+    rf = getattr(arr, "rf_pins", {})
     br = getattr(arr, "bram_pins", {})
-    br_lut = {}
-    for k, bp in br.items():   # BRAM: the LUT4AB tile west of its upper RAM_IO tile = 0
-        (xr, y1), (xr2, y2) = bp["tiles"][0], bp["tiles"][-1]
-        wz = lut_near(arr, (xr, y1), -1)
-        wo = lut_near(arr, (xr2, y2), -1, avoid={wz})
-        if wz is not None and wo is not None:
-            br_lut[k] = (wz, wo)
-            cfg.lut_const.setdefault(wz, {})["H"] = 0
-    cfg.set_cut(arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c)
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
             cfg.assign((t, f"L{x}_EN"), 0)
     sel0 = set(cfg.sel)
-    for r, p in rf.items():
-        if r not in rf_lut:
-            continue
-        w, e = rf_lut[r]
-        zero = arr.canon(e, "LH_O")
-        # the constant 1: a LUT of the west tile whose four inputs all come from the
-        # constant 0 (a LUT is a mux tree on its inputs: with X inputs even an all-ones
-        # table gives X in the gates, 0 & X = 0 keeps the 0)
-        one = None
-        for x in "HGFEDCBA":
-            before = set(cfg.sel)
-            if all(route_to(cfg, zero, {arr.canon(w, f"L{x}_I{j}")}, True) for j in range(4)):
-                cfg.lut_const.setdefault(w, {})[x] = 1
-                cfg.add_cut(arr.canon(w, f"L{x}_O"))
-                one = arr.canon(w, f"L{x}_O")
-                links += 4
-                break
-            for k in set(cfg.sel) - before:
-                del cfg.sel[k]
-        if one is None:
-            fails += 1
-            continue
-        if route_to(cfg, one, {p["en"]}, True):
+    # RegFile: W_en = 1, address bit 0 / 1 = pad on W, NOT pad on A and B (a NAND helper LUT:
+    # 4 words per config, a read never returns a word before it is written once), bits 2..4
+    # the config index on all three ports, data from pads: the RegFile is a 4-bit register
+    # on a few words (AD = BD = D one clock later)
+    for ri, (r, p) in enumerate(rf.items()):
+        if not arr.lut_tiles:
+            break
+        if route_const(cfg, 1, [p["en"]], r, bias + ri):
             links += 1
         else:
             fails += 1
-        pads = pads_near(arr, r[1], ("A_O", "B_O"))
-        # address bits 0, 1: write from a pad, both reads from NOT that pad (a LUT of the
-        # west tile as a NAND, table 0x7FFF: the pad on whichever input routes, the other
-        # three from the constant 1 of the same tile): 4 words per config, a read never
-        # returns a word before it is written once (the read misses the word this cycle
-        # writes); bits 2..4 the same constant on W, A, B (config index): 8 configs, 32 words
-        def const_bit(i, want):
-            for val in (want, 1 - want):
-                before = set(cfg.sel)
-                if all(route_to(cfg, one if val else zero, {p[port][i]}, True) for port in "WAB"):
-                    return True
-                for q in set(cfg.sel) - before:
-                    del cfg.sel[q]
-            return False
+        pads = _rot(pads_near(arr, r[1], ("A_O", "B_O")), bias + ri)
+        helpers_t = _rot(lut_rank(arr, r, -1, 3), bias + ri)
         for i in range(2):
             got = False
             for src in pads[2 * i:2 * i + 6]:
-                for x in "HGFEDCBA":
-                    if x in cfg.lut_const.get(w, {}):
-                        continue
+                for t, x in _free_luts(cfg, helpers_t, bias + ri):
                     before = set(cfg.sel)
+                    n_before = {v: len(cfg.consts[v]) for v in (0, 1)}
                     if route_to(cfg, src, {p["W"][i]}, True):
                         kin = next((kk for kk in range(4)
-                                    if route_to(cfg, src, {arr.canon(w, f"L{x}_I{kk}")}, True)), None)
+                                    if route_to(cfg, src, {arr.canon(t, f"L{x}_I{kk}")}, True)), None)
                         if kin is not None and \
-                                all(route_to(cfg, one, {arr.canon(w, f"L{x}_I{j}")}, True) for j in range(4) if j != kin) and \
-                                all(route_to(cfg, arr.canon(w, f"L{x}_O"), {p[port][i]}, True) for port in "AB"):
-                            cfg.lut_const.setdefault(w, {})[x] = {"tt": 0x7FFF}   # NAND: NOT pad
+                                all(route_const(cfg, 1, [arr.canon(t, f"L{x}_I{j}")], t, bias + ri)
+                                    for j in range(4) if j != kin) and \
+                                all(route_to(cfg, arr.canon(t, f"L{x}_O"), {p[port][i]}, True) for port in "AB"):
+                            cfg.lut_const.setdefault(t, {})[x] = {"tt": 0x7FFF}   # NAND: NOT pad
                             got = True
                             break
-                    for q in set(cfg.sel) - before:
-                        del cfg.sel[q]
+                    _undo(cfg, before)
+                    _drop_consts(cfg, n_before)
                 if got:
                     break
             if got:
                 links += 7
-            elif const_bit(i, 0):
+            elif route_const(cfg, 0, [p[port][i] for port in "WAB"], r, bias + ri):
                 links += 3
             else:
                 fails += 1
         adr = bias % 8
         for i in range(2, 5):
-            if const_bit(i, (adr >> (i - 2)) & 1):
+            want = (adr >> (i - 2)) & 1
+            if any(route_const(cfg, v, [p[port][i] for port in "WAB"], r, bias + ri) for v in (want, 1 - want)):
                 links += 3
             else:
                 fails += 1
-        # write data from pad inputs (defined every vector, no loop through a RegFile):
-        # the A / B pads of this row and the next ones
-        for k in range(4):
-            for src in pads[k:] + pads[:k]:
-                if route_to(cfg, src, {p["D"][k]}, True):
-                    links += 1
-                    break
+        for k in range(4):   # write data from pad inputs (defined every vector)
+            if any(route_to(cfg, src, {p["D"][k]}, True) for src in _rot(pads, k)):
+                links += 1
             else:
                 fails += 1
-    # BRAM (fabric with BlockRAMs): C0..C5 = 0 (32-bit ports, write enable wr_data[20], no
-    # output register), read address = write address (a constant, config index mod 256),
-    # write data a constant pattern, wr_data[20] (write enable) from a pad: on the cycles
-    # without a write the read gives the stored word (a read during a write of the same
-    # address is undefined for the macro: X)
+    # BRAM: C by the config index (write width C0 C1: 32 / 16 / 8 bit, read width C2 C3,
+    # output register C5; C4 = 1: write every cycle, else wr_data[20] from a pad), the 0s
+    # from the muxes' GND inputs; read address = write address (a constant, config index
+    # mod 256) except bit 0: write p, read NOT p (a 0x5555 helper LUT): the read never meets
+    # the write of the same cycle (undefined for the macro: X); write data from two pads
     def gnd(net):   # select the GND input of the mux driving net (RAM_IO OutPass inputs A, C)
         i = cfg.g.mux_of.get(net)
         if i is None:
@@ -699,33 +741,13 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         return bool(ks) and cfg.assign(i, ks[0])
 
     for k, bp in br.items():
-        if k not in br_lut:
-            continue
-        wz, wo = br_lut[k]
-        y1 = bp["tiles"][0][1]
-        zero = arr.canon(wz, "LH_O")
-        # C by the config index: write width (C0 C1: 32 / 16 / 8 bit), read width (C2 C3),
-        # output register (C5); C4 = 1 (write every cycle) where it routes, else C4 = 0 and
-        # the write enable wr_data[20] from a pad. The 1s are routed from the constant 1 first
-        # (before its own inputs take the wires), the 0s are the muxes' GND inputs; a 1 that
-        # does not route becomes 0 (another mode)
+        if not arr.lut_tiles:
+            break
+        (xr, y1) = bp["tiles"][0]
+        near = (xr, y1)
         wrc, rdc, c5 = bias % 3, (bias // 3) % 3, (bias // 9) % 2
         want = [wrc >> 1, wrc & 1, rdc >> 1, rdc & 1, 1, c5]
-        one, cval = None, [0] * 6
-        for x in "HGFEDCBA":
-            if x in cfg.lut_const.get(wo, {}):
-                continue
-            before = set(cfg.sel)
-            o_ = arr.canon(wo, f"L{x}_O")
-            got = {j_: route_to(cfg, o_, {bp["C"][j_]}, True) for j_ in range(6) if want[j_]}
-            if all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j_}")}, True) for j_ in range(4)):
-                cfg.lut_const.setdefault(wo, {})[x] = 1
-                cfg.add_cut(o_)
-                one = o_
-                cval = [int(got.get(j_, False)) for j_ in range(6)]
-                break
-            for q in set(cfg.sel) - before:
-                del cfg.sel[q]
+        cval = [int(bool(want[j_]) and route_const(cfg, 1, [bp["C"][j_]], near, bias + k)) for j_ in range(6)]
         if not all(gnd(n) for j_, n in enumerate(bp["C"]) if not cval[j_]):
             fails += 1
             continue
@@ -733,40 +755,29 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         we_pad = not cval[4]
         adr = bias % 128
         for i in range(1, 8):   # address bits 1..7: the same constant on both ports
-            ok = False
-            if (adr >> (i - 1)) & 1 and one is not None:
-                before = set(cfg.sel)
-                ok = all(route_to(cfg, one, {bp[port][i]}, True) for port in ("wr_addr", "rd_addr"))
-                if not ok:
-                    for q in set(cfg.sel) - before:
-                        del cfg.sel[q]
+            ok = (adr >> (i - 1)) & 1 and route_const(cfg, 1, [bp[port][i] for port in ("wr_addr", "rd_addr")],
+                                                      near, bias + k)
             if ok or (gnd(bp["wr_addr"][i]) and gnd(bp["rd_addr"][i])):
                 links += 2
             else:
                 fails += 1
-        # address bit 0: write p, read NOT p (a LUT of the constant-1 tile, table 0x5555 on
-        # I0 = p, I1..I3 = 0): the read never meets the write of the same cycle (undefined
-        # for the macro) and returns the other word, written on an earlier cycle; the data
-        # (all 32 bits) from a second pad
-        pads = pads_near(arr, y1, ("A_O", "B_O"))
-        sh = (bias + k) % len(pads)
-        pads = pads[sh:] + pads[:sh]
+        pads = _rot(pads_near(arr, y1, ("A_O", "B_O")), bias + k)
+        helpers_t = _rot(lut_rank(arr, near, -1, 3), bias + k)
         cap, cfg.g.max_pop = cfg.g.max_pop, 60000   # pads are far from the BRAM column
         pa = None
         for src in pads:
-            for x in "HGFEDCBA":
-                if x in cfg.lut_const.get(wo, {}):
-                    continue
+            for t, x in _free_luts(cfg, helpers_t, bias + k):
                 before = set(cfg.sel)
+                n_before = {v: len(cfg.consts[v]) for v in (0, 1)}
                 if route_to(cfg, src, {bp["wr_addr"][0]}, True) and \
-                        route_to(cfg, src, {arr.canon(wo, f"L{x}_I0")}, True) and \
-                        all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j_}")}, True) for j_ in (1, 2, 3)) and \
-                        route_to(cfg, arr.canon(wo, f"L{x}_O"), {bp["rd_addr"][0]}, True):
-                    cfg.lut_const.setdefault(wo, {})[x] = {"tt": 0x5555}
+                        route_to(cfg, src, {arr.canon(t, f"L{x}_I0")}, True) and \
+                        route_const(cfg, 0, [arr.canon(t, f"L{x}_I{j_}") for j_ in (1, 2, 3)], t, bias + k) and \
+                        route_to(cfg, arr.canon(t, f"L{x}_O"), {bp["rd_addr"][0]}, True):
+                    cfg.lut_const.setdefault(t, {})[x] = {"tt": 0x5555}
                     pa = src
                     break
-                for q in set(cfg.sel) - before:
-                    del cfg.sel[q]
+                _undo(cfg, before)
+                _drop_consts(cfg, n_before)
             if pa is not None:
                 break
         if pa is None:
@@ -787,8 +798,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                     fails += len(got) - sum(got)
                     used.add(src)
                     break
-                for q in set(cfg.sel) - before:
-                    del cfg.sel[q]
+                _undo(cfg, before)
             else:
                 fails += len(bits)
         if we_pad:
@@ -818,7 +828,8 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             ok = route_to(cfg, end, {pads[si % len(pads)]}) if pads and CHAINS > 1 else route_net(cfg, end)
             if not ok:
                 fails += 1
-    return {"links": links, "fails": fails}
+    n_const = sum(len(c) for c in cfg.lut_const.values())
+    return {"links": links, "fails": fails, "const_luts": n_const}
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
@@ -868,7 +879,7 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
             continue
         stall = 0
         configs.append({arr.tn(t): s for t, s in sels.items()})
-        log.append({"gain": gained, "open": left})
+        log.append({"gain": gained, "open": left, **({"backbone": g.last_seed} if getattr(g, "last_seed", None) else {})})
         if checkpoint is not None:
             checkpoint(configs, log, total, left)
     return configs, open_work, total, log, hist
