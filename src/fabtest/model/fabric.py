@@ -106,7 +106,7 @@ class Array:
         Ci, FF, reset value), default XOR, I0 = I[0], combinational. ops: b copy,
         c const, x XOR-4 LUT, l LUT (args: index nets I0mux..I3, table), q
         registered LUT output (the flop), m carry majority, s MUX8LUT 2:1."""
-        raw = {"GND": ("c", 0)} if self.fabric else {}
+        raw = {"GND": ("c", 0), "XU": ("c", 0)} if self.fabric else {}
         for t in self.tiles:
             sel = sels[t]
             cn = lambda n, t=t: self.canon(t, n)  # noqa: E731
@@ -432,12 +432,15 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
     flop_of = {arr.canon(t, f"L{x}_O"): (t, x) for t in arr.lut_tiles for x in sc.LUTS}
     regs = [(t, x) for t in arr.lut_tiles for x in sc.LUTS if luts[t][x][2]]
 
+    unknown = set(getattr(arr, "rings", ())) | {"XU"}   # undriven nets: X in the gates
+
     def comb(inp: int):
         v = {}
         for j, n in enumerate(arr.border_in):
             b = (inp >> j) & 1
             v[n] = (b, 1 - b)
         v["GND"] = (0, 1)
+        v["XU"] = (1, 1)
         mc: dict = {}
         for n, op, a in ops:
             if op == "n":
@@ -462,7 +465,7 @@ def seq_expected(arr: Array, sels: dict, plan: dict, vecs: list[int],
             elif op == "b":
                 v[n] = v[a]
             elif op == "c":
-                v[n] = (1, 0) if a else (0, 1)
+                v[n] = (1, 1) if n in unknown else (1, 0) if a else (0, 1)
             elif op == "l":
                 v[n] = _lut3(a[1], [v[p] for p in a[0]])
             elif op == "x":

@@ -180,6 +180,7 @@ class FullFabric(fabric.Array):
         self.invec = {n: sum(((self.vecs[s] >> j) & 1) << s for s in range(self.NS))
                       for j, n in enumerate(self.border_in)}
         self.invec["GND"] = 0
+        self.invec["XU"] = 0   # undriven inputs (tainted: never selected, never observed)
         self.rf_pins = self._rf_pins()
         self.bram_pins = self._bram_pins() if bram else {}
         self.tainted = self._taint()
@@ -271,6 +272,8 @@ class FullFabric(fabric.Array):
         seeds = [self.canon(t, n) for t in self.other_tiles for n in self.gen[self.types[t]].bel_out
                  if n not in self.bel_ops(t)]
         seeds += [self.canon(t, q) for t in self.io_tiles for q in wm.Q_SOURCES]
+        if any(v is None for v in self.in_drv.values()):
+            seeds.append("XU")
         # rings of fixed wires (no mux, no BEL: e.g. the 4-wires of a fabric only two rows
         # high, bounced between its N and S term tiles): undriven in the RTL, X
         from fabtest.sim.graph import tarjan
@@ -325,7 +328,7 @@ class FullFabric(fabric.Array):
         if (t, n) in self.in_drv:
             d = self.in_drv[(t, n)]
             if d is None:
-                return "GND"     # undriven input (fabric edge)
+                return "XU"      # undriven input (left open at the fabric edge): unknown
             if d[0] == "PAD":
                 return f"PAD/{d[1]}"
             return self.canon(d[0], d[1])

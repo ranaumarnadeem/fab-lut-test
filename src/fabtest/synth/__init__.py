@@ -134,11 +134,21 @@ def _wrapper(spec, out: Path, have_src: set[str]) -> str | None:
 
 
 def _fix_names(m: dict, macros: list) -> tuple[int, int]:
-    """xgen cells -> undriven outputs on input XSRC[]; one name per net bit."""
+    """xgen cells and undriven read nets -> input XSRC[] (X sources, no faults); one name
+    per net bit."""
     x = [c for c, v in m["cells"].items() if v["type"] == "xgen"]
     xbits = [m["cells"][c]["connections"]["y"][0] for c in x]
     for c in x:
         del m["cells"][c]
+    # undriven nets that are read (inputs FABulous leaves open at the fabric edge, e.g. the
+    # west-going wires into the east column): X sources as well
+    driven = {b for p in m["ports"].values() if p["direction"] == "input" for b in p["bits"] if isinstance(b, int)}
+    read = set()
+    for c in m["cells"].values():
+        for p, d in c.get("port_directions", {}).items():
+            bits = {b for b in c["connections"][p] if isinstance(b, int)}
+            (driven if d == "output" else read).update(bits)
+    xbits += sorted(read - driven - set(xbits))
     if xbits:
         old = m["ports"].get("XSRC", {}).get("bits", [])
         m["ports"]["XSRC"] = {"direction": "input", "bits": old + xbits}
