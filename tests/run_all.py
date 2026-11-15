@@ -5,10 +5,12 @@
                                       + bit_gen (2 configs); about 10 min
   python3 tests/run_all.py --full     also R1 (stored 50k-fault run, local), model on all 96
                                       configs, Icarus replay (2 configs), R2 routing; about 1 h
-  python3 tests/run_all.py NAME ...   only these (names below)
+  python3 tests/run_all.py NAME ...   only these (names below; r2_python: R2 without the
+                                      native module)
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -29,6 +31,9 @@ FULL = {
     "rtl": [T / "rtl" / "test_icarus_replay.py"],
     "r2": [T / "patterns" / "regress_demo.py", "--level", "R2"],
 }
+EXTRA = {   # by name only: R2 on the pure-Python router (FABTEST_NATIVE=0), about 25 min
+    "r2_python": ["--env", "FABTEST_NATIVE=0", T / "patterns" / "regress_demo.py", "--level", "R2"],
+}
 
 
 def main() -> None:
@@ -36,12 +41,17 @@ def main() -> None:
     tests = dict(QUICK, **FULL) if "--full" in args else dict(QUICK)
     names = [a for a in args if not a.startswith("--")]
     if names:
-        allt = dict(QUICK, **FULL)
+        allt = dict(QUICK, **FULL, **EXTRA)
         tests = {n: allt[n] for n in names}
     res = {}
     for n, cmd in tests.items():
         t0 = time.time()
-        r = subprocess.run([sys.executable, *map(str, cmd)], capture_output=True, text=True)
+        env = dict(os.environ)
+        if cmd and cmd[0] == "--env":
+            k, v = cmd[1].split("=", 1)
+            env[k] = v
+            cmd = cmd[2:]
+        r = subprocess.run([sys.executable, *map(str, cmd)], capture_output=True, text=True, env=env)
         last = (r.stdout.strip().splitlines() or [""])[-1]
         res[n] = r.returncode == 0
         print(f"{'PASS' if res[n] else 'FAIL'} {n:10s} {time.time() - t0:6.0f} s  {last}", flush=True)

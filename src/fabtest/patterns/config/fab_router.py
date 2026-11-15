@@ -116,12 +116,35 @@ class Graph:
 
 
 class Cfg:
+    """One config under construction (pure Python; NativeCfg keeps the same state in C++).
+    sel: (tile, mux) -> code, in the order the router chose them; obs: the observed nets
+    (push_obs / pop_obs: a point-to-point route observes only its targets); cut: the
+    constant LUT outputs (no input -> output edge)."""
+
     def __init__(self, g: Graph):
         self.g = g
         self.sel: dict = {}
         self.obs = set(g.out_nets)
+        self.cut: set = set()
+        self._obs_saved: list = []
         for n in list(g.out_nets):
             self._mark(n)
+
+    def obs_has(self, n) -> bool:
+        return n in self.obs
+
+    def push_obs(self, targets) -> None:
+        self._obs_saved.append(self.obs)
+        self.obs = set(targets)
+
+    def pop_obs(self) -> None:
+        self.obs = self._obs_saved.pop()
+
+    def set_cut(self, nets) -> None:
+        self.cut = set(nets)
+
+    def add_cut(self, n) -> None:
+        self.cut.add(n)
 
     def _open_muxes(self, open_work: dict) -> set:
         """Muxes with open work (cached per open_work dict; it does not change during a config)."""
@@ -131,7 +154,7 @@ class Cfg:
         return self._om
 
     def succ(self, n):
-        cut = getattr(self, "cut", ())
+        cut = self.cut
         for t, _c in self.g.fixed.get(n, ()):
             if t not in cut:   # constant LUT outputs: no input -> output edge
                 yield t
@@ -140,7 +163,7 @@ class Cfg:
                 yield self.g.net_of[i]
 
     def preds(self, n):
-        out = [] if n in getattr(self, "cut", ()) else list(self.g.fixed_pred.get(n, ()))
+        out = [] if n in self.cut else list(self.g.fixed_pred.get(n, ()))
         i = self.g.mux_of.get(n)
         if i is not None and i in self.sel:
             s = self.g.src(i, self.sel[i])
@@ -203,7 +226,7 @@ class Cfg:
         if s is not None and self.reaches(self.g.net_of[i], s):
             return False
         self.sel[i] = k
-        if self.g.net_of[i] in self.obs:
+        if self.obs_has(self.g.net_of[i]):
             self._mark(self.g.net_of[i])
         return True
 
@@ -258,7 +281,7 @@ class Cfg:
         if not direct and not self.assign(i, k):
             return False
         start = self.g.net_of[i]
-        if start in self.obs:
+        if self.obs_has(start):
             return True
         banned: set = set()
         for _ in range(6):
@@ -282,6 +305,121 @@ class Cfg:
         return False
 
 
+class _Sel(dict):
+    """cfg.sel of a NativeCfg: a dict (the router's order) that writes through to C++."""
+    __slots__ = ("_r", "_pos")
+
+    def __init__(self, r, pos):
+        super().__init__()
+        self._r, self._pos = r, pos
+
+    def __setitem__(self, i, k):
+        dict.__setitem__(self, i, k)
+        self._r.sel_set(self._pos[i], k)
+
+    def __delitem__(self, i):
+        dict.__delitem__(self, i)
+        self._r.sel_del(self._pos[i])
+
+    def _no(self, *a, **k):
+        raise NotImplementedError("cfg.sel: only [] =, del and reads")
+    pop = popitem = update = setdefault = clear = _no
+
+
+def _native_router(g: Graph):
+    """The C++ Router of a Graph (built once; NativeCfg resets it per config), or None."""
+    if getattr(g, "_native", False) is not False:
+        return g._native
+    from fabtest import native
+    mod = native.load()
+    g._native = None
+    if mod is None:
+        return None
+    nets = set(g.fixed) | {b for lst in g.fixed.values() for b, _c in lst} | set(g.fixed_pred)
+    nets |= set(g.readers) | set(g.net_of.values()) | set(g.out_nets)
+    src = []
+    for i in g.ids:
+        row = [g.src(i, k) for k in range(MM(i).fan_in)]
+        nets |= {s for s in row if s is not None}
+        src.append(row)
+    names = sorted(nets)
+    nid = {n: j for j, n in enumerate(names)}
+    mux_of = [-1] * len(names)
+    for n, i in g.mux_of.items():
+        mux_of[nid[n]] = g.pos[i]
+    g._native = mod.Router(
+        len(names),
+        [[(nid[b], c) for b, c in g.fixed.get(n, ())] for n in names],
+        [[nid[a] for a in g.fixed_pred.get(n, ())] for n in names],
+        [[(g.pos[i], k) for i, k in g.readers.get(n, ())] for n in names],
+        [nid[g.net_of[i]] for i in g.ids], mux_of,
+        [[-1 if s is None else nid[s] for s in row] for row in src])
+    g._nnames, g._nid = names, nid
+    return g._native
+
+
+class NativeCfg(Cfg):
+    """Cfg with its search state and searches in C++ (native/router.cpp); same results."""
+
+    def __init__(self, g: Graph, r):
+        self.g, self._r = g, r
+        r.reset()
+        self._nid, self._names = g._nid, g._nnames
+        self.sel = _Sel(r, g.pos)
+        self._open_src = None
+        for n in g.out_nets:
+            r.obs_add(self._nid[n])
+        for n in list(g.out_nets):
+            self._mark(n)
+
+    def _id(self, n) -> int:
+        return self._nid.get(n, -1)
+
+    def obs_has(self, n) -> bool:
+        return self._r.obs_has(self._id(n))
+
+    def push_obs(self, targets) -> None:
+        self._r.push_obs([j for j in map(self._id, targets) if j >= 0])
+
+    def pop_obs(self) -> None:
+        self._r.pop_obs()
+
+    def set_cut(self, nets) -> None:
+        self._r.set_cut([j for j in map(self._id, nets) if j >= 0])
+
+    def add_cut(self, n) -> None:
+        self._r.add_cut(self._id(n))
+
+    def _mark(self, n):
+        self._r.mark(self._id(n))
+
+    def reaches(self, a, b) -> bool:
+        return self._r.reaches(self._id(a), self._id(b), self.g.max_reach or 0)
+
+    def path_muxes(self, a, b) -> list:
+        return [self.g.ids[m] for m in self._r.path_muxes(self._id(a), self._id(b))]
+
+    def route(self, start, open_work, banned):
+        if open_work and self._open_src is not open_work:
+            self._open_src = open_work
+            pos = self.g.pos
+            self._r.set_open([(pos[(t, o)], k) for (t, o, k), v in open_work.items() if v],
+                             [pos[i] for i in self._open_muxes(open_work)])
+        pos = self.g.pos
+        res = self._r.route(self._id(start), [(pos[i], k) for i, k in banned], self.g.max_pop or 0,
+                            bool(getattr(self, "wires_only", False)), bool(open_work))
+        if res is None:
+            return None
+        self.last_end = self._names[self._r.last_end()]
+        return [(self.g.ids[m], k) for m, k in res]
+
+
+def make_cfg(g: Graph) -> Cfg:
+    """NativeCfg when the native module builds (FABTEST_NATIVE=0: always Python), else Cfg."""
+    r = _native_router(g)
+    return Cfg(g) if r is None else NativeCfg(g, r)
+
+
 def sels_of(g: Graph, sel: dict) -> dict:
     out = {t: {} for t in g.arr.tiles}
     for (t, o), k in sel.items():
@@ -290,7 +428,7 @@ def sels_of(g: Graph, sel: dict) -> dict:
 
 
 def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
-    cfg = Cfg(g)
+    cfg = make_cfg(g)
     if seed is not None:
         seed(cfg, bias)
 
@@ -360,7 +498,7 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
 
 def route_net(cfg: Cfg, net: str) -> bool:
     """Route a net (not a mux output) to an observed net."""
-    if net in cfg.obs:
+    if cfg.obs_has(net):
         return True
     banned: set = set()
     for _ in range(6):
@@ -385,8 +523,7 @@ def route_net(cfg: Cfg, net: str) -> bool:
 def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool:
     """Route net `src` to one of the nets in `targets` (point to point) through free muxes;
     wires_only: never through a BEL (the target gets exactly the value of src)."""
-    save = cfg.obs
-    cfg.obs = set(targets)
+    cfg.push_obs(targets)
     cfg.wires_only = wires_only
     try:
         banned: set = set()
@@ -407,10 +544,10 @@ def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool
                 del cfg.sel[i2]
         return False
     finally:
-        cfg.obs = save
+        cfg.pop_obs()
         cfg.wires_only = False
         end = getattr(cfg, "last_end", None)
-        if end in cfg.obs:
+        if end is not None and cfg.obs_has(end):
             cfg._mark(end)
 
 
@@ -462,7 +599,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         if wz is not None and wo is not None:
             br_lut[k] = (wz, wo)
             cfg.lut_const.setdefault(wz, {})["H"] = 0
-    cfg.cut = {arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c}
+    cfg.set_cut(arr.canon(t, f"L{x}_O") for t, c in cfg.lut_const.items() for x in c)
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
             cfg.assign((t, f"L{x}_SR"), 0)
@@ -481,7 +618,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             before = set(cfg.sel)
             if all(route_to(cfg, zero, {arr.canon(w, f"L{x}_I{j}")}, True) for j in range(4)):
                 cfg.lut_const.setdefault(w, {})[x] = 1
-                cfg.cut.add(arr.canon(w, f"L{x}_O"))
+                cfg.add_cut(arr.canon(w, f"L{x}_O"))
                 one = arr.canon(w, f"L{x}_O")
                 links += 4
                 break
@@ -583,7 +720,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             got = {j_: route_to(cfg, o_, {bp["C"][j_]}, True) for j_ in range(6) if want[j_]}
             if all(route_to(cfg, zero, {arr.canon(wo, f"L{x}_I{j_}")}, True) for j_ in range(4)):
                 cfg.lut_const.setdefault(wo, {})[x] = 1
-                cfg.cut.add(o_)
+                cfg.add_cut(o_)
                 one = o_
                 cval = [int(got.get(j_, False)) for j_ in range(6)]
                 break

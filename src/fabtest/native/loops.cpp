@@ -92,8 +92,11 @@ private:
     int32_t n_ = 0;
 };
 
+void init_router(py::module_& m);
+
 PYBIND11_MODULE(_native, m) {
     m.doc() = "fabtest native routines (loop check, router search)";
+    init_router(m);
     py::class_<LoopGraph>(m, "LoopGraph")
         .def(py::init<const std::vector<std::vector<int32_t>>&>())
         .def("set_succ", &LoopGraph::set_succ)

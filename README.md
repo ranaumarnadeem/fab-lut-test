@@ -307,8 +307,9 @@ Tested on Ubuntu 24.04 (Linux or WSL).
 
 - FABulous, with the fabric generated (`FABulous -p <project> run "load_fabric; run_fab"`):
   fabtest reads the project and its generated RTL, it does not run FABulous
-- Yosys (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.10+ with numpy, a C
-  compiler (the fault simulation kernel is built on first use)
+- Yosys (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.10+ with numpy and
+  pybind11, a C / C++ compiler (the fault simulation kernel and the native router are
+  built on first use)
 
 `scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
 on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix
@@ -354,6 +355,7 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 | `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py` |
 | `src/fabtest/synth/` | netlist flow (yosys templates, techmaps) |
 | `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
+| `src/fabtest/native/` | C++ (pybind11) router search and loop check, built on first use into `build/native` (`FABTEST_NATIVE=0`: the Python path, same results) |
 | `rtl/` | input RTL: LUT4AB, W_IO and term tile copies, the demo fabric copy, `bram/sram_model.v` |
 | `tb/` | testbench templates (`fabtest_tb.v.in`, `sram_sim.v`) |
 | `tests/` | `run_all.py`; `model/`, `patterns/` (R0 / R1 / R2), `export/`, `cli/`, `rtl/` (Icarus replay), `golden/` (reference hashes and the four config sets) |
