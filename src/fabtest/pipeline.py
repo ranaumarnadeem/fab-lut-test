@@ -10,6 +10,7 @@ results/<fabric>/<run>/:
                             T / U not); a chunk that exists is not run again
   faultsim/configs.json     configs that pass the fault-free check, and those left out
   report.txt                coverage, all configs and per tile type, 95% interval
+  powerup.json              power-up check of a sample of the X-only faults (powerup)
   export/                   the test program (fabtest/export)
 """
 from __future__ import annotations
@@ -181,3 +182,44 @@ def report(spec, run: Path) -> str:
     text = "\n".join(L) + "\n"
     (run / "report.txt").write_text(text)
     return text
+
+
+def powerup(spec, work: Path, run: Path, sample: int = 400, seed: int = 2, max_u: int = 10,
+            jobs: int = 4) -> str:
+    """X-only faults of the run (P in some config, D in none): a seeded sample of them through
+    the power-up check (sim/fastsim/powerup.py). A fault detected for every power-up state of
+    the elements the test never writes counts as detected; faults whose undecided set U is
+    larger than max_u are not decided (RegFile memory never written: U in the thousands)."""
+    import gc
+    from fabtest.sim.fastsim import fastsim, powerup as pu_mod
+    fdir = run / "faultsim"
+    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    if not rows:
+        raise SystemExit("fabtest powerup: no fault simulation results (run faultsim first)")
+    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    xo = [r for r in rows if "D" not in {r[c] for c in cfgs} and "P" in {r[c] for c in cfgs}]
+    n, det = len(rows), sum(any(r[c] == "D" for c in cfgs) for r in rows)
+    pick = sorted(random.Random(seed).sample(range(len(xo)), min(sample, len(xo))))
+    want = {xo[j]["id"] for j in pick}
+    faults = {f["id"]: f for f in csv.DictReader((work / "synth" / "faults.csv").open()) if f["id"] in want}
+    fl = [faults[xo[j]["id"]] for j in pick]
+    p_cfgs = {k: [c for c in cfgs if xo[j][c] == "P"] for k, j in enumerate(pick)}
+    netlist = work / "synth" / "netlist.json"
+    nl = fastsim.Netlist("fabtest", netlist)   # first: the JSON parse is the memory peak
+    gc.collect()
+    stims = {st.name: st for st in _stims(spec, run / "configs.json")}
+    stims = [stims[c] for c in cfgs]
+    t0 = time.time()
+    pu = pu_mod.PowerUp(nl, stims, netlist, limit_factor=200)
+    v = pu.decide(fl, p_cfgs, jobs=jobs, max_u=max_u, leave_x=True) if fl else {}
+    from collections import Counter as _C
+    cnt = _C(r["verdict"] for r in v.values())
+    p = cnt["detected"] / len(fl) if fl else 0.0
+    ci = 1.96 * math.sqrt(p * (1 - p) / len(fl)) if fl else 0.0
+    (run / "powerup.json").write_text(json.dumps(
+        {"sample": len(fl), "x_only": len(xo), "faults": n, "detected_strict": det, "verdicts": dict(cnt),
+         "faults_decided": [{"id": fl[k]["id"], "path": fl[k]["path"], "polarity": fl[k]["polarity"], **r}
+                            for k, r in v.items()]}, indent=0))
+    return (f"fabtest powerup: {len(fl)} of {len(xo)} X-only faults sampled, {dict(cnt)}, {time.time() - t0:.0f} s\n"
+            f"  detected for every power-up state: {100 * p:.1f}% +- {100 * ci:.1f} of the X-only faults; "
+            f"estimated coverage {100 * (det + p * len(xo)) / n:.2f}% (strict {100 * det / n:.2f}%)\n")

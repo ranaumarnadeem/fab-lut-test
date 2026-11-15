@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Power-up check (cone-split) on the fast kernel (Phase 11).
+"""Power-up check (cone-split) on the fast kernel (`fabtest powerup`).
 
-The same decision as sim/run_conesplit.py + sim/conesplit.py (Icarus), with
-the fast kernel's lanes doing the runs:
+Decides the X-only faults of a fault simulation (detected only if the storage elements
+the test never writes power up in some states), with the fast kernel's lanes doing the
+runs (sim/conesplit.py: cones and groups):
 
 - X-only fault: P in some config, D in none (strict matrix).
 - U = storage elements the faulty run never definitely writes (latch enable
@@ -24,8 +25,6 @@ the fast kernel's lanes doing the runs:
 Every (fault, group, assignment) is one lane; lanes of many faults share a
 kernel call (run_config_x: per-lane deposits, per-output mismatch masks,
 definitely-written masks, end-of-run storage values).
-
-  python3 sim/fastsim/powerup.py check <netlist> --suite sm|rt|ck   compare with reports/<n>_<tag>_conesplit.json
 """
 from __future__ import annotations
 

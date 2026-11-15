@@ -1,4 +1,4 @@
-"""fabtest command line (init, info, synth, route, faultsim, report, export).
+"""fabtest command line (init, info, synth, route, faultsim, report, powerup, export).
 
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
@@ -6,6 +6,7 @@
   python3 -m fabtest route <work dir> [--run NAME] [--configs 24] [--chains 2] [--extend]
   python3 -m fabtest faultsim <work dir> [--run NAME] [--configs-from JSON] [--sample 2000] [--jobs 4]
   python3 -m fabtest report <work dir> [--run NAME]
+  python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
 
@@ -85,6 +86,12 @@ def _only(x):
     return [int(v) for v in x.split(",")] if x else None
 
 
+def cmd_powerup(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    print(pipeline.powerup(spec.load(w), w, _run(a), a.sample, a.seed, a.max_u, a.jobs), end="")
+
+
 def cmd_export(a) -> None:
     from fabtest import export, pipeline, spec
     w = Path(a.work)
@@ -134,6 +141,13 @@ def main(argv=None) -> None:
     p = sub.add_parser("report", help="coverage from the fault simulation results")
     p.add_argument("work")
     p.add_argument("--run", help="run name (default: the latest run)")
+    p = sub.add_parser("powerup", help="power-up check of the X-only faults of a run")
+    p.add_argument("work")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--sample", type=int, default=400)
+    p.add_argument("--seed", type=int, default=2)
+    p.add_argument("--max-u", type=int, default=10, help="largest undecided set enumerated")
+    p.add_argument("--jobs", type=int, default=4)
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
@@ -147,5 +161,5 @@ def main(argv=None) -> None:
     p.add_argument("--only", help="config indices (default 0,1)")
     a = ap.parse_args(argv)
     {"init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
-     "faultsim": cmd_faultsim, "report": cmd_report, "export": cmd_export,
+     "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "export": cmd_export,
      "bitgen-check": cmd_bitgen_check}[a.cmd](a)
