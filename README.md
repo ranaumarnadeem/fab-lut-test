@@ -300,8 +300,9 @@ threads):
 `fabtest export --port-test` (and `fabtest run --cfgtest`) writes the port test as tester
 vectors (`export/ports/ports.vec`: per clock the config inputs and the expected status
 pins, the fabric pads not driven) and a testbench that replays it on eFPGA_top and then
-runs the final config's fabric vectors without another load: on F1, 190,106 port cycles
-and the vectors of FF00 pass in Icarus.
+runs the final config's fabric vectors without another load. Icarus on FABulous's RTL:
+the demo (96-config set, 530,162 port cycles, 4.7 min) and F1 (190,106) pass, the status
+pins on every cycle and the vectors of FF00 after the load through bitbang and the UART.
 
 The research version of Phase 13 (two loads, every phase observed) gave 60.5% of 8,606
 faults; with its Yosys (0.33) fabtest builds the same netlist and fault list, and the
