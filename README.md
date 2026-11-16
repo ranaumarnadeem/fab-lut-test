@@ -264,28 +264,35 @@ reach **89.1% +- 0.3** on the same 50,000 faults (every fault in every config,
 
 ### Configuration logic
 
-`synth/build_cfgtop.sh` builds FABulous's configuration path from `eFPGA_top.v` unchanged
-(eFPGA_Config with config_UART, bitbang and ConfigFSM, the 14 frame data registers, the 10
-frame selects) with a latch model of the fabric's ConfigMem in place of the fabric (one
-latch per used config bit, 69,482; no faults on the model): 4,874 gates, 8,606 faults.
-`sim/run_cfgtop.py` loads two test configs through SelfWriteData, two frames through
-bitbang and one through the UART (binary and hex), each with data different from what
-the memory holds; a fault is detected when a config bit, ComActive or ReceiveLED (also
-every 16 clocks) differs. 1.04M steps, 29 min on 3 threads:
+`fabtest cfgtest <work>` (or `fabtest run --cfgtest`) tests the logic that loads the
+fabric, from any FABulous project: eFPGA_top without the fabric and the macros, unchanged
+otherwise (eFPGA_Config with ConfigFSM, config_UART and bitbang, the frame data registers,
+the frame selects), with a latch model of the fabric's ConfigMem in place of the fabric
+(one latch per used config bit, from the tile types' ConfigMem; no faults on the model).
+Two configs of the run are loaded through SelfWriteData, then frames with other data
+through bitbang, the UART in binary and in hex; a fault is detected when a config bit,
+ComActive or ReceiveLED (also every 16 clocks) differs. A phase the fault-free netlist
+does not deliver is found by the tool and expected as not written (on FABulous's
+config_UART: hex mode). Every fault simulated:
 
-| part | faults | strict | config bits left unwritten |
-|---|---|---|---|
-| bitbang | 1356 | 91.3% | 10 |
-| Frame_Data_Reg | 776 | 66.2% | 234 |
-| config_UART | 3680 | 57.4% | 20 |
-| Frame_Select | 126 | 53.2% | 55 |
-| ConfigFSM | 618 | 38.8% | 277 |
-| all | 8606 | **60.5%** | 919 |
+| part | demo faults | detected |
+|---|---|---|
+| config_UART | 5010 | 56.2% |
+| bitbang | 1422 | 91.9% |
+| Frame_Data_Reg | 996 | 94.5% |
+| Frame_Select | 838 | 49.1% |
+| ConfigFSM | 732 | 38.0% |
+| eFPGA_Config | 684 | 60.5% |
+| all | 9758 | **63.6%** (D 6206, X only 1080) |
 
-A fault that stops frames from being written leaves those config bits at their power-up
-value (X here); on silicon that fabric is almost surely broken, but not for every
-power-up value. Most undetected UART faults are in the checksum, the LED blink counter
-and the hex path, seen only on ReceiveLED.
+1.04M steps, 22 min on 4 threads. The research version of Phase 13 gave 60.5% of 8,606
+faults; with its Yosys (0.33) fabtest builds the same netlist and the same 8,606 faults,
+and their statuses match except 17 that the old kernel also detects when they are
+simulated in a small batch. It had left out 1,218 faults: the frame data and frame select
+register outputs, whose nets carry the model's port names. A fault that stops frames from
+being written leaves those config bits at their power-up value (X here); on silicon that
+fabric is almost surely broken, but not for every power-up value. Most undetected UART
+faults are in the checksum, the LED blink counter and the hex path.
 
 ### Other fabrics (validation fabrics F1, F2)
 
@@ -368,7 +375,8 @@ One command, from a FABulous project with the generated fabric RTL to the test p
 scripts/fabtest run /path/to/fabulous_project --suite demo     # -> results/<fabric>/demo/
 ```
 
-It does init, synth, route (the suite's passes), faultsim, report and export, each step
+It does init, synth, route (the suite's passes), faultsim, report and export (and with
+`--cfgtest` the configuration-logic test), each step
 skipped when its inputs did not change: a second run, or one after a crash, only does what
 is left (faultsim resumes per chunk). `--configs N` cuts the suite to N configs,
 `--sample N` sets the sampled faults (0: every fault), `--run NAME` the run directory.
@@ -412,6 +420,7 @@ scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
+scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault
 scripts/fabtest bitgen-check build/fabtest/<fabric> --run r1 --only 0,1,2,3
 ```
 
@@ -431,7 +440,7 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 
 | path | contents |
 |---|---|
-| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report) |
+| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report), `cfgtest/` (configuration-logic test) |
 | `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
 | `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
 | `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py` |
