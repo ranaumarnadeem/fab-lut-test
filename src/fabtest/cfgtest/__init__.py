@@ -167,7 +167,13 @@ def build(spec, work: Path, force: bool = False) -> Path:
     if r.returncode != 0:
         raise SystemExit(f"fabtest cfgtest: gen_faults failed:\n{r.stdout[-2000:]}{r.stderr[-2000:]}")
     rows = list(csv.DictReader(allf.open()))
-    keep = [x for x in rows if not x["path"].startswith(("Inst_cfg_mem.", "CM["))]
+    # the cfg_mem latches (the cells driving CM) are the model: their faults are left out;
+    # by driver, not by name (FrameData and FrameSelect nets also carry cfg_mem port names)
+    m = json.loads((out / "netlist.json").read_text())["modules"]["cfg_top"]
+    cm = set(m["ports"]["CM"]["bits"])
+    model = {n for n, c in m["cells"].items() for pin, sig in c["connections"].items()
+             if c["port_directions"][pin] == "output" and cm & set(sig)}
+    keep = [x for x in rows if x["driver"].rsplit(".", 1)[0] not in model and not x["driver"].startswith("port:CM")]
     for k, x in enumerate(keep):
         x["id"] = k
     with (out / "faults.csv").open("w", newline="") as fh:
@@ -175,8 +181,8 @@ def build(spec, work: Path, force: bool = False) -> Path:
         w.writeheader()
         w.writerows(keep)
     allf.unlink()
-    ncell = len(json.loads((out / "netlist.json").read_text())["modules"]["cfg_top"]["cells"])
-    print(f"fabtest cfgtest: {ncell} cells, {len(keep)} faults (of {len(rows)}; cfg_mem left out)", flush=True)
+    print(f"fabtest cfgtest: {len(m['cells']) - len(model)} cells and {len(model)} cfg_mem latches, "
+          f"{len(keep)} faults (of {len(rows)}; cfg_mem left out)", flush=True)
     project.stamp(work, "cfgtest", h)
     return out
 
@@ -355,15 +361,58 @@ def up_to_date(work: Path, run_dir: Path, configs=None) -> bool:
     return f.exists() and (run_dir / "cfgtest" / "report.txt").exists() and \
         json.loads(f.read_text()).get("key") == inputs_key(work, run_dir, configs)
 
-def part_map(netlist: Path) -> dict:
-    """cell name -> source module (file stem of its src attribute)."""
+def _depths(srcs: list[Path]) -> dict:
+    """Module file stem -> depth below cfg_top (instances found in the sources)."""
+    mods = {}
+    for f in srcs:
+        for m in re.findall(r"^\s*module\s+(\w+)", f.read_text(), flags=re.M):
+            mods[m] = f
+    depth = {"cfg_top": 0}
+    todo = ["cfg_top"]
+    while todo:
+        m = todo.pop(0)
+        text = mods[m].read_text() if m in mods else ""
+        body = text[text.find(f"module {m}"):]
+        for c in mods:
+            if c not in depth and re.search(rf"^\s*{re.escape(c)}\b\s*(#|\w)", body, flags=re.M):
+                depth[c] = depth[m] + 1
+                todo.append(c)
+    return {mods[m].stem if m != "cfg_mem" else "cfg_mem": d for m, d in depth.items() if m in mods}
+
+
+def part_map(netlist: Path, srcs: list[Path]) -> dict:
+    """cell name -> RTL module it comes from: the deepest source module in its src
+    attribute; cells only the techmaps name (decomposed muxes) take the module of the
+    cells they connect to."""
+    depth = _depths(srcs)
     m = json.loads(netlist.read_text())["modules"]["cfg_top"]
-    out = {}
+    part, drv, sinks = {}, {}, {}
     for name, c in m["cells"].items():
-        src = c.get("attributes", {}).get("src", "")
-        f = re.match(r"([^|:]+)", src)
-        out[name] = Path(f.group(1)).stem if f else "?"
-    return out
+        files = {Path(re.sub(r":[\d.\-]+$", "", x)).stem for x in c.get("attributes", {}).get("src", "").split("|") if x}
+        known = [f for f in files if f in depth]
+        if known:
+            part[name] = max(known, key=lambda f: depth[f])
+        for pin, sig in c["connections"].items():
+            for b in sig:
+                if isinstance(b, int):
+                    if c["port_directions"][pin] == "output":
+                        drv[b] = name
+                    else:
+                        sinks.setdefault(b, []).append(name)
+    nbr: dict = {}
+    for b, d in drv.items():
+        for s_ in sinks.get(b, ()):
+            nbr.setdefault(d, []).append(s_)
+            nbr.setdefault(s_, []).append(d)
+    left = [n for n in m["cells"] if n not in part]
+    while left:
+        got = {n: next((part[x] for x in nbr.get(n, ()) if x in part), None) for n in left}
+        got = {n: p for n, p in got.items() if p}
+        if not got:
+            break
+        part.update(got)
+        left = [n for n in left if n not in part]
+    return part
 
 
 def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs: int = 4) -> str:
@@ -402,7 +451,7 @@ def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs:
     def any_(s):
         v = set(s.values())
         return "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
-    parts = part_map(d / "netlist.json")
+    parts = part_map(d / "netlist.json", sources(spec, d / "cfg_top.v"))
     tot, det, pos = Counter(), Counter(), Counter()
     with (out / "matrix.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
