@@ -2,11 +2,11 @@
 """All fabtest tests on the demo fabric.
 
   python3 tests/run_all.py            quick: spec, R0, model (2 configs per set), CLI, export
-                                      + bit_gen (2 configs); about 10 min
+                                      + bit_gen (2 configs), cfgtest (build, fault-free); about 12 min
   python3 tests/run_all.py --full     also R1 (stored 50k-fault run, local), model on all 96
                                       configs, Icarus replay (2 configs), R2 routing, the
                                       validation fabrics F1 / F2 end to end, `fabtest run` on the
-                                      demo (2 configs); about 1.5 h
+                                      demo (2 configs), cfgtest on every fault; about 2 h
   python3 tests/run_all.py NAME ...   only these (names below; r2_python: R2 without the
                                       native module)
 """
@@ -26,6 +26,7 @@ QUICK = {
     "cli": [T / "cli" / "test_cli.py"],
     "loops": [T / "patterns" / "test_loop_graph.py", "--moves", "10"],
     "export": [T / "export" / "test_export_demo.py"],
+    "cfgtest": [T / "cfgtest" / "test_cfgtest_demo.py"],
 }
 FULL = {
     "r1": [T / "patterns" / "regress_demo.py", "--level", "R1"],
@@ -34,6 +35,7 @@ FULL = {
     "r2": [T / "patterns" / "regress_demo.py", "--level", "R2"],
     "fabrics": [T / "fabrics" / "test_fabrics.py"],
     "run": [T / "cli" / "test_run.py"],
+    "cfgtest_full": [T / "cfgtest" / "test_cfgtest_demo.py", "--full"],
 }
 EXTRA = {   # by name only: R2 on the pure-Python router (FABTEST_NATIVE=0), about 25 min
     "r2_python": ["--env", "FABTEST_NATIVE=0", T / "patterns" / "regress_demo.py", "--level", "R2"],

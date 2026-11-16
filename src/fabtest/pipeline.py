@@ -308,7 +308,7 @@ def route_suite(spec, run: Path, passes: list) -> Path:
 
 def run_all(proj: Path, suite_name: str = "default", run_name: str | None = None, n_configs: int | None = None,
             sample: int | None = None, jobs: int | None = None, do_export: bool = True,
-            work: Path | None = None) -> Path:
+            work: Path | None = None, do_cfgtest: bool = False) -> Path:
     """fabtest run: init, synth, route (the suite), faultsim, report, export; a step whose
     inputs did not change is skipped, so a second run (or one after a crash) only does
     what is left."""
@@ -333,5 +333,11 @@ def run_all(proj: Path, suite_name: str = "default", run_name: str | None = None
             print(f"fabtest export: {run / 'export'} is up to date")
         else:
             export.export(s, w, run)
+    if do_cfgtest:
+        from fabtest import cfgtest
+        if cfgtest.up_to_date(w, run):
+            print(f"fabtest cfgtest: {run / 'cfgtest'} is up to date")
+        else:
+            print(cfgtest.run(s, w, run, None, jobs), end="")
     print(f"fabtest run: done in {time.time() - t0:.0f} s -> {run}")
     return run

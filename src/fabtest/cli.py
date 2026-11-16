@@ -1,7 +1,8 @@
-"""fabtest command line (run, init, info, synth, route, faultsim, report, powerup, export).
+"""fabtest command line (run, init, info, synth, route, faultsim, report, powerup, export,
+cfgtest, bitgen-check).
 
   python3 -m fabtest run <FABulous project> [--suite default] [--run NAME] [--configs N]
-                         [--sample N] [--jobs N] [--no-export] [--work DIR]
+                         [--sample N] [--jobs N] [--no-export] [--cfgtest] [--work DIR]
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
   python3 -m fabtest synth <work dir> [--jobs 4]
@@ -10,6 +11,7 @@
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical]
+  python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
 
 <work dir>: build/fabtest/<fabric> (fabtest init); every run writes results/<fabric>/<run>/.
@@ -24,7 +26,7 @@ from pathlib import Path
 def cmd_run(a) -> None:
     from fabtest import pipeline
     pipeline.run_all(Path(a.project), a.suite, a.run, a.configs, a.sample, a.jobs, not a.no_export,
-                     Path(a.work) if a.work else None)
+                     Path(a.work) if a.work else None, a.cfgtest)
 
 
 def cmd_init(a) -> None:
@@ -111,6 +113,21 @@ def cmd_export(a) -> None:
     export.export(spec.load(w), w, run, _only(a.only), a.canonical)
 
 
+def cmd_cfgtest(a) -> None:
+    from fabtest import cfgtest, spec
+    w = Path(a.work)
+    s = spec.load(w)
+    if a.build_only:
+        cfgtest.build(s, w, a.force)
+        return
+    if a.force:
+        cfgtest.build(s, w, True)
+    from fabtest import pipeline
+    run = _run(a, create=bool(a.configs_from))
+    pipeline.use_configs(run, None)
+    print(cfgtest.run(s, w, run, _only(a.only), a.jobs or s.cfg["faultsim"]["jobs"]), end="")
+
+
 def cmd_bitgen_check(a) -> None:
     import sys
     from fabtest import export, spec
@@ -133,6 +150,7 @@ def main(argv=None) -> None:
     p.add_argument("--sample", type=int, help="sampled faults, 0: every fault (default: fabtest.toml)")
     p.add_argument("--jobs", type=int, help="threads (default: fabtest.toml)")
     p.add_argument("--no-export", action="store_true")
+    p.add_argument("--cfgtest", action="store_true", help="also the configuration-logic test")
     p.add_argument("--work", help="work dir (default: build/fabtest/<project>-<hash>)")
     p = sub.add_parser("init", help="copy and parse a FABulous project")
     p.add_argument("project")
@@ -175,6 +193,14 @@ def main(argv=None) -> None:
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--only", help="config indices, e.g. 0,1")
     p.add_argument("--canonical", action="store_true", help="frames 0..F-1 (bit_gen order)")
+    p = sub.add_parser("cfgtest", help="configuration logic (ConfigFSM, frame registers, UART, bitbang)")
+    p.add_argument("work")
+    p.add_argument("--configs-from", help="a stored config set: copied into the run")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--only", help="the configs loaded (default: the first two kept)")
+    p.add_argument("--jobs", type=int)
+    p.add_argument("--build-only", action="store_true", help="the netlist and fault list only")
+    p.add_argument("--force", action="store_true", help="rebuild the netlist")
     p = sub.add_parser("bitgen-check", help="canonical .bin = FABulous bit_gen of the FASM")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a config JSON (default: the run's configs)")
@@ -183,4 +209,4 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "export": cmd_export,
-     "bitgen-check": cmd_bitgen_check}[a.cmd](a)
+     "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)
