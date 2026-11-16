@@ -4,8 +4,9 @@
   python3 tests/fabrics/test_fabrics.py [F1 F2] [--configs 4] [--sample 2000] [--replay 2]
 
 Per fabric (build/fabrics/<name>, made by make.py when missing): init, synth, route,
-fault-free check + sampled fault simulation, export (with the port test), bit_gen byte equality and the
-Icarus replay of the first configs. Scratch runs in build/tests/<name>. Slow (synth: minutes).
+fault-free check + sampled fault simulation, export (with the port test), bit_gen byte
+equality and the Icarus replay of the first configs and the port test. Scratch runs in
+build/tests/<name>. Slow (synth: minutes).
 """
 from __future__ import annotations
 

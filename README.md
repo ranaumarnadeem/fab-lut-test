@@ -269,30 +269,46 @@ fabric, from any FABulous project: eFPGA_top without the fabric and the macros, 
 otherwise (eFPGA_Config with ConfigFSM, config_UART and bitbang, the frame data registers,
 the frame selects), with a latch model of the fabric's ConfigMem in place of the fabric
 (one latch per used config bit, from the tile types' ConfigMem; no faults on the model).
-Two configs of the run are loaded through SelfWriteData, then frames with other data
-through bitbang, the UART in binary and in hex; a fault is detected when a config bit,
-ComActive or ReceiveLED (also every 16 clocks) differs. A phase the fault-free netlist
-does not deliver is found by the tool and expected as not written (on FABulous's
-config_UART: hex mode). Every fault simulated:
+The test is the one the exported program runs:
 
-| part | demo faults | detected |
-|---|---|---|
-| config_UART | 5010 | 56.2% |
-| bitbang | 1422 | 91.9% |
-| Frame_Data_Reg | 996 | 94.5% |
-| Frame_Select | 838 | 49.1% |
-| ConfigFSM | 732 | 38.0% |
-| eFPGA_Config | 684 | 60.5% |
-| all | 9758 | **63.6%** (D 6206, X only 1080) |
+- **fill:** test configs loaded in full through SelfWriteData, each checked on silicon by
+  its own fabric vectors (here: every config bit after the load);
+- **port test:** reset, the final config through SelfWriteData with the port frames
+  inverted, those frames with their true data through bitbang (4 frames) and the UART
+  (1 frame), then the final config's fabric vectors (here: every config bit at the end).
+  The frames are the ones with the most used config bits, from different columns.
 
-1.04M steps, 22 min on 4 threads. The research version of Phase 13 gave 60.5% of 8,606
-faults; with its Yosys (0.33) fabtest builds the same netlist and the same 8,606 faults,
-and their statuses match except 17 that the old kernel also detects when they are
-simulated in a small batch. It had left out 1,218 faults: the frame data and frame select
-register outputs, whose nets carry the model's port names. A fault that stops frames from
-being written leaves those config bits at their power-up value (X here); on silicon that
-fabric is almost surely broken, but not for every power-up value. Most undetected UART
-faults are in the checksum, the LED blink counter and the hex path.
+The status pins ComActive / ReceiveLED are compared every 16 clocks. A port the
+fault-free netlist does not deliver is found by the tool and reported; its frames are
+still sent with other data and must not arrive (FABulous's config_UART hex mode never
+completes a byte). **Power-up:** a config bit a faulty load never writes keeps its
+power-up value; when its fault-free value is 0 after one load and 1 after another, the
+fault is seen for either value (the fill configs make 89% of the demo's bits take both).
+Every fault simulated (RegFile set: final FF00, fill FF01..FF04; 1.09M steps, 52 min on 4
+threads):
+
+| part | demo faults | strict | + power-up |
+|---|---|---|---|
+| config_UART | 5010 | 55.5% | 55.7% |
+| bitbang | 1422 | 91.9% | 92.7% |
+| Frame_Data_Reg | 996 | 94.5% | 94.5% |
+| Frame_Select | 838 | 49.0% | 95.7% |
+| ConfigFSM | 732 | 38.0% | 81.4% |
+| eFPGA_Config | 684 | 59.6% | 92.5% |
+| all | 9758 | 63.2% | **73.3%** |
+
+`fabtest export --port-test` (and `fabtest run --cfgtest`) writes the port test as tester
+vectors (`export/ports/ports.vec`: per clock the config inputs and the expected status
+pins, the fabric pads not driven) and a testbench that replays it on eFPGA_top and then
+runs the final config's fabric vectors without another load: on F1, 190,106 port cycles
+and the vectors of FF00 pass in Icarus.
+
+The research version of Phase 13 (two loads, every phase observed) gave 60.5% of 8,606
+faults; with its Yosys (0.33) fabtest builds the same netlist and fault list, and the
+statuses match except 17 that the old kernel also detects in a small batch. It had left
+out 1,218 faults (the frame data and frame select register outputs, whose nets carry the
+model's port names). Most faults left are in config_UART: the checksum, the LED blink
+counter and the hex path.
 
 ### Other fabrics (validation fabrics F1, F2)
 
@@ -421,6 +437,7 @@ scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault
+scripts/fabtest export build/fabtest/<fabric> --run r1 --port-test   # + the config-port test
 scripts/fabtest bitgen-check build/fabtest/<fabric> --run r1 --only 0,1,2,3
 ```
 

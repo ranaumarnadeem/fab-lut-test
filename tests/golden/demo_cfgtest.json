@@ -1,0 +1,55 @@
+{
+ "any": {
+  "D": 6167,
+  "P": 1080,
+  "U": 2511
+ },
+ "best": {
+  "D": 7157,
+  "P": 90,
+  "U": 2511
+ },
+ "bits": "9e2c5991f87df1a751df2db2a2ac27aca04ee05b",
+ "cfg_top": "fb9bce99c10db9bf51532b17c0a08b0824a41381",
+ "faults": 9758,
+ "n_bits": 69482,
+ "not_delivered": [
+  "uarthex"
+ ],
+ "sequence": [
+  [
+   "fill FF01",
+   200
+  ],
+  [
+   "fill FF02",
+   200
+  ],
+  [
+   "fill FF03",
+   200
+  ],
+  [
+   "fill FF04",
+   200
+  ],
+  [
+   "final FF00, port frames inverted",
+   200
+  ],
+  [
+   "bitbang",
+   4
+  ],
+  [
+   "uart",
+   1
+  ],
+  [
+   "uarthex (not delivered: must not arrive)",
+   1
+  ]
+ ],
+ "statuses": "1079bd500f408c2738cdff070e67c9531d0ae850",
+ "steps": 1089216
+}
