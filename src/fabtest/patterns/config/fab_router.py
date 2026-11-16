@@ -477,14 +477,16 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
         if any(cfg.assign(i, k) for k in ks):
             continue
         tries += 1
-        if tries > 5000:
+        if tries > 20000:
             raise SystemExit(f"{i}: loop repair did not converge")
-        k = ks[0]
+        k = ks[0] if tries <= 5000 else ks[(tries // 2) % len(ks)]
         on_loop = [x for x in cfg.path_muxes(g.net_of[i], g.src(i, k)) if x != i
                    and MM(x).model != "direct" and x not in getattr(cfg, "pinned", ())]
         if not on_loop:
             raise SystemExit(f"{i}: every input closes a loop")
-        victim = on_loop[0]
+        # past 5000 tries two muxes keep freeing each other (every input of one loops
+        # through the other): take the other inputs and the other muxes of the loop in turn
+        victim = on_loop[0] if tries <= 5000 else on_loop[(tries // 50) % len(on_loop)]
         del cfg.sel[victim]
         if not cfg.assign(i, k):
             todo.insert(0, i)
@@ -586,6 +588,7 @@ def _rot(seq, k: int) -> list:
 
 
 CONST_RADIUS = 2   # tiles: a pinned pin takes an existing constant this close before a new one
+BRAM_MAX_POP = 60000   # route cap for the BlockRAM pins (pads are far from the BRAM column)
 
 
 def letters(bias: int) -> list:
@@ -772,7 +775,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 fails += 1
         pads = _rot(pads_near(arr, y1, ("A_O", "B_O")), bias + k)
         helpers_t = _rot(lut_rank(arr, near, -1, 3), bias + k)
-        cap, cfg.g.max_pop = cfg.g.max_pop, 60000   # pads are far from the BRAM column
+        cap, cfg.g.max_pop = cfg.g.max_pop, BRAM_MAX_POP
         pa = None
         for src in pads:
             for t, x in _free_luts(cfg, helpers_t, bias + k):

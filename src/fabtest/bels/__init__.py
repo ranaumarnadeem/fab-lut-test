@@ -24,7 +24,10 @@ REGISTRY: list[Plugin] = std.PLUGINS
 OPAQUE = std.OPAQUE
 
 
-def for_module(module: str) -> Plugin:
+def for_module(module: str, opaque=()) -> Plugin:
+    """The plugin of a BEL module; opaque: modules forced opaque (fabtest.toml [bels])."""
+    if module in opaque:
+        return OPAQUE
     for p in REGISTRY:
         if re.fullmatch(p.modules, module):
             return p
@@ -56,17 +59,20 @@ def classify(spec) -> dict:
     """type -> {"kind", "plugins": [(prefix, module, plugin name)], "why"}."""
     from fabtest.model import tile_parse as tp
     out = {}
+    forced = spec.d.get("opaque", ())
     for name, ty in spec.types.items():
         bels = ty["bels"]
-        plugs = [(b["prefix"], b["module"], for_module(b["module"]).name) for b in bels]
-        names = sorted(p for _, _, p in plugs)
+        plugs = [(b["prefix"], b["module"], for_module(b["module"], forced).name) for b in bels]
+        names = sorted(for_module(b["module"]).name for b in bels)
         kind, why = "generic", ""
         want = None
         if names == sorted(["lut4c"] * 8 + ["mux8lut"]):
             kind, want = "lut", ("LUT4AB", ROOT / "rtl")
         elif names == sorted(["io_pad"] * 2 + ["config_access"] * 2):
             kind, want = "io", ("W_IO", ROOT / "rtl" / "W_IO")
-        if want:
+        if want and any(b["module"] in forced for b in bels):
+            kind, why = "generic", "BELs forced opaque in fabtest.toml"
+        elif want:
             ref = tp.parse_tile(want[1], want[0])
             got = tp.parse_tile(Path(ty["dir"]), name)
             diff = same_tile(got, ref)

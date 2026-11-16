@@ -1,0 +1,6 @@
+# Default: 24 configs, 2 observation chains per row
+name = "default"
+
+[[pass]]
+configs = 24
+chains = 2

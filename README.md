@@ -362,6 +362,47 @@ is the likely route) will live in `package/`.
 
 ## Running
 
+One command, from a FABulous project with the generated fabric RTL to the test program:
+
+```bash
+scripts/fabtest run /path/to/fabulous_project --suite demo     # -> results/<fabric>/demo/
+```
+
+It does init, synth, route (the suite's passes), faultsim, report and export, each step
+skipped when its inputs did not change: a second run, or one after a crash, only does what
+is left (faultsim resumes per chunk). `--configs N` cuts the suite to N configs,
+`--sample N` sets the sampled faults (0: every fault), `--run NAME` the run directory.
+Suites (`src/fabtest/suites/`): `default` (24 configs) and `demo` (96 configs, the 89.1%
+set); a suite file lists routing passes, each on top of the passes before it:
+
+```toml
+name = "mine"
+[[pass]]
+configs = 24
+chains = 2
+```
+
+An optional `fabtest.toml` in the FABulous project sets the fabric's knobs (unknown keys
+are refused; every key optional):
+
+```toml
+[route]
+max_pop = 3000          # Dijkstra exploration per route (default: demo value, scaled by tile count)
+max_reach = 10000       # incremental loop check
+loop_max_moves = 20000  # mux moves to break the loops of a config
+bram_max_pop = 60000    # routes from the pads to a BlockRAM column
+const_radius = 2        # a pinned pin takes an existing constant this many tiles away
+[faultsim]
+sample = 2000
+seed = 1
+chunk = 2000
+jobs = 4
+[bels]
+opaque = []             # BEL or macro modules modelled as X sources (not tested)
+```
+
+The steps one by one:
+
 ```bash
 scripts/fabtest init /path/to/fabulous_project          # copy + parse -> build/fabtest/<fabric>
 scripts/fabtest info build/fabtest/<fabric> --bels      # tiles, BELs and the plugin of each
@@ -383,14 +424,14 @@ Tests (the demo fabric; R1 needs the stored 50k-fault run in `results/`, local):
 
 ```bash
 python3 tests/run_all.py             # quick, about 5 min
-python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay
+python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay, F1 / F2, fabtest run
 ```
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `bels/` (BEL plugins), `pipeline.py` (route, faultsim, report) |
+| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report) |
 | `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
 | `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
 | `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py` |

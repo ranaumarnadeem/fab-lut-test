@@ -148,4 +148,11 @@ class Spec:
 
 
 def load(work: Path) -> Spec:
-    return Spec(json.loads((work / "spec.json").read_text()), work)
+    """The spec of a work dir, with its settings (fabtest/config.py) as .cfg; BEL / macro
+    modules forced opaque go into .d["opaque"] (part of the model's cache keys)."""
+    from fabtest import config
+    s = Spec(json.loads((work / "spec.json").read_text()), work)
+    s.cfg = config.load(work, sum(1 for _ in s.tiles()))
+    if s.cfg["bels"]["opaque"]:
+        s.d["opaque"] = sorted(s.cfg["bels"]["opaque"])
+    return s

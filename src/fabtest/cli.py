@@ -1,5 +1,7 @@
-"""fabtest command line (init, info, synth, route, faultsim, report, powerup, export).
+"""fabtest command line (run, init, info, synth, route, faultsim, report, powerup, export).
 
+  python3 -m fabtest run <FABulous project> [--suite default] [--run NAME] [--configs N]
+                         [--sample N] [--jobs N] [--no-export] [--work DIR]
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
   python3 -m fabtest synth <work dir> [--jobs 4]
@@ -17,6 +19,12 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from pathlib import Path
+
+
+def cmd_run(a) -> None:
+    from fabtest import pipeline
+    pipeline.run_all(Path(a.project), a.suite, a.run, a.configs, a.sample, a.jobs, not a.no_export,
+                     Path(a.work) if a.work else None)
 
 
 def cmd_init(a) -> None:
@@ -41,14 +49,14 @@ def cmd_info(a) -> None:
             for (m, plug), n in sorted(Counter((m, pl) for _, m, pl in k["plugins"]).items()):
                 print(f"      {m:40s} x{n}  {plug}")
         for m in s.d["top"]["macros"]:
-            plug = std.macro_for(m["module"])
+            plug = None if m["module"] in s.d.get("opaque", ()) else std.macro_for(m["module"])
             print(f"  macro {m['module']} {m['inst']}: {plug.name if plug else 'opaque (X source)'}")
 
 
 def cmd_synth(a) -> None:
     from fabtest import spec, synth
     w = Path(a.work)
-    synth.build(spec.load(w), w, a.jobs)
+    synth.build(spec.load(w), w, a.jobs, a.force)
 
 
 def _run(a, create: bool = False) -> Path:
@@ -72,7 +80,10 @@ def cmd_faultsim(a) -> None:
     s = spec.load(w)
     run = _run(a, create=bool(a.configs_from))
     pipeline.use_configs(run, None)
-    pipeline.faultsim(s, w, run, a.sample, a.seed, a.chunk, a.jobs)
+    fs = s.cfg["faultsim"]
+    pick = lambda v, k: fs[k] if v is None else v   # noqa: E731
+    pipeline.faultsim(s, w, run, pick(a.sample, "sample"), pick(a.seed, "seed"), pick(a.chunk, "chunk"),
+                      pick(a.jobs, "jobs"))
     print(pipeline.report(s, run), end="")
 
 
@@ -114,6 +125,15 @@ def cmd_bitgen_check(a) -> None:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="fabtest")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("run", help="everything: init, synth, route, faultsim, report, export")
+    p.add_argument("project", help="FABulous project (with the generated fabric RTL)")
+    p.add_argument("--suite", default="default", help="suite name (src/fabtest/suites) or file")
+    p.add_argument("--run", help="run name (default: the suite name)")
+    p.add_argument("--configs", type=int, help="configs in all (default: the suite's)")
+    p.add_argument("--sample", type=int, help="sampled faults, 0: every fault (default: fabtest.toml)")
+    p.add_argument("--jobs", type=int, help="threads (default: fabtest.toml)")
+    p.add_argument("--no-export", action="store_true")
+    p.add_argument("--work", help="work dir (default: build/fabtest/<project>-<hash>)")
     p = sub.add_parser("init", help="copy and parse a FABulous project")
     p.add_argument("project")
     p.add_argument("--work")
@@ -124,6 +144,7 @@ def main(argv=None) -> None:
     p = sub.add_parser("synth", help="gate-level netlist and fault list")
     p.add_argument("work")
     p.add_argument("--jobs", type=int, default=4)
+    p.add_argument("--force", action="store_true", help="also when up to date")
     p = sub.add_parser("route", help="routed test configs (LUT chain backbone)")
     p.add_argument("work")
     p.add_argument("--configs", type=int, default=24)
@@ -132,10 +153,10 @@ def main(argv=None) -> None:
     p.add_argument("--run", help="run name (default: a new timestamped run)")
     p = sub.add_parser("faultsim", help="sampled fault simulation, resumable in chunks")
     p.add_argument("work")
-    p.add_argument("--sample", type=int, default=2000, help="0: every fault")
-    p.add_argument("--seed", type=int, default=1)
-    p.add_argument("--chunk", type=int, default=2000)
-    p.add_argument("--jobs", type=int, default=4)
+    p.add_argument("--sample", type=int, help="0: every fault (default: fabtest.toml, 2000)")
+    p.add_argument("--seed", type=int)
+    p.add_argument("--chunk", type=int)
+    p.add_argument("--jobs", type=int)
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
     p.add_argument("--run", help="run name (default: the latest run)")
     p = sub.add_parser("report", help="coverage from the fault simulation results")
@@ -160,6 +181,6 @@ def main(argv=None) -> None:
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--only", help="config indices (default 0,1)")
     a = ap.parse_args(argv)
-    {"init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
+    {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "export": cmd_export,
      "bitgen-check": cmd_bitgen_check}[a.cmd](a)

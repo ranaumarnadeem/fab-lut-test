@@ -1,6 +1,7 @@
 """Repository locations (fabtest is run from a checkout; see package/ for packaging)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parent              # src/fabtest
@@ -9,5 +10,5 @@ RTL = REPO / "rtl"                                 # input RTL: LUT4AB / W_IO / 
 TB = REPO / "tb"                                   # testbench templates
 SYNTH = PKG / "synth"                              # yosys templates and techmaps
 BUILD = REPO / "build"                             # scratch: work dirs, compiled kernel, logs
-RESULTS = REPO / "results"                         # one directory per run (local)
+RESULTS = Path(os.environ.get("FABTEST_RESULTS") or REPO / "results")   # one directory per run (local)
 GOLDEN = REPO / "tests" / "golden"                 # committed reference data of the tests

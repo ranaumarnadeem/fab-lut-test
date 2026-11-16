@@ -59,7 +59,8 @@ def init(proj: Path, work: Path | None = None, force: bool = False) -> Path:
     if not (proj / "Fabric" / "eFPGA.v").exists():
         raise SystemExit(f"fabtest: {proj}/Fabric/eFPGA.v missing: generate the fabric first "
                          f"(FABulous -p {proj} run \"load_fabric; run_fab\")")
-    h = project_hash(proj)
+    from fabtest import config
+    h = project_hash(proj) + config.file_hash(proj)   # fabtest.toml: not in the work dir name
     w = work_dir(proj, work)
     if stamp_ok(w, "init", h) and not force:
         print(f"fabtest init: {w} is up to date")

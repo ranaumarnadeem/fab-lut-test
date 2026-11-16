@@ -36,7 +36,7 @@ class GenericFabric(fullfabric.FullFabric):
         c = self.__dict__.setdefault("_bels", {})
         if typ not in c:
             gt = self.gen.get(typ)
-            c[typ] = [] if gt is None else [(belreg.for_module(b.module), b)
+            c[typ] = [] if gt is None else [(belreg.for_module(b.module, self.spec.d.get("opaque", ())), b)
                                             for b in base.bels_of(gt, self.spec.types[typ])]
             if self.kinds[typ]["kind"] == "generic" and self.kinds[typ]["why"]:
                 c[typ] = [(belreg.OPAQUE, b) for _, b in c[typ]]
@@ -78,7 +78,7 @@ class GenericFabric(fullfabric.FullFabric):
         self.macro_status = {}
         k = 0
         for m in self.spec.d["top"]["macros"]:
-            plug = std.macro_for(m["module"])
+            plug = None if m["module"] in self.spec.d.get("opaque", ()) else std.macro_for(m["module"])
             data = plug.bind(self, m) if plug else None
             self.macro_status[m["inst"]] = plug.name if data else "opaque"
             if data is not None and plug.name == "blockram_1kb":

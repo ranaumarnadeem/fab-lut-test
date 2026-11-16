@@ -1,0 +1,7 @@
+# The demo recipe: 96 configs, 2 observation chains per row (89.1% on the demo's 50k
+# sampled faults, results/demo-d278ebfd/demo_96)
+name = "demo"
+
+[[pass]]
+configs = 96
+chains = 2

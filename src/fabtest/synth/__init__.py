@@ -213,8 +213,26 @@ def _fix_names(m: dict, macros: list) -> tuple[int, int]:
     return len(x), gone
 
 
-def build(spec, work: Path, jobs: int = 4) -> Path:
+def stamp_hash(work: Path) -> str:
+    """What the netlist and fault list are built from: spec.json and the synthesis code."""
+    import hashlib
+    h = hashlib.sha1((work / "spec.json").read_bytes())
+    here = Path(__file__).resolve().parent
+    for f in sorted([*here.glob("*"), here.parent / "patterns" / "faults" / "gen_faults.py"]):
+        if f.is_file() and f.suffix in (".py", ".in", ".v"):
+            h.update(f.name.encode())
+            h.update(f.read_bytes())
+    return h.hexdigest()
+
+
+def build(spec, work: Path, jobs: int = 4, force: bool = False) -> Path:
+    from fabtest import project
     out = work / "synth"
+    h = stamp_hash(work)
+    if not force and project.stamp_ok(work, "synth", h) and (out / "netlist.json").exists() \
+            and (out / "faults.csv").exists():
+        print(f"fabtest synth: {out} is up to date")
+        return out
     tiles = out / "tiles"
     tiles.mkdir(parents=True, exist_ok=True)
     mods = _top_modules(spec)
@@ -258,6 +276,7 @@ def build(spec, work: Path, jobs: int = 4) -> Path:
     ncell = len(m["cells"])
     print(f"fabtest synth: {ncell} cells, {nx} X sources, {gone} alias names removed", flush=True)
     faults(out)
+    project.stamp(work, "synth", h)
     return out
 
 

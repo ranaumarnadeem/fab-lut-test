@@ -5,7 +5,8 @@
                                       + bit_gen (2 configs); about 10 min
   python3 tests/run_all.py --full     also R1 (stored 50k-fault run, local), model on all 96
                                       configs, Icarus replay (2 configs), R2 routing, the
-                                      validation fabrics F1 / F2 end to end; about 1 h
+                                      validation fabrics F1 / F2 end to end, `fabtest run` on the
+                                      demo (2 configs); about 1.5 h
   python3 tests/run_all.py NAME ...   only these (names below; r2_python: R2 without the
                                       native module)
 """
@@ -32,6 +33,7 @@ FULL = {
     "rtl": [T / "rtl" / "test_icarus_replay.py"],
     "r2": [T / "patterns" / "regress_demo.py", "--level", "R2"],
     "fabrics": [T / "fabrics" / "test_fabrics.py"],
+    "run": [T / "cli" / "test_run.py"],
 }
 EXTRA = {   # by name only: R2 on the pure-Python router (FABTEST_NATIVE=0), about 25 min
     "r2_python": ["--env", "FABTEST_NATIVE=0", T / "patterns" / "regress_demo.py", "--level", "R2"],

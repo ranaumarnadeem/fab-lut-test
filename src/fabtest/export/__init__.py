@@ -274,12 +274,30 @@ def cover_plan(run: Path, load_s: dict) -> list[dict]:
 
 # ------------------------------------------------------------ driver
 
+def inputs_key(run: Path, only, canonical: bool) -> str:
+    """What an export is made from: the configs, the fault simulation (plan), the options."""
+    import hashlib
+    h = hashlib.sha1((run / "configs.json").read_bytes())
+    for f in ("sample.json", "configs.json"):
+        p = run / "faultsim" / f
+        h.update(p.read_bytes() if p.exists() else b"-")
+    h.update(json.dumps([only, canonical]).encode())
+    return h.hexdigest()
+
+
+def up_to_date(run: Path, only=None, canonical: bool = False) -> bool:
+    m = run / "export" / "manifest.json"
+    return m.exists() and json.loads(m.read_text()).get("inputs") == inputs_key(run, only, canonical)
+
+
 def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical: bool = False) -> Path:
     from fabtest.sim.fastsim import fastsim
     from fabtest.sim import stimuli as rf
     from fabtest.model.generic import GenericFabric
     out = run / "export"
     for d in ("bitstreams", "vectors", "tb"):
+        if only is None and (out / d).exists():   # a full export: nothing left of an older one
+            shutil.rmtree(out / d)
         (out / d).mkdir(parents=True, exist_ok=True)
     cfg_path = run / "configs.json"
     data = json.loads(cfg_path.read_text())
@@ -289,7 +307,7 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
     kept = set(json.loads(fsj.read_text())["kept"]) if fsj.exists() and only is None else None
     manifest = {"spec": str(work / "spec.json"), "fabulous_version": spec.d.get("fabulous_version"),
                 "config_set": str(cfg_path), "frame_order": "canonical" if canonical else "fault-simulated",
-                "configs": {}, "left_out": []}
+                "inputs": inputs_key(run, only, canonical), "configs": {}, "left_out": []}
     runs = []
     ins = outs = None
     stims = {c: rf.build_stim(ff, data, c) for c in idx}
