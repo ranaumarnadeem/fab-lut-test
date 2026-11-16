@@ -6,9 +6,9 @@
   ... --record                                         write tests/golden/demo_cfgtest.json
 
 The config bits and cfg_top.v (hashes), the fault count, the fault-free load (steps,
-phases the netlist does not deliver) and, with --full, every fault's status equal the
-golden. Configs: FF00 and FF01 of the RegFile set (the Phase-13 configs; with Yosys 0.33
-this run gave the stored 60.52% fault by fault). The golden is for the default Yosys.
+ports the netlist does not deliver, the sequence) and, with --full, every fault's status
+(strict, power-up) equal the golden. Configs: the RegFile set, final FF00, fill FF01..FF04.
+The golden is for the default Yosys.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import GOLDEN, SETS, TEST_RUNS, demo_work  # noqa: E402
 
 GOLD = GOLDEN / "demo_cfgtest.json"
+CONFIGS = [0, 1, 2, 3, 4]   # final FF00, fill FF01..FF04 of the RegFile set
 
 
 def sha(b: bytes) -> str:
@@ -32,36 +33,28 @@ def sha(b: bytes) -> str:
 def main() -> None:
     full, record = "--full" in sys.argv, "--record" in sys.argv
     from fabtest import cfgtest, spec
-    from fabtest.model.generic import GenericFabric
-    from fabtest.sim.fastsim import fastsim
     w = demo_work()
     s = spec.load(w)
     d = cfgtest.build(s, w)
     bits = json.loads((d / "cfg_bits.json").read_text())
     got = {"n_bits": len(bits), "bits": sha(json.dumps(bits).encode()), "cfg_top": sha((d / "cfg_top.v").read_bytes()),
            "faults": sum(1 for _ in (d / "faults.csv").open()) - 1}
-    data = json.loads(SETS["regfile"].read_text())
-    ff = GenericFabric(s)
-    nl = fastsim.Netlist("cfgtest", d / "netlist.json")
-    for skip in (set(), {"uarthex"}):
-        stims, _ = cfgtest.stimuli(s, ff, data, [0, 1], bits, skip)
-        if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is None:
-            break
-    else:
-        raise SystemExit("cfgtest FAIL: fault-free load differs")
+    run = TEST_RUNS / "cfgtest"
+    if run.exists():
+        shutil.rmtree(run)
+    run.mkdir(parents=True)
+    shutil.copy(SETS["regfile"], run / "configs.json")
+    _, _, _, pl, stims, seq, pf, ports, left = cfgtest.setup(s, w, run, CONFIGS)
     got["steps"] = int(stims[0].rows.shape[0])
-    got["not_delivered"] = sorted(skip)
+    got["not_delivered"] = left
+    got["sequence"] = [list(x) for x in seq]
     if full:
-        run = TEST_RUNS / "cfgtest"
-        if run.exists():
-            shutil.rmtree(run)
-        run.mkdir(parents=True)
-        shutil.copy(SETS["regfile"], run / "configs.json")
-        print(cfgtest.run(s, w, run, [0, 1]), end="")
+        print(cfgtest.run(s, w, run, CONFIGS), end="")
         rows = (run / "cfgtest" / "matrix.csv").read_text().splitlines()
-        st = [r.split(",")[-3:] for r in rows[1:]]   # CFG, PINS, any
+        st = [r.split(",")[-5:] for r in rows[1:]]   # CFG, PINS, powerup, any, best
         got["statuses"] = sha("\n".join(",".join(x) for x in st).encode())
-        got["any"] = dict(sorted(Counter(x[-1] for x in st).items()))
+        got["any"] = dict(sorted(Counter(x[-2] for x in st).items()))
+        got["best"] = dict(sorted(Counter(x[-1] for x in st).items()))
     gold = json.loads(GOLD.read_text()) if GOLD.exists() else {}
     if record:
         gold.update(got)

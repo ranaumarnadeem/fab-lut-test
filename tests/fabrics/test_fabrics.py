@@ -4,8 +4,8 @@
   python3 tests/fabrics/test_fabrics.py [F1 F2] [--configs 4] [--sample 2000] [--replay 2]
 
 Per fabric (build/fabrics/<name>, made by make.py when missing): init, synth, route,
-fault-free check + sampled fault simulation, export, bit_gen byte equality and the Icarus
-replay of the first configs. Scratch runs in build/tests/<name>. Slow (synth: minutes).
+fault-free check + sampled fault simulation, export (with the port test), bit_gen byte equality and the
+Icarus replay of the first configs. Scratch runs in build/tests/<name>. Slow (synth: minutes).
 """
 from __future__ import annotations
 
@@ -55,13 +55,13 @@ def main() -> None:
             fails.append(f"{name}: configs fail the fault-free check: {kept}")
         rep = pipeline.report(s, run_dir)
         print(f"  {name}: " + rep.splitlines()[1].strip())
-        export.export(s, w, run_dir, only=list(range(replay)))
+        export.export(s, w, run_dir, only=list(range(replay)), ports=True)   # with the port test
         if not export.bitgen_check(s, w, run_dir / "configs.json", list(range(replay))):
             fails.append(f"{name}: bitgen-check")
         r = subprocess.run([str(run_dir / "export" / "tb" / "run_icarus.sh")], capture_output=True, text=True)
-        if r.returncode != 0 or r.stdout.count("PASS") != replay:
+        if r.returncode != 0 or r.stdout.count("PASS") != replay + 1 or "ports + " not in r.stdout:
             fails.append(f"{name}: Icarus replay\n{r.stdout[-1500:]}")
-        print(f"  {name}: replay {r.stdout.count('PASS')} of {replay} PASS", flush=True)
+        print(f"  {name}: replay {r.stdout.count('PASS')} of {replay + 1} PASS (configs, port test)", flush=True)
     for f in fails:
         print("  FAIL " + f)
     print(f"test_fabrics: {'pass' if not fails else 'FAIL'} ({', '.join(names)}, {len(fails)} failures)")

@@ -32,7 +32,8 @@ The test, as the exported test program runs it:
 Only the config bits after a full load and at the end are compared (a tester sees the
 config only through the fabric test of a complete config); the status pins every 16
 clocks. A port the fault-free netlist does not deliver (FABulous's config_UART hex mode
-never completes a byte) is left out of the test and reported.
+never completes a byte) is reported; its frames are still sent, with data other than the
+memory holds, and must not arrive (a fault that makes that port write is seen).
 
 Power-up: a config bit the faulty run never writes keeps its power-up value p; when the
 fault-free value of that bit is 0 after one load and 1 after another, the fault is seen
@@ -328,9 +329,12 @@ def plan(data: dict, kept: list[int], n_fill: int = 4) -> dict:
     return {"final": kept[0], "fill": kept[1:1 + n_fill]}
 
 
-def stimuli(spec, ff, data: dict, pl: dict, bits: list, ports=PORTS, every_cycle: bool = False):
+def stimuli(spec, ff, data: dict, pl: dict, bits: list, ports=PORTS, every_cycle: bool = False,
+            unused=()):
     """[CFG, PINS] stimuli, the sequence (name, frames) and the port frames. every_cycle: a
-    third stimulus GOLD sampling ComActive / ReceiveLED every clock (the exported vectors)."""
+    third stimulus GOLD sampling ComActive / ReceiveLED every clock (the exported vectors).
+    unused: ports the netlist does not deliver: their frames are still sent, with other
+    data, and must not arrive (a fault that makes them write is seen)."""
     from fabtest.sim.fastsim import fastsim
     ins = ["CLK", "resetn", "SelfWriteStrobe"] + [f"SelfWriteData[{k}]" for k in range(32)] + ["Rx", "s_clk", "s_data"]
     rows_n = spec.params["rows"] - 2
@@ -361,8 +365,9 @@ def stimuli(spec, ff, data: dict, pl: dict, bits: list, ports=PORTS, every_cycle
         snap()
         seq.append((f"fill FF{c:02d}", len(fr)))
     fin = config_frames(ff, data, pl["final"])
-    pf = port_frames(bits, ports)
-    inv = {k: {y: ~w & 0xFFFFFFFF for y, w in fin[k].items()} for p in pf.values() for k in p}
+    allp = list(ports) + [p for p in PORTS if p[0] in unused]
+    pf = port_frames(bits, sorted(allp, key=lambda p: [q[0] for q in PORTS].index(p[0])))
+    inv = {k: {y: ~w & 0xFFFFFFFF for y, w in fin[k].items()} for p, _ in ports for k in pf[p]}
     st.ports_start = len(st.rows)
     st.clock(3, resetn=0)
     st.clock(3, resetn=1)
@@ -378,6 +383,13 @@ def stimuli(spec, ff, data: dict, pl: dict, bits: list, ports=PORTS, every_cycle
             st.uart(frame_stream(fr, rows_n), name == "uarthex", rate, timeout)
         written(fr)
         seq.append((name, len(fr)))
+    for name in unused:   # sent with inverted data; the memory keeps the final config
+        fr = {k: {y: ~w & 0xFFFFFFFF for y, w in fin[k].items()} for k in pf[name]}
+        if name == "bitbang":
+            st.bitbang(frame_stream(fr, rows_n))
+        else:
+            st.uart(frame_stream(fr, rows_n), name == "uarthex", rate, timeout)
+        seq.append((f"{name} (not delivered: must not arrive)", len(fr)))
     snap()
     outs = [f"CM[{k}]" for k in range(len(bits))] + ["ComActive", "ReceiveLED"]
     rows = np.array(st.rows, dtype=np.uint8)
@@ -399,20 +411,21 @@ def delivered(spec, ff, data: dict, pl: dict, bits: list, nl):
     from fabtest.sim.fastsim import fastsim
     ports = list(PORTS)
     left = []
-    while True:
-        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports)
-        if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is None:
-            return stims, seq, pf, ports, left
+    ok = lambda p: fastsim.fault_free(nl, stimuli(spec, ff, data, pl, bits, p)[0][:1], 1)["CFG"] is None  # noqa: E731
+    while not ok(ports):
         if not ports:
             raise SystemExit("fabtest cfgtest: the fault-free load differs from the intended config bits")
-        for i in range(len(ports) - 1, -1, -1):   # the port whose frames stay wrong
-            trial = ports[:i] + ports[i + 1:]
-            stims, seq, pf = stimuli(spec, ff, data, pl, bits, trial)
-            if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is None:
-                left.append(ports[i][0])
-                return stims, seq, pf, trial, left
-        left.append(ports[-1][0])
-        ports = ports[:-1]
+        drop = next((i for i in range(len(ports) - 1, -1, -1) if ok(ports[:i] + ports[i + 1:])), len(ports) - 1)
+        left.append(ports[drop][0])
+        ports = ports[:drop] + ports[drop + 1:]
+    stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports, unused=left)
+    if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is not None:   # an unused port that writes after all
+        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports)
+        left_sent = []
+    else:
+        left_sent = left
+    stims[0].unused = left_sent
+    return stims, seq, pf, ports, left
 
 
 def powerup_detected(nl, netlist: Path, cfg_stim, faults: list[dict], jobs: int = 4) -> set[str]:
@@ -539,7 +552,8 @@ def setup(spec, work: Path, run_dir: Path, configs: list[int] | None = None, eve
     nl = fastsim.Netlist("cfgtest", d / "netlist.json")
     stims, seq, pf, ports, left = delivered(spec, ff, data, pl, bits, nl)
     if every_cycle:
-        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports, every_cycle=True)
+        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports, every_cycle=True,
+                                 unused=getattr(stims[0], "unused", ()))
     return d, bits, nl, pl, stims, seq, pf, ports, left
 
 
