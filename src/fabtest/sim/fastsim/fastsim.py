@@ -259,6 +259,7 @@ class Engine:
                 len(batch), _p(fnet), _p(fpol), _p(res), _p(gold), ctypes.c_long(self.limit))
             if rc != 0:
                 raise RuntimeError(f"{st.name}: the fault-free lane did not settle")
+            self.last_gold = (gold, len(out_nets))   # fault-free outputs per sample (2 = X)
             if st.expected is not None and st.name not in self.checked:   # the same in every batch
                 n_out = len(out_nets)
                 g = ["".join("x" if v == 2 else str(v) for v in gold[k * n_out:(k + 1) * n_out])
@@ -315,6 +316,15 @@ def collapse(nl: Netlist, items: list[tuple[int, int]], observed: set[int]) -> l
         r = find(it)
         reps.append(rep_of_class.setdefault(r, k))
     return reps
+
+
+def outputs(nl: Netlist, st: Stim, limit_factor: int = 200) -> list[str]:
+    """The fault-free outputs of st at its samples: per sample a string over st.out_names
+    (0 / 1 / x)."""
+    eng = Engine(nl, [st], W=1, limit_factor=limit_factor)
+    eng.run_one([], 0)
+    gold, n = eng.last_gold
+    return ["".join("x" if v == 2 else str(v) for v in gold[k * n:(k + 1) * n]) for k in range(len(gold) // n)]
 
 
 def fault_free(nl: Netlist, stims: list, jobs: int = os.cpu_count() or 1, limit_factor: int = 200) -> dict:

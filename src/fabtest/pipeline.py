@@ -328,11 +328,11 @@ def run_all(proj: Path, suite_name: str = "default", run_name: str | None = None
     route_suite(s, run, passes)
     faultsim(s, w, run, sample, fs["seed"], fs["chunk"], jobs)
     print(report(s, run), end="")
-    if do_export:
-        if export.up_to_date(run):
+    if do_export:   # with --cfgtest also the port test
+        if export.up_to_date(run, ports=do_cfgtest):
             print(f"fabtest export: {run / 'export'} is up to date")
         else:
-            export.export(s, w, run)
+            export.export(s, w, run, ports=do_cfgtest)
     if do_cfgtest:
         from fabtest import cfgtest
         if cfgtest.up_to_date(w, run):

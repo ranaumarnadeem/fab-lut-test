@@ -10,7 +10,7 @@ cfgtest, bitgen-check).
   python3 -m fabtest faultsim <work dir> [--run NAME] [--configs-from JSON] [--sample 2000] [--jobs 4]
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
-  python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical]
+  python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
 
@@ -110,7 +110,7 @@ def cmd_export(a) -> None:
     w = Path(a.work)
     run = _run(a, create=bool(a.configs_from))
     pipeline.use_configs(run, None)
-    export.export(spec.load(w), w, run, _only(a.only), a.canonical)
+    export.export(spec.load(w), w, run, _only(a.only), a.canonical, a.port_test)
 
 
 def cmd_cfgtest(a) -> None:
@@ -193,6 +193,7 @@ def main(argv=None) -> None:
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--only", help="config indices, e.g. 0,1")
     p.add_argument("--canonical", action="store_true", help="frames 0..F-1 (bit_gen order)")
+    p.add_argument("--port-test", action="store_true", help="also the configuration-port test (bitbang, UART)")
     p = sub.add_parser("cfgtest", help="configuration logic (ConfigFSM, frame registers, UART, bitbang)")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")

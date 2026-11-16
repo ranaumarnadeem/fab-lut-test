@@ -13,20 +13,31 @@ selects. Here that logic is simulated on its own:
     netlist.json    generic gates (fabtest synth's flow; async resets made synchronous: the
                     test holds resetn low over clock edges), faults.csv (cfg_mem left out)
   results/<fabric>/<run>/cfgtest/
-    matrix.csv      every fault: status in CFG (CM, ComActive, ReceiveLED after each
-                    phase) and PINS (the two status pins every 16 clocks, as a tester sees
-                    them), any
-    report.txt      coverage, per source module, the phases and what the fault-free
-                    netlist did with them
+    matrix.csv      every fault: status in CFG (CM after every full load, ComActive,
+                    ReceiveLED), PINS (the two status pins every 16 clocks, as a tester sees
+                    them), powerup (D: detected for every power-up value of the config bits
+                    the faulty load never writes), any (strict) and best (with powerup)
+    report.txt      coverage per source module, the sequence and what the fault-free
+                    netlist did with it
+    inputs.json     what the run was made from (fabtest run skips an unchanged one)
 
-The test: reset, two test configs of the run through SelfWriteData (one word per clock,
-3 idle clocks after a frame), then frames of the second config inverted through bitbang
-(two frames), UART binary (one) and UART hex (one): every phase writes data different
-from what the memory holds, so a write that does not happen is seen. A fault is detected
-when a CM bit or a status pin differs from the fault-free run at a sample. A config bit
-seen wrong here means a fabric configured wrong on silicon (the fabric test then fails).
-A phase the fault-free netlist does not deliver (FABulous's config_UART hex mode never
-completes a byte) is expected as not written, and reported.
+The test, as the exported test program runs it:
+  fill     test configs of the run loaded in full through SelfWriteData (one word per
+           clock, 3 idle clocks after a frame), each checked by its own fabric vectors on
+           silicon (here: every CM bit after the load)
+  ports    reset, then the final test config through SelfWriteData with the port frames
+           inverted, then those frames with their true data through bitbang, the UART in
+           binary and the UART in hex; then the final config's fabric vectors (here: every
+           CM bit at the end). The fabric pads are not driven during the sequence.
+Only the config bits after a full load and at the end are compared (a tester sees the
+config only through the fabric test of a complete config); the status pins every 16
+clocks. A port the fault-free netlist does not deliver (FABulous's config_UART hex mode
+never completes a byte) is left out of the test and reported.
+
+Power-up: a config bit the faulty run never writes keeps its power-up value p; when the
+fault-free value of that bit is 0 after one load and 1 after another, the fault is seen
+for either p. The fill configs make most bits take both values (6 routed configs: 89%
+on the demo).
 """
 from __future__ import annotations
 
@@ -286,22 +297,50 @@ class Stim:
         self.clock(timeout + 200, Rx=1)
 
 
-PHASES = ("parallel0", "parallel1", "bitbang", "uart", "uarthex")
+PORTS = (("bitbang", 4), ("uart", 1), ("uarthex", 1))   # port, frames written through it
 
 
-def stimuli(spec, ff, data: dict, cfgs: list[int], bits: list, skip: set = frozenset()):
-    """[CFG, PINS] stimuli and the phase list; skip: phases expected as not written."""
+def port_frames(bits: list, ports) -> dict:
+    """Port -> frames it writes: the frames with the most used config bits, taken in turn
+    from different columns (a frame without used bits would show nothing)."""
+    n = Counter((x, f) for x, f, _, _ in bits)
+    ranked = sorted(n, key=lambda k: (-n[k], k))
+    order, cols = [], []
+    while ranked:   # round robin over the columns, best frames first
+        for k in list(ranked):
+            if k[0] not in cols:
+                order.append(k)
+                cols.append(k[0])
+                ranked.remove(k)
+        cols = []
+    out, i = {}, 0
+    for name, m in ports:
+        out[name] = sorted(order[i:i + m])
+        i += m
+    return out
+
+
+def plan(data: dict, kept: list[int], n_fill: int = 4) -> dict:
+    """Fill configs and the final config: the first kept config is the final one (the port
+    test runs its fabric vectors), the next n_fill fill."""
+    if not kept:
+        raise SystemExit("fabtest cfgtest: no config to load")
+    return {"final": kept[0], "fill": kept[1:1 + n_fill]}
+
+
+def stimuli(spec, ff, data: dict, pl: dict, bits: list, ports=PORTS, every_cycle: bool = False):
+    """[CFG, PINS] stimuli, the sequence (name, frames) and the port frames. every_cycle: a
+    third stimulus GOLD sampling ComActive / ReceiveLED every clock (the exported vectors)."""
     from fabtest.sim.fastsim import fastsim
     ins = ["CLK", "resetn", "SelfWriteStrobe"] + [f"SelfWriteData[{k}]" for k in range(32)] + ["Rx", "s_clk", "s_data"]
     rows_n = spec.params["rows"] - 2
     rate, timeout = uart_params(spec)
-    cw = [config_frames(ff, data, c) for c in cfgs]
     st = Stim(ins)
     st.clock(3, resetn=0)
     st.clock(3, resetn=1)
     pos = {b: k for k, b in enumerate(map(tuple, bits))}
     cm: dict = {}
-    expected = []
+    expected, seq = [], []
 
     def written(frames):
         for (x, f), col in frames.items():
@@ -312,37 +351,101 @@ def stimuli(spec, ff, data: dict, cfgs: list[int], bits: list, skip: set = froze
                         cm[k] = (w >> d) & 1
 
     def snap():
+        st.mark()
         expected.append("".join(str(cm[k]) if k in cm else "x" for k in range(len(bits))) + "xx")
 
-    phases = []
-    for i, fr in enumerate(cw):
+    for c in pl["fill"]:
+        fr = config_frames(ff, data, c)
         st.parallel(frame_stream(fr, rows_n))
         written(fr)
-        st.mark()
         snap()
-        phases.append((f"parallel{i}", len(fr)))
-    keys = sorted(cw[-1])
-    n = len(keys)
-    inv = {k: {y: ~w & 0xFFFFFFFF for y, w in cw[-1][k].items()} for k in keys}
-    for name, sel in (("bitbang", keys[n // 10:n // 10 + 2]), ("uart", keys[n // 5:n // 5 + 1]),
-                      ("uarthex", keys[3 * n // 10:3 * n // 10 + 1])):
-        fr = {k: inv[k] for k in sel}
+        seq.append((f"fill FF{c:02d}", len(fr)))
+    fin = config_frames(ff, data, pl["final"])
+    pf = port_frames(bits, ports)
+    inv = {k: {y: ~w & 0xFFFFFFFF for y, w in fin[k].items()} for p in pf.values() for k in p}
+    st.ports_start = len(st.rows)
+    st.clock(3, resetn=0)
+    st.clock(3, resetn=1)
+    pre = {k: inv.get(k, col) for k, col in fin.items()}
+    st.parallel(frame_stream(pre, rows_n))
+    written(pre)
+    seq.append((f"final FF{pl['final']:02d}, port frames inverted", len(pre)))
+    for name, _ in ports:
+        fr = {k: fin[k] for k in pf[name]}
         if name == "bitbang":
             st.bitbang(frame_stream(fr, rows_n))
         else:
             st.uart(frame_stream(fr, rows_n), name == "uarthex", rate, timeout)
-        if name not in skip:
-            written(fr)
-        st.mark()
-        snap()
-        phases.append((name, len(fr)))
+        written(fr)
+        seq.append((name, len(fr)))
+    snap()
     outs = [f"CM[{k}]" for k in range(len(bits))] + ["ComActive", "ReceiveLED"]
     rows = np.array(st.rows, dtype=np.uint8)
     cfg = fastsim.Stim("CFG", ins, rows, np.array(st.sample, dtype=np.uint8), outs, expected)
     ps = np.zeros(len(rows), dtype=np.uint8)
     ps[2 * PINS_EVERY - 1::2 * PINS_EVERY] = 1
-    pins = fastsim.Stim("PINS", ins, rows, ps, ["ComActive", "ReceiveLED"], None)
-    return [cfg, pins], phases
+    out = [cfg, fastsim.Stim("PINS", ins, rows, ps, ["ComActive", "ReceiveLED"], None)]
+    if every_cycle:
+        g = np.zeros(len(rows), dtype=np.uint8)
+        g[st.ports_start + 1::2] = 1
+        out.append(fastsim.Stim("GOLD", ins, rows, g, ["ComActive", "ReceiveLED"], None))
+    out[0].ports_start = st.ports_start
+    return out, seq, pf
+
+
+def delivered(spec, ff, data: dict, pl: dict, bits: list, nl):
+    """The stimuli with the ports the fault-free netlist delivers (one left out at a time,
+    the last first); (stims, seq, port frames, ports, left out)."""
+    from fabtest.sim.fastsim import fastsim
+    ports = list(PORTS)
+    left = []
+    while True:
+        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports)
+        if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is None:
+            return stims, seq, pf, ports, left
+        if not ports:
+            raise SystemExit("fabtest cfgtest: the fault-free load differs from the intended config bits")
+        for i in range(len(ports) - 1, -1, -1):   # the port whose frames stay wrong
+            trial = ports[:i] + ports[i + 1:]
+            stims, seq, pf = stimuli(spec, ff, data, pl, bits, trial)
+            if fastsim.fault_free(nl, stims[:1], 1)["CFG"] is None:
+                left.append(ports[i][0])
+                return stims, seq, pf, trial, left
+        left.append(ports[-1][0])
+        ports = ports[:-1]
+
+
+def powerup_detected(nl, netlist: Path, cfg_stim, faults: list[dict], jobs: int = 4) -> set[str]:
+    """Fault ids (of the X-only faults given) detected for every power-up value: some config
+    bit the faulty run never writes has the fault-free value 0 at one CM sample and 1 at
+    another."""
+    from concurrent.futures import ThreadPoolExecutor
+    from fabtest.sim.fastsim import powerup as pu_mod
+    exp = cfg_stim.expected
+    ncm = len(exp[0]) - 2
+    toggles = {k for k in range(ncm) if {e[k] for e in exp} >= {"0", "1"}}
+    cm_net = {nl.port_bits[f"CM[{k}]"]: k for k in toggles}
+    pu = pu_mod.PowerUp(nl, [cfg_stim], netlist, limit_factor=200)
+    store_cm = {s: cm_net[int(n)] for s, n in enumerate(nl.st_net) if int(n) in cm_net}
+    idx = np.array(sorted(store_cm), dtype=np.int64)
+    hit = set()
+
+    def one(part):
+        res, _, wr, _, _ = pu.run("CFG", [(nl.net_bit[f["net"]], int(f["polarity"]), {}) for f in part])
+        got = []
+        for j, f in enumerate(part):
+            lane = j + 1
+            if res[lane] & 4:
+                continue   # oscillates: no verdict
+            w_ = pu.lane_bit(wr, lane)
+            if len(idx) and (w_[idx] == 0).any():
+                got.append(f["id"])
+        return got
+    parts = [faults[b:b + pu_mod.LANES] for b in range(0, len(faults), pu_mod.LANES)]
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        for g in ex.map(one, parts):
+            hit.update(g)
+    return hit
 
 
 # ------------------------------------------------------------------ the run
@@ -415,66 +518,81 @@ def part_map(netlist: Path, srcs: list[Path]) -> dict:
     return part
 
 
-def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs: int = 4) -> str:
+def kept_configs(run_dir: Path) -> list[int]:
+    data = json.loads((run_dir / "configs.json").read_text())
+    f = run_dir / "faultsim" / "configs.json"
+    kept = json.loads(f.read_text())["kept"] if f.exists() else [f"FF{c:02d}" for c in range(len(data["configs"]))]
+    return [int(n[2:]) for n in kept]
+
+
+def setup(spec, work: Path, run_dir: Path, configs: list[int] | None = None, every_cycle: bool = False):
+    """Netlist, plan and the delivered stimuli of a run: (dir, bits, nl, plan, stims, seq,
+    port frames, ports, left out). configs: final first, then the fill configs (default:
+    the first five kept)."""
     from fabtest.model.generic import GenericFabric
     from fabtest.sim.fastsim import fastsim
-    t0 = time.time()
-    key = inputs_key(work, run_dir, configs)
     d = build(spec, work)
     bits = json.loads((d / "cfg_bits.json").read_text())
     data = json.loads((run_dir / "configs.json").read_text())
-    kept_f = run_dir / "faultsim" / "configs.json"
-    if configs is None:
-        kept = json.loads(kept_f.read_text())["kept"] if kept_f.exists() else [f"FF{c:02d}" for c in range(len(data["configs"]))]
-        configs = [int(n[2:]) for n in kept[:2]]
-    if not configs:
-        raise SystemExit("fabtest cfgtest: no config to load")
+    pl = plan(data, configs if configs else kept_configs(run_dir))
     ff = GenericFabric(spec)
     nl = fastsim.Netlist("cfgtest", d / "netlist.json")
-    skip: set = set()
-    err = None
-    for skip in (set(), {"uarthex"}, {"uart", "uarthex"}, {"bitbang", "uart", "uarthex"}):
-        stims, phases = stimuli(spec, ff, data, configs, bits, skip)
-        err = fastsim.fault_free(nl, stims[:1], 1)["CFG"]
-        if err is None:
-            break
-    if err is not None:
-        raise SystemExit(f"fabtest cfgtest: the fault-free load differs from the intended config bits: {err}")
+    stims, seq, pf, ports, left = delivered(spec, ff, data, pl, bits, nl)
+    if every_cycle:
+        stims, seq, pf = stimuli(spec, ff, data, pl, bits, ports, every_cycle=True)
+    return d, bits, nl, pl, stims, seq, pf, ports, left
+
+
+def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs: int = 4) -> str:
+    from fabtest.sim.fastsim import fastsim
+    t0 = time.time()
+    key = inputs_key(work, run_dir, configs)
+    d, bits, nl, pl, stims, seq, pf, ports, left = setup(spec, work, run_dir, configs)
     steps = stims[0].rows.shape[0]
-    print(f"fabtest cfgtest: configs {configs}, {steps} steps; fault-free load = the intended config bits"
-          + (f" (not delivered by the netlist: {', '.join(sorted(skip))})" if skip else ""), flush=True)
+    print(f"fabtest cfgtest: final FF{pl['final']:02d}, fill {', '.join(f'FF{c:02d}' for c in pl['fill'])}; "
+          f"{steps} steps; fault-free load = the intended config bits"
+          + (f" (left out, not delivered by the netlist: {', '.join(left)})" if left else ""), flush=True)
     fl = list(csv.DictReader((d / "faults.csv").open()))
     names, stat = fastsim.run_faults("cfgtest", stims, fl, jobs, nl=nl, quiet=True)
-    out = run_dir / "cfgtest"
-    out.mkdir(parents=True, exist_ok=True)
 
     def any_(s):
         v = set(s.values())
         return "D" if "D" in v else "P" if "P" in v else "T" if "T" in v else "U"
+    xo = [f for f, s in zip(fl, stat) if any_(s) == "P" and s["CFG"] == "P"]
+    t1 = time.time()
+    pu = powerup_detected(nl, d / "netlist.json", stims[0], xo, jobs) if xo else set()
+    print(f"fabtest cfgtest: power-up check of {len(xo)} X-only faults: {len(pu)} detected for every "
+          f"power-up value ({time.time() - t1:.0f} s)", flush=True)
+    out = run_dir / "cfgtest"
+    out.mkdir(parents=True, exist_ok=True)
     parts = part_map(d / "netlist.json", sources(spec, d / "cfg_top.v"))
-    tot, det, pos = Counter(), Counter(), Counter()
+    tot, det, best, pos = Counter(), Counter(), Counter(), Counter()
     with (out / "matrix.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["id", "path", "polarity", "part", *names, "any"])
+        w.writerow(["id", "path", "polarity", "part", *names, "powerup", "any", "best"])
         for f, s in zip(fl, stat):
             a = any_(s)
+            b = "D" if a == "D" or f["id"] in pu else a
             cell = f["driver"].rsplit(".", 1)[0]
             p = "ports" if f["driver"].startswith("port:") else parts.get(cell, "?")
-            w.writerow([f["id"], f["path"], f["polarity"], p, *[s[c] for c in names], a])
+            w.writerow([f["id"], f["path"], f["polarity"], p, *[s[c] for c in names],
+                        "D" if f["id"] in pu else "-", a, b])
             for k in (p, "all"):
                 tot[k] += 1
                 det[k] += a == "D"
-                pos[k] += a == "P"
-    L = [f"fabtest cfgtest: all {len(fl)} faults of the configuration logic, configs "
-         f"{', '.join(f'FF{c:02d}' for c in configs)}, {time.time() - t0:.0f} s",
-         "  phases: " + ", ".join(f"{n} ({k} frames)" for n, k in phases)]
-    if skip:
-        L.append(f"  not delivered by the fault-free netlist (expected as not written): {', '.join(sorted(skip))}")
+                best[k] += b == "D"
+                pos[k] += b == "P"
+    L = [f"fabtest cfgtest: all {len(fl)} faults of the configuration logic, {time.time() - t0:.0f} s",
+         "  sequence: " + "; ".join(f"{n} ({k} frames)" for n, k in seq)]
+    if left:
+        L.append(f"  left out, not delivered by the fault-free netlist: {', '.join(left)}")
+    L.append(f"  {'part':20s} {'faults':>7s}  strict  +power-up  X only left")
     for k in sorted(tot, key=lambda k: (k != "all", -tot[k])):
-        L.append(f"  {k:20s} {tot[k]:7d} faults: {100 * det[k] / tot[k]:6.2f}% detected, "
-                 f"{100 * pos[k] / tot[k]:5.2f}% X only")
+        L.append(f"  {k:20s} {tot[k]:7d}  {100 * det[k] / tot[k]:5.1f}%  {100 * best[k] / tot[k]:6.1f}%  "
+                 f"{100 * pos[k] / tot[k]:6.1f}%")
     text = "\n".join(L) + "\n"
     (out / "report.txt").write_text(text)
-    (out / "inputs.json").write_text(json.dumps({"key": key, "configs": configs, "phases": phases,
-                                                  "not_delivered": sorted(skip)}))
+    (out / "inputs.json").write_text(json.dumps({"key": key, "final": pl["final"], "fill": pl["fill"],
+                                                  "sequence": seq, "ports": [p for p, _ in ports],
+                                                  "not_delivered": left}))
     return text

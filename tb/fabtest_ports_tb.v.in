@@ -1,0 +1,71 @@
+// fabtest port-test testbench template (filled in by fabtest export --port-test): replay of
+// the configuration-port test on eFPGA_top. Per clock the config inputs of ports.mem
+// (resetn, SelfWriteStrobe, SelfWriteData, Rx, s_clk, s_data) set at the falling CLK edge,
+// one rising edge, ComActive / ReceiveLED compared at the next falling edge; then, without
+// another load, the fabric vectors of the final config (as fabtest_tb.v).
+`timescale 1ps/1ps
+module fabtest_ports_tb;
+localparam NI = @NI@, NO = @NO@, NV_MAX = 4096, NP_MAX = @NP_MAX@;
+@DECL@
+always #500000 CLK = ~CLK;
+eFPGA_top dut (
+@CONN@
+);
+reg [37 + 2 + 2 - 1:0] pv [0:NP_MAX - 1];
+reg [37 + 4 - 1:0] p_all;
+reg [1:0] pe, pm;
+reg [NI + 2 * NO - 1:0] vec [0:NV_MAX - 1];
+reg [NI + 2 * NO - 1:0] v_all;
+reg [NI - 1:0] v;
+reg [NO - 1:0] e, m;
+wire [NO - 1:0] obs = @OBS@;
+integer i, np, nv, bad, xbad, pbad;
+reg [1023:0] portf, vecf;
+initial begin
+    if (!$value$plusargs("ports=%s", portf)) $fatal(1, "+ports= missing");
+    if (!$value$plusargs("np=%d", np)) $fatal(1, "+np= missing");
+    if (!$value$plusargs("vec=%s", vecf)) $fatal(1, "+vec= missing");
+    if (!$value$plusargs("nv=%d", nv)) $fatal(1, "+nv= missing");
+    $readmemb(portf, pv);
+    $readmemb(vecf, vec);
+    pbad = 0;
+    @(negedge CLK);
+    for (i = 0; i < np; i = i + 1) begin
+        p_all = pv[i];
+        {s_data, s_clk, Rx, SelfWriteData, SelfWriteStrobe, resetn} = p_all[36:0];
+        pe = p_all[38:37];
+        pm = p_all[40:39];
+        @(posedge CLK);
+        @(negedge CLK);
+        if ((({ReceiveLED, ComActive} ^ pe) & pm) !== 2'b00) begin
+            pbad = pbad + 1;
+            if (pbad <= 10)
+                $display("PORT MISMATCH cycle %0d: got %b want %b mask %b", i, {ReceiveLED, ComActive}, pe, pm);
+        end
+    end
+    SelfWriteStrobe = 1'b0;
+    repeat (10) @(posedge CLK);
+    bad = 0; xbad = 0;
+    @(negedge CLK);
+    for (i = 0; i < nv; i = i + 1) begin
+        v_all = vec[i];
+        v = v_all[NI - 1:0];
+        e = v_all[NI + NO - 1:NI];
+        m = v_all[NI + 2 * NO - 1:NI + NO];
+@DRIVE@
+        @(posedge CLK);
+        @(negedge CLK);
+        if (((obs ^ e) & m) !== {NO{1'b0}}) begin
+            if (^((obs ^ e) & m) === 1'bx)
+                xbad = xbad + 1;
+            else
+                bad = bad + 1;
+            if (bad + xbad <= 10)
+                $display("MISMATCH vector %0d: got %b want %b mask %b", i, obs, e, m);
+        end
+    end
+    if (pbad == 0 && bad == 0 && xbad == 0) $display("PASS %0d port cycles, %0d vectors", np, nv);
+    else $display("FAIL %0d port mismatches, %0d vector mismatches, %0d with X", pbad, bad, xbad);
+    $finish;
+end
+endmodule
