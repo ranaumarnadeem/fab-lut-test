@@ -199,6 +199,8 @@ class Checker:
                 return "C"   # over the conflict budget (e.g. a multiplier miter)
             if not r:
                 return "U"
+            self.free_nets = [m for m in V if m not in F and (self.drv[m] < 0 or not inwin(int(self.drv[m]))
+                                                              or typ[self.drv[m]] in (LATCH, DFF))]
             if fixes is not None:
                 free = [m for m in V if m not in F and (self.drv[m] < 0 or not inwin(int(self.drv[m]))
                                                         or typ[self.drv[m]] in (LATCH, DFF))]
