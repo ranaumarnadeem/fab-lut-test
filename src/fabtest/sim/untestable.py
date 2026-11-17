@@ -15,7 +15,7 @@ is still equal, and that clock satisfies the window problem (the window only fre
 fabric constrains). SAT proves nothing about the fabric (the free inputs may be unreachable).
 
 Not decided: faults whose cone reaches a flop clock (a stuck clock is not a next-state
-difference) and windows over MAX_CELLS cells. Combinational loops need nothing special: the
+difference), windows over MAX_CELLS cells and solves over BUDGET conflicts. Combinational loops need nothing special: the
 CNF allows every fixed point of both circuits, a superset of what the gates can hold.
 
 Statuses: U untestable (proof), T testable in its window, C not decided. why (after a
@@ -28,6 +28,7 @@ import numpy as np
 
 AND, OR, NOT, BUF, LATCH, DFF = 0, 1, 2, 3, 4, 5
 MAX_CELLS = 200_000
+BUDGET = 20_000   # SAT conflicts per solve; over it: C (not decided)
 
 
 def instances(nl) -> np.ndarray:
@@ -58,6 +59,7 @@ class Checker:
         self.xsrc |= {int(n) for n in used if n >= 0 and self.drv[n] < 0 and n not in top_in and n not in self.const}
         self.last_x = 0
         self.why = ""
+        self.budget = BUDGET
 
     def readers(self, net: int) -> np.ndarray:
         return self.nl.rd_idx[self.nl.rd_off[net]:self.nl.rd_off[net + 1]]
@@ -67,8 +69,9 @@ class Checker:
         window, e.g. the config latches of one loaded config: then T / U answer whether the
         fault is detectable in the tile under that config. fixes: a list of such arrays,
         solved incrementally on one CNF (assumptions); self.hits is then the list of their
-        indices that are T (empty when the fault is U or C without fixes)."""
-        self.hits = []
+        indices that are T (empty when the fault is U or C without fixes), self.undecided
+        those over BUDGET / 10 conflicts."""
+        self.hits, self.undecided = [], []
         from pysat.solvers import Cadical195
         nl, typ, out, ins = self.nl, self.nl.type, self.nl.out, self.ins
         rd = self.readers(net)
@@ -190,7 +193,11 @@ class Checker:
         clauses.append(diffs)
         self.why = "redundant"
         with Cadical195(bootstrap_with=clauses) as s:
-            if not s.solve():
+            s.conf_budget(self.budget)
+            r = s.solve_limited()
+            if r is None:
+                return "C"   # over the conflict budget (e.g. a multiplier miter)
+            if not r:
                 return "U"
             if fixes is not None:
                 free = [m for m in V if m not in F and (self.drv[m] < 0 or not inwin(int(self.drv[m]))
@@ -201,6 +208,10 @@ class Checker:
                     vals = fx[fa]
                     sel = (vals == 0) | (vals == 1)
                     assume = np.where(vals[sel] == 1, va[sel], -va[sel]).tolist()
-                    if s.solve(assumptions=assume):
+                    s.conf_budget(max(self.budget // 10, 100))
+                    r = s.solve_limited(assumptions=assume)
+                    if r:
                         self.hits.append(k)
+                    elif r is None:
+                        self.undecided.append(k)   # over the budget
             return "T"
