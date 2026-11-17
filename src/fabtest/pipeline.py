@@ -277,6 +277,100 @@ def untestable(spec, work: Path, run: Path, jobs: int = 4) -> str:
     return report(spec, run)
 
 
+def target(spec, work: Path, run: Path, n_configs: int = 8, jobs: int = 4, max_faults: int = 0,
+           out: Path | None = None) -> str:
+    """SAT-targeted configs (patterns/config/target.py) for the undetected switch-matrix
+    faults of a run: <run>_target/ with configs.json (the new configs only), targets.json,
+    faultsim/target.csv (the base run's undetected faults in the new configs) and
+    report.txt (the base run's coverage, with the new configs, of the same faults)."""
+    from fabtest.patterns.config import target as tgt
+    from fabtest.sim import stimuli, untestable as ut
+    from fabtest.sim.fastsim import fastsim
+    fdir = run / "faultsim"
+    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    if not rows:
+        raise SystemExit("fabtest target: no fault simulation results (run faultsim first)")
+    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    und = _undetected(rows, cfgs)
+    unt = _untestable_ids(work, run, rows, cfgs) or set()
+    und = [r for r in und if int(r["id"]) not in unt]
+    if max_faults and len(und) > max_faults:
+        und = random.Random(5).sample(und, max_faults)
+    nets = {}
+    want = {int(r["id"]) for r in und}
+    with (work / "synth" / "faults.csv").open() as fh:
+        for r in csv.DictReader(fh):
+            if int(r["id"]) in want:
+                nets[int(r["id"])] = r["net"]
+    t0 = time.time()
+    ff = model(spec)
+    nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
+    trees = tgt.MuxTrees(nl, ff)
+    ck = ut.Checker(nl, thru_inv=True)
+    groups: dict = {}
+    n_tree = 0
+    for r in und:
+        b = nl.net_bit[nets[int(r["id"])]]
+        if not trees.trees_of(b):
+            continue
+        n_tree += 1
+        tg = tgt.target_of(ck, trees, b, int(r["polarity"]))
+        if tg is None:
+            continue
+        key = json.dumps([sorted(map(str, tg["sels"].items())), tg["inputs"], sorted(map(str, tg["obs"]))])
+        groups.setdefault(key, (tg, []))[1].append(int(r["id"]))
+    targets = [g[0] for g in groups.values()]
+    print(f"fabtest target: {len(und)} undetected faults, {n_tree} in mux trees, {len(targets)} targets "
+          f"({sum(len(g[1]) for g in groups.values())} faults) in {time.time() - t0:.0f} s", flush=True)
+    out = out or run.parent / f"{run.name}_target"
+    out.mkdir(parents=True, exist_ok=True)
+    apply_caps(ff, spec)
+    from fabtest.patterns.config import fab_router as fr
+    base = json.loads((run / "configs.json").read_text())
+    fr.CHAINS = base.get("chains", 2)
+    configs, placed = tgt.build_configs(ff, targets, n_configs, prior=base["configs"],
+                                        idx0=len(base["configs"]))
+    cfg_path = out / "configs.json"
+    cfg_path.write_text(json.dumps({"configs": configs, "log": [{"targets": len(p)} for p in placed],
+                                    "base": str(run)}, indent=0))
+    (out / "targets.json").write_text(json.dumps(
+        [{"t": list(tg["t"]), "sels": [[list(i[0]), i[1], k] for i, k in tg["sels"].items()],
+          "inputs": tg["inputs"], "obs": [[list(i[0]), i[1]] for i in tg["obs"]], "faults": ids}
+         for tg, ids in groups.values()], indent=0))
+    stims = stimuli.build_stims(ff, cfg_path, quiet=True)
+    ffr = fastsim.fault_free(nl, stims, jobs)
+    keep = [st for st in stims if ffr[st.name] is None]
+    for st in stims:
+        if ffr[st.name] is not None:
+            print(f"  left out {st.name}: {ffr[st.name]}", flush=True)
+    fl = [{"id": r["id"], "path": r["path"], "polarity": r["polarity"], "net": nets[int(r["id"])]} for r in und]
+    names, stat = fastsim.run_faults("fabtest", keep, fl, jobs, limit_factor=200, nl=nl, quiet=True) if keep and fl else ([], [])
+    (out / "faultsim").mkdir(exist_ok=True)
+    with (out / "faultsim" / "target.csv").open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["id", "path", "polarity", *names])
+        for f, st in zip(fl, stat):
+            w.writerow([f["id"], f["path"], f["polarity"], *[st[c] for c in names]])
+    new = {f["id"] for f, st in zip(fl, stat) if any(v == "D" for v in st.values())}
+    tot, det, gain = Counter(), Counter(), Counter()
+    for r in rows:
+        k = part_of(spec, r["path"])
+        d = any(r[c] == "D" for c in cfgs)
+        g = (not d) and r["id"] in new
+        for kk in (k, "all"):
+            tot[kk] += 1
+            det[kk] += d or g
+            gain[kk] += g
+    L = [f"fabtest target: {len(keep)} of {len(stims)} configs pass the fault-free check; "
+         f"{len(new)} of {len(fl)} undetected faults detected now"]
+    for k in sorted(tot, key=lambda k: (k != "all", -tot[k])):
+        L.append(f"  {k:20s} {tot[k]:8d} faults: {100 * (det[k] - gain[k]) / tot[k]:6.2f}% -> "
+                 f"{100 * det[k] / tot[k]:6.2f}% (+{gain[k]})")
+    text = "\n".join(L) + "\n"
+    (out / "report.txt").write_text(text)
+    return text
+
+
 def opaque_bels(spec) -> list[str]:
     """BEL and macro modules modelled as X sources: "<module> in <type> xN (why)"."""
     from fabtest import bels

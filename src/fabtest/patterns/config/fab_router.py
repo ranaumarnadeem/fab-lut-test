@@ -433,7 +433,7 @@ def sels_of(g: Graph, sel: dict) -> dict:
     return out
 
 
-def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
+def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None, post=None) -> dict:
     cfg = make_cfg(g)
     g.last_seed = seed(cfg, bias) if seed is not None else None
 
@@ -449,6 +449,8 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) ->
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
+    if post is not None:   # e.g. targets (patterns/config/target.py) in the muxes left free
+        g.last_post = post(cfg, bias)
     return fill(g, cfg, open_work, bias)
 
 
@@ -846,10 +848,11 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
               hist0: dict | None = None, prior: list | None = None, seed=None, idx0: int = 0,
-              checkpoint=None):
+              checkpoint=None, post=None):
     """prior: configs already chosen (selects per tile name): their shown items
     are removed first and the new configs only add to them (--extend). idx0: index
-    of the first new config (fill decorrelation, frame order)."""
+    of the first new config (fill decorrelation, frame order). post(cfg, bias): called
+    after the greedy cover, before fill."""
     g = Graph(arr)
     reach = g.reachable()
     open_work = {(t, o, k): fabric.work_items_m(MM((t, o)), k) for t, o in g.ids if (t, o) in reach
@@ -867,7 +870,7 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
     configs, log, stall = [], [], 0
     while len(configs) < max_configs and any(open_work.values()):
         t0 = time.time()
-        sels = build_config(g, open_work, hist, idx0 + len(configs), seed)
+        sels = build_config(g, open_work, hist, idx0 + len(configs), seed, post)
         shown = fabric.grade(arr, sels)
         for t, o in g.ids:
             k = sels[t].get(o, 0) if arr.MT(t)[o].model != "direct" else 0
