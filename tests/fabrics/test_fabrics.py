@@ -8,7 +8,8 @@ fault-free check + sampled fault simulation, export (with the port test), bit_ge
 equality and the Icarus replay of the first configs and the port test. Scratch runs in
 build/tests/<name>. Slow (synth: minutes). OPAQUE: BELs a fabric's report must name as
 opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none. SAT soundness:
-SAT_SAMPLE detected faults per fabric, none proven untestable.
+SAT_SAMPLE detected faults per fabric, none proven untestable. compact: 2 configs, the
+report of the new run equals the cover.
 """
 from __future__ import annotations
 
@@ -31,6 +32,21 @@ def run(*cmd) -> subprocess.CompletedProcess:
 
 ALL = ["F1", "F2", "F3", "F4"]
 SAT_SAMPLE = 200
+
+
+def compact_ok(s, w: Path, run_dir: Path) -> str:
+    """fabtest compact to 2 configs: the new run reports the cover's coverage without
+    simulating again."""
+    import json
+    from fabtest import pipeline
+    pipeline.compact(s, w, run_dir, max_configs=2, name=run_dir.name + "_c")
+    c = run_dir.parent / (run_dir.name + "_c")
+    m = json.loads((c / "compact.json").read_text())
+    want = 100 * m["curve"][m["picked"] - 1][2] / m["faults"]
+    got = pipeline.report(s, c).splitlines()[1]
+    if f"{want:6.2f}%" not in got or not pipeline.faultsim_done(w, c, m["faults"], 1, m["faults"]):
+        return f"report {got.strip()} (cover {want:.2f}%)"
+    return ""
 
 
 def sat_sound(w: Path, run_dir: Path) -> list[str]:
@@ -84,6 +100,9 @@ def main() -> None:
         print(f"  {name}: " + rep.splitlines()[1].strip())
         if pipeline.opaque_bels(s) != OPAQUE.get(name, []):
             fails.append(f"{name}: opaque BELs {pipeline.opaque_bels(s)}, want {OPAQUE.get(name, [])}")
+        bad = compact_ok(s, w, run_dir)
+        if bad:
+            fails.append(f"{name}: compact: {bad}")
         bad = sat_sound(w, run_dir)
         if bad:
             fails.append(f"{name}: SAT calls detected faults untestable: {bad[:3]}")

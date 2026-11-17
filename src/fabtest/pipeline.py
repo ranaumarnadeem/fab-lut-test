@@ -371,6 +371,79 @@ def target(spec, work: Path, run: Path, n_configs: int = 8, jobs: int = 4, max_f
     return text
 
 
+def cover(rows: list[dict], cfgs: list[str]) -> list[tuple[str, int, int]]:
+    """Greedy set cover of the detected faults: configs in order, each the one that adds the
+    most faults not yet detected (ties: the earlier config); (config, new, cumulative) until
+    no config adds one."""
+    det = {c: {k for k, r in enumerate(rows) if r[c] == "D"} for c in cfgs}
+    done, out, left = set(), [], list(cfgs)
+    while left:
+        c = max(left, key=lambda c: (len(det[c] - done), -cfgs.index(c)))
+        new = det[c] - done
+        if not new:
+            break
+        done |= new
+        left.remove(c)
+        out.append((c, len(new), len(done)))
+    return out
+
+
+def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_configs: int | None = None,
+            name: str | None = None) -> str:
+    """A run with fewer configs (greedy set cover over the fault simulation of run): the
+    fewest configs that detect target_pct % of what all of them detect (default 100), or
+    the max_configs best. The new run <run>_c<k> holds them in cover order, renumbered
+    FF00.., with the fault simulation columns carried over (report and export work on it
+    without simulating again); compact.json the whole cover curve."""
+    fdir = run / "faultsim"
+    chunks = sorted(fdir.glob("chunk_*.csv"))
+    rows = [r for p in chunks for r in csv.DictReader(p.open())]
+    if not rows:
+        raise SystemExit("fabtest compact: no fault simulation results (run faultsim first)")
+    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    curve = cover(rows, cfgs)
+    final = curve[-1][2] if curve else 0
+    if max_configs:
+        k = min(max_configs, len(curve))
+    else:
+        goal = final * (100.0 if target_pct is None else target_pct) / 100
+        k = next((i + 1 for i, e in enumerate(curve) if e[2] >= goal - 1e-9), len(curve))
+    pick = [c for c, _, _ in curve[:k]]
+    data = json.loads((run / "configs.json").read_text())
+    idx = {f"FF{i:02d}": i for i in range(len(data["configs"]))}
+    out = run.parent / (name or f"{run.name}_c{k}")
+    if out.exists():
+        shutil.rmtree(out)
+    (out / "faultsim").mkdir(parents=True)
+    new = {"configs": [data["configs"][idx[c]] for c in pick],
+           "log": [{"from": c, **(data.get("log") or [{}] * len(data["configs"]))[idx[c]]} for c in pick],
+           "chains": data.get("chains"), "compacted_from": str(run)}
+    (out / "configs.json").write_text(json.dumps(new, indent=0))
+    ren = {c: f"FF{i:02d}" for i, c in enumerate(pick)}
+    for p in chunks:
+        rs = list(csv.DictReader(p.open()))
+        with (out / "faultsim" / p.name).open("w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["id", "path", "polarity", *ren.values()])
+            for r in rs:
+                w.writerow([r["id"], r["path"], r["polarity"], *[r[c] for c in pick]])
+    meta = json.loads((fdir / "sample.json").read_text())
+    meta["configs"] = hashlib.sha1((out / "configs.json").read_bytes()).hexdigest()
+    (out / "faultsim" / "sample.json").write_text(json.dumps(meta))
+    (out / "faultsim" / "configs.json").write_text(json.dumps({"kept": list(ren.values()), "left_out": []}))
+    marks = {m: next(i + 1 for i, e in enumerate(curve) if e[2] >= final * m / 100) for m in (90, 95, 99, 100)} if curve else {}
+    (out / "compact.json").write_text(json.dumps({"from": str(run), "faults": len(rows), "detected": final,
+                                                  "configs": len(cfgs), "curve": curve, "picked": k,
+                                                  "configs_for_pct": marks}, indent=0))
+    n = len(rows)
+    L = [f"fabtest compact: {len(cfgs)} configs detect {final} of {n} faults ({100 * final / n:.2f}%); "
+         f"{k} kept ({100 * curve[k - 1][2] / n:.2f}%) -> {out}" if curve else "fabtest compact: nothing detected"]
+    L += [f"  {m:3d}% of it: {c} configs" for m, c in marks.items()]
+    text = "\n".join(L) + "\n"
+    print(text, end="")
+    return text
+
+
 def opaque_bels(spec) -> list[str]:
     """BEL and macro modules modelled as X sources: "<module> in <type> xN (why)"."""
     from fabtest import bels

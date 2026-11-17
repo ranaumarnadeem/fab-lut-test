@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import ROOT, TEST_RUNS, demo_work  # noqa: E402
 
-CMDS = ["run", "init", "info", "synth", "route", "faultsim", "report", "untestable", "export", "cfgtest",
+CMDS = ["run", "init", "info", "synth", "route", "faultsim", "report", "untestable", "compact", "export",
+        "cfgtest",
         "bitgen-check"]
 
 

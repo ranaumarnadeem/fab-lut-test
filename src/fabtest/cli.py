@@ -1,5 +1,5 @@
 """fabtest command line (run, init, info, synth, route, faultsim, report, powerup, untestable,
-export, cfgtest, bitgen-check).
+compact, export, cfgtest, bitgen-check).
 
   python3 -m fabtest run <FABulous project> [--suite default] [--run NAME] [--configs N]
                          [--sample N] [--jobs N] [--no-export] [--cfgtest] [--work DIR]
@@ -11,6 +11,7 @@ export, cfgtest, bitgen-check).
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
   python3 -m fabtest untestable <work dir> [--run NAME] [--jobs 4]
+  python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -112,6 +113,12 @@ def cmd_untestable(a) -> None:
     print(pipeline.untestable(spec.load(w), w, _run(a), a.jobs), end="")
 
 
+def cmd_compact(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    pipeline.compact(spec.load(w), w, _run(a), a.target, a.configs, a.to)
+
+
 def cmd_export(a) -> None:
     from fabtest import export, pipeline, spec
     w = Path(a.work)
@@ -198,6 +205,12 @@ def main(argv=None) -> None:
     p.add_argument("work")
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--jobs", type=int, default=4)
+    p = sub.add_parser("compact", help="fewer configs: greedy set cover of the fault simulation")
+    p.add_argument("work")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--target", type=float, help="percent of what all configs detect (default 100)")
+    p.add_argument("--configs", type=int, help="keep the N best configs instead")
+    p.add_argument("--to", help="name of the new run (default: <run>_c<N>)")
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
@@ -221,5 +234,5 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "untestable": cmd_untestable,
-     "export": cmd_export,
+     "compact": cmd_compact, "export": cmd_export,
      "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)
