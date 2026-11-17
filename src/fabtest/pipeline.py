@@ -313,7 +313,7 @@ def report(spec, run: Path) -> str:
             det[kk] += d
     unt = _untestable_ids(work_of(run), run, rows, cfgs)
     utot = Counter()
-    for r in rows:
+    for r in rows if unt else ():
         if int(r["id"]) in unt:
             for kk in (part_of(spec, r["path"]), "all"):
                 utot[kk] += 1
