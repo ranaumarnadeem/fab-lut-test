@@ -62,10 +62,13 @@ class Checker:
     def readers(self, net: int) -> np.ndarray:
         return self.nl.rd_idx[self.nl.rd_off[net]:self.nl.rd_off[net + 1]]
 
-    def check(self, net: int, pol: int, fix=None) -> str:
+    def check(self, net: int, pol: int, fix=None, fixes=None) -> str:
         """fix: optional per-net values (int8: 0 / 1, other: free) for the free nets of the
         window, e.g. the config latches of one loaded config: then T / U answer whether the
-        fault is detectable in the tile under that config."""
+        fault is detectable in the tile under that config. fixes: a list of such arrays,
+        solved incrementally on one CNF (assumptions); self.hits is then the list of their
+        indices that are T (empty when the fault is U or C without fixes)."""
+        self.hits = []
         from pysat.solvers import Cadical195
         nl, typ, out, ins = self.nl, self.nl.type, self.nl.out, self.ins
         rd = self.readers(net)
@@ -187,4 +190,17 @@ class Checker:
         clauses.append(diffs)
         self.why = "redundant"
         with Cadical195(bootstrap_with=clauses) as s:
-            return "T" if s.solve() else "U"
+            if not s.solve():
+                return "U"
+            if fixes is not None:
+                free = [m for m in V if m not in F and (self.drv[m] < 0 or not inwin(int(self.drv[m]))
+                                                        or typ[self.drv[m]] in (LATCH, DFF))]
+                fa = np.array(free, dtype=np.int64)
+                va = np.array([V[m] for m in free], dtype=np.int64)
+                for k, fx in enumerate(fixes):
+                    vals = fx[fa]
+                    sel = (vals == 0) | (vals == 1)
+                    assume = np.where(vals[sel] == 1, va[sel], -va[sel]).tolist()
+                    if s.solve(assumptions=assume):
+                        self.hits.append(k)
+            return "T"
