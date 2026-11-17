@@ -413,6 +413,21 @@ The targeted configs detect nearly the same faults (378 of their 405 also by the
 ones): a target fails where the router fails, mostly because the mux it needs is taken by
 another route in that config. What helps is more configs: F1 85.84% with 24, 91.22% with 80.
 
+More configs and `fabtest compact` (demo, the 96-config set extended by the router to 256:
+93.50% of the router items instead of 83.5%, 50 min; fault simulation of a 5,000-fault
+sample, every config, 3.5 h on 4 threads):
+
+| configs (router order) | 24 | 48 | 96 | 160 | 256 |
+|---|---|---|---|---|---|
+| coverage (+- 0.7 to 1.2) | 77.98% | 84.14% | 89.00% | 91.72% | **92.78%** |
+
+`fabtest compact` (greedy set cover of the fault simulation) keeps 92 configs for 99% of
+that (91.88%), 48 for 95%, 134 for all of it. On faults it did not choose from (cover on
+half the sample, measured on the other half) the gain over the router's own first k is
+small: 79.40 vs 77.76% at 24, 89.92 vs 89.08% at 92, 90.40 vs 91.00% at 134. The router
+order is close to greedy already, and 2,500 faults are too few to choose among 256
+configs: compaction needs the whole fault list or the router items, not a sample.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
@@ -525,6 +540,7 @@ scripts/fabtest route build/fabtest/<fabric> --run r1 --configs 24
 scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
+scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99   # fewest configs for 99%
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault
