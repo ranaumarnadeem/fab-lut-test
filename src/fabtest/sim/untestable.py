@@ -62,7 +62,10 @@ class Checker:
     def readers(self, net: int) -> np.ndarray:
         return self.nl.rd_idx[self.nl.rd_off[net]:self.nl.rd_off[net + 1]]
 
-    def check(self, net: int, pol: int) -> str:
+    def check(self, net: int, pol: int, fix=None) -> str:
+        """fix: optional per-net values (int8: 0 / 1, other: free) for the free nets of the
+        window, e.g. the config latches of one loaded config: then T / U answer whether the
+        fault is detectable in the tile under that config."""
         from pysat.solvers import Cadical195
         nl, typ, out, ins = self.nl, self.nl.type, self.nl.out, self.ins
         rd = self.readers(net)
@@ -120,6 +123,8 @@ class Checker:
                 if c < 0 or not inwin(int(c)) or typ[c] in (LATCH, DFF):
                     if m in self.const:
                         clauses.append([V[m] if self.const[m] else -V[m]])
+                    elif fix is not None and fix[m] in (0, 1):
+                        clauses.append([V[m] if fix[m] else -V[m]])
                     continue
                 for x in ins[c]:
                     x = int(x)
