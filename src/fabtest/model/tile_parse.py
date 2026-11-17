@@ -39,7 +39,8 @@ class Mux:
     out: str            # switch-matrix port driven
     inputs: list[str]   # switch-matrix ports, A0 first
     sel: list[int]      # switch-matrix local config bits, S0 first
-    kind: str           # "direct" or the cus_mux module name
+    kind: str           # "direct" or the cus_mux module name (the equivalent one for generic)
+    style: str = "custom"   # MultiplexerStyle: custom (cus_mux cell) or generic (vector index)
 
 
 BLOCK_RE = re.compile(r"//switch matrix multiplexer (\w+) MUX-(\d+)\n(.*?)(?=\n //switch matrix multiplexer |\Z)", re.S)
@@ -62,11 +63,22 @@ def parse_switch_matrix(path: Path) -> tuple[dict[str, Mux], int, set[str], set[
             muxes[out] = Mux(out, [d.group(1)], [], "direct")
             continue
         a = re.search(rf"assign {out}_input = \{{([^}}]*)\}};", body)
-        inst = re.search(r"(cus_mux\d+)\s+\w+\s*\((.*?)\);", body, re.S)
-        if not a or not inst:
+        if not a:
             raise SystemExit(f"{out}: cannot parse MUX-{n}")
         vec = [s.strip() for s in a.group(1).split(",")]
         inputs = list(reversed(vec))  # {msb, ..., lsb}: A0 = lsb
+        g = re.search(rf"assign (?:#\d+ )?{out} = {out}_input\[ConfigBits\[(\d+)(?::(\d+))?\]\];", body)
+        if g:   # MultiplexerStyle generic: out = in[ConfigBits[hi:lo]], same code as cus_mux
+            hi = int(g.group(1))
+            lo = int(g.group(2)) if g.group(2) else hi
+            width = 2 ** (n - 1).bit_length()
+            if len(inputs) != n or hi - lo + 1 != (width - 1).bit_length():
+                raise SystemExit(f"{out}: inconsistent generic mux block")
+            muxes[out] = Mux(out, inputs, list(range(lo, hi + 1)), f"cus_mux{width}1", "generic")
+            continue
+        inst = re.search(r"(cus_mux\d+)\s+\w+\s*\((.*?)\);", body, re.S)
+        if not inst:
+            raise SystemExit(f"{out}: cannot parse MUX-{n}")
         sel_pins = {p: int(b) + int(o) for p, b, o in
                     re.findall(r"\.(S\d?)\(ConfigBits\[(\d+)\+(\d+)\]\)", inst.group(2))}
         order = ["S"] if "S" in sel_pins else [f"S{i}" for i in range(len(sel_pins))]

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Validation fabrics end to end (P7): fabtest on fabrics other than the demo.
 
-  python3 tests/fabrics/test_fabrics.py [F1 F2] [--configs 4] [--sample 2000] [--replay 2]
+  python3 tests/fabrics/test_fabrics.py [F1 F2 F3 F4] [--configs 4] [--sample 2000] [--replay 2]
 
 Per fabric (build/fabrics/<name>, made by make.py when missing): init, synth, route,
 fault-free check + sampled fault simulation, export (with the port test), bit_gen byte
 equality and the Icarus replay of the first configs and the port test. Scratch runs in
-build/tests/<name>. Slow (synth: minutes).
+build/tests/<name>. Slow (synth: minutes). OPAQUE: BELs a fabric's report must name as
+opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none.
 """
 from __future__ import annotations
 
@@ -27,11 +28,15 @@ def run(*cmd) -> subprocess.CompletedProcess:
     return r
 
 
+ALL = ["F1", "F2", "F3", "F4"]
+OPAQUE = {"F3": ["ALU4 in CUST x3 (no plugin for the module)"]}
+
+
 def main() -> None:
     args = sys.argv[1:]
     opt = {k: args[i + 1] for i, k in enumerate(args) if k.startswith("--")}
     names = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or not args[i - 1].startswith("--"))]
-    names = names or ["F1", "F2"]
+    names = names or ALL
     n_cfg, sample, replay = int(opt.get("--configs", 4)), int(opt.get("--sample", 2000)), int(opt.get("--replay", 2))
     from fabtest import pipeline, project
     fails = []
@@ -56,6 +61,8 @@ def main() -> None:
             fails.append(f"{name}: configs fail the fault-free check: {kept}")
         rep = pipeline.report(s, run_dir)
         print(f"  {name}: " + rep.splitlines()[1].strip())
+        if pipeline.opaque_bels(s) != OPAQUE.get(name, []):
+            fails.append(f"{name}: opaque BELs {pipeline.opaque_bels(s)}, want {OPAQUE.get(name, [])}")
         export.export(s, w, run_dir, only=list(range(replay)), ports=True)   # with the port test
         if not export.bitgen_check(s, w, run_dir / "configs.json", list(range(replay))):
             fails.append(f"{name}: bitgen-check")

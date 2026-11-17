@@ -154,6 +154,13 @@ class FullFabric(fabric.Array):
         self.in_drv = {}
         for t, bitname, wb in readers:
             self.in_drv[(t, bitname)] = drv.get(wb)
+        # tile inputs eFPGA.v leaves unconnected (e.g. Ci of a LUT4AB under a RegFile,
+        # which has no Co): undriven, as an open wire at the fabric edge
+        for t, typ in self.types.items():
+            for p, (d, w) in self.tports[typ].items():
+                if d == "input" and p not in CFG_PORTS:
+                    for k in range(w):
+                        self.in_drv.setdefault((t, f"{p}[{k}]" if self._is_bus(t, p) else p), None)
         self.out_port = {}           # (tile, output port bit) -> top output port
         for t, p, e in conns:
             d, w = self.tports[self.types[t]].get(p, (None, 0))

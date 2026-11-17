@@ -191,6 +191,23 @@ def part_of(spec, path: str) -> str:
     return "top-level wiring"
 
 
+def opaque_bels(spec) -> list[str]:
+    """BEL and macro modules modelled as X sources: "<module> in <type> xN (why)"."""
+    from fabtest import bels
+    from fabtest.bels import std
+    count = Counter(t for _, t in spec.tiles())
+    out = []
+    for typ, k in sorted(bels.classify(spec).items()):
+        mods = Counter(m for _, m, pl in k["plugins"] if pl == std.OPAQUE.name)
+        forced = spec.d.get("opaque", ())
+        out += [f"{m} in {typ} x{count[typ] * n} ({'fabtest.toml [bels] opaque' if m in forced else k['why'] or 'no plugin for the module'})"
+                for m, n in sorted(mods.items()) if count[typ]]
+    for m in spec.d["top"]["macros"]:
+        if m["module"] in spec.d.get("opaque", ()) or not std.macro_for(m["module"]):
+            out.append(f"macro {m['module']} {m['inst']}")
+    return out
+
+
 def report(spec, run: Path) -> str:
     fdir = run / "faultsim"
     rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
@@ -221,6 +238,9 @@ def report(spec, run: Path) -> str:
     left = json.loads((fdir / "configs.json").read_text()).get("left_out", []) if (fdir / "configs.json").exists() else []
     if left:
         L.append(f"  configs left out (fault-free check): {', '.join(left)}")
+    op = opaque_bels(spec)
+    if op:
+        L.append("  opaque, outputs X and faults not tested: " + ", ".join(op))
     text = "\n".join(L) + "\n"
     (run / "report.txt").write_text(text)
     return text
