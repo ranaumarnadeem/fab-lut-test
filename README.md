@@ -396,6 +396,23 @@ value, 135 are detected, 163 need other input values. So the gap is spread over 
 choice (a select code or LUT table no config uses), input combinations (the other mux
 inputs at the opposite value) and observation, not X alone.
 
+Targeted configs from the SAT models (experiment, `patterns/config/target.py`,
+`pipeline.target`; no command). Every mux of the flat netlist as a gate tree (the forward
+cone of its select bits, so no names are needed: F1 1,348 of 1,348 muxes); per undetected
+fault in a tree a SAT model on its trees, lifted to the values that force a difference at
+one mux output: one select code and one or two inputs for most faults. The router places
+these (codes, inputs from pads, the output to observation) in extra configs. On F1 they do
+not beat the router's own extra configs:
+
+| F1, 8 more configs on top of | ordinary configs | targeted configs |
+|---|---|---|
+| 24 configs (85.84%; 4 more) | +1,327 faults | +1,340 (targets after the cover), +690 (before) |
+| 80 configs (91.22%, router near saturation) | +428 | +405 (after), +332 (before) |
+
+The targeted configs detect nearly the same faults (378 of their 405 also by the ordinary
+ones): a target fails where the router fails, mostly because the mux it needs is taken by
+another route in that config. What helps is more configs: F1 85.84% with 24, 91.22% with 80.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix

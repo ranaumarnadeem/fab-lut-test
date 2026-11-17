@@ -324,7 +324,7 @@ def place(cfg, tg: dict, wp: dict, bias: int) -> bool:
 
 
 def build_configs(ff, targets: list[dict], max_configs: int, prior: list | None = None,
-                  idx0: int = 0, verbose: bool = True):
+                  idx0: int = 0, verbose: bool = True, first: bool = False):
     """Configs for the targets. Each config: the observation backbone, the router's own
     greedy cover of the items the prior configs leave open, then as many targets as fit in
     the muxes left free, then its fill (fab_router.route_all with post=). Returns (configs as
@@ -345,6 +345,13 @@ def build_configs(ff, targets: list[dict], max_configs: int, prior: list | None 
                   f"not placed: {dict(FAILS)}", flush=True)
         FAILS.clear()
         return len(placed)
-    configs, _, _, log, _ = fr.route_all(ff, max_configs, verbose=verbose, prior=prior, idx0=idx0,
-                                         seed=lambda cfg, b: fr.backbone(cfg, b), post=post)
+    if first:   # targets right after the backbone, before the cover
+        def seed(cfg, b):
+            rep = fr.backbone(cfg, b)
+            post(cfg, b)
+            return rep
+        configs, _, _, log, _ = fr.route_all(ff, max_configs, verbose=verbose, prior=prior, idx0=idx0, seed=seed)
+    else:
+        configs, _, _, log, _ = fr.route_all(ff, max_configs, verbose=verbose, prior=prior, idx0=idx0,
+                                             seed=lambda cfg, b: fr.backbone(cfg, b), post=post)
     return configs, state["placed"][:len(configs)]

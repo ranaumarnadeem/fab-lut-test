@@ -278,7 +278,7 @@ def untestable(spec, work: Path, run: Path, jobs: int = 4) -> str:
 
 
 def target(spec, work: Path, run: Path, n_configs: int = 8, jobs: int = 4, max_faults: int = 0,
-           out: Path | None = None) -> str:
+           out: Path | None = None, first: bool = False) -> str:
     """SAT-targeted configs (patterns/config/target.py) for the undetected switch-matrix
     faults of a run: <run>_target/ with configs.json (the new configs only), targets.json,
     faultsim/target.csv (the base run's undetected faults in the new configs) and
@@ -329,7 +329,7 @@ def target(spec, work: Path, run: Path, n_configs: int = 8, jobs: int = 4, max_f
     base = json.loads((run / "configs.json").read_text())
     fr.CHAINS = base.get("chains", 2)
     configs, placed = tgt.build_configs(ff, targets, n_configs, prior=base["configs"],
-                                        idx0=len(base["configs"]))
+                                        idx0=len(base["configs"]), first=first)
     cfg_path = out / "configs.json"
     cfg_path.write_text(json.dumps({"configs": configs, "log": [{"targets": len(p)} for p in placed],
                                     "base": str(run)}, indent=0))
