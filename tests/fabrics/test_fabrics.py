@@ -7,7 +7,8 @@ Per fabric (build/fabrics/<name>, made by make.py when missing): init, synth, ro
 fault-free check + sampled fault simulation, export (with the port test), bit_gen byte
 equality and the Icarus replay of the first configs and the port test. Scratch runs in
 build/tests/<name>. Slow (synth: minutes). OPAQUE: BELs a fabric's report must name as
-opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none.
+opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none. SAT soundness:
+SAT_SAMPLE detected faults per fabric, none proven untestable.
 """
 from __future__ import annotations
 
@@ -29,6 +30,26 @@ def run(*cmd) -> subprocess.CompletedProcess:
 
 
 ALL = ["F1", "F2", "F3", "F4"]
+SAT_SAMPLE = 200
+
+
+def sat_sound(w: Path, run_dir: Path) -> list[str]:
+    """SAT untestable check (sim/untestable.py) on detected faults of the sample: none may come
+    out untestable (a detected fault has a test)."""
+    import csv
+    import random
+    from fabtest.sim import untestable
+    from fabtest.sim.fastsim import fastsim
+    rows = [r for p in sorted((run_dir / "faultsim").glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    det = [r for r in rows if any(r[c] == "D" for c in cfgs)]
+    det = random.Random(3).sample(det, min(SAT_SAMPLE, len(det)))
+    nets = {int(r["id"]): r["net"] for r in csv.DictReader((w / "synth" / "faults.csv").open())}
+    nl = fastsim.Netlist("fabtest", w / "synth" / "netlist.json")
+    ck = untestable.Checker(nl)
+    bad = [r["path"] for r in det if ck.check(nl.net_bit[nets[int(r["id"])]], int(r["polarity"])) == "U"]
+    print(f"  SAT on {len(det)} detected faults: {len(bad)} untestable", flush=True)
+    return bad
 OPAQUE = {"F3": ["ALU4 in CUST x3 (no plugin for the module)"]}
 
 
@@ -63,6 +84,9 @@ def main() -> None:
         print(f"  {name}: " + rep.splitlines()[1].strip())
         if pipeline.opaque_bels(s) != OPAQUE.get(name, []):
             fails.append(f"{name}: opaque BELs {pipeline.opaque_bels(s)}, want {OPAQUE.get(name, [])}")
+        bad = sat_sound(w, run_dir)
+        if bad:
+            fails.append(f"{name}: SAT calls detected faults untestable: {bad[:3]}")
         export.export(s, w, run_dir, only=list(range(replay)), ports=True)   # with the port test
         if not export.bitgen_check(s, w, run_dir / "configs.json", list(range(replay))):
             fails.append(f"{name}: bitgen-check")

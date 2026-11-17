@@ -1,5 +1,5 @@
-"""fabtest command line (run, init, info, synth, route, faultsim, report, powerup, export,
-cfgtest, bitgen-check).
+"""fabtest command line (run, init, info, synth, route, faultsim, report, powerup, untestable,
+export, cfgtest, bitgen-check).
 
   python3 -m fabtest run <FABulous project> [--suite default] [--run NAME] [--configs N]
                          [--sample N] [--jobs N] [--no-export] [--cfgtest] [--work DIR]
@@ -10,6 +10,7 @@ cfgtest, bitgen-check).
   python3 -m fabtest faultsim <work dir> [--run NAME] [--configs-from JSON] [--sample 2000] [--jobs 4]
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
+  python3 -m fabtest untestable <work dir> [--run NAME] [--jobs 4]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -105,6 +106,12 @@ def cmd_powerup(a) -> None:
     print(pipeline.powerup(spec.load(w), w, _run(a), a.sample, a.seed, a.max_u, a.jobs), end="")
 
 
+def cmd_untestable(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    print(pipeline.untestable(spec.load(w), w, _run(a), a.jobs), end="")
+
+
 def cmd_export(a) -> None:
     from fabtest import export, pipeline, spec
     w = Path(a.work)
@@ -187,6 +194,10 @@ def main(argv=None) -> None:
     p.add_argument("--seed", type=int, default=2)
     p.add_argument("--max-u", type=int, default=10, help="largest undecided set enumerated")
     p.add_argument("--jobs", type=int, default=4)
+    p = sub.add_parser("untestable", help="SAT proof of the undetected faults that no test can detect")
+    p.add_argument("work")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--jobs", type=int, default=4)
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
@@ -209,5 +220,6 @@ def main(argv=None) -> None:
     p.add_argument("--only", help="config indices (default 0,1)")
     a = ap.parse_args(argv)
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
-     "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "export": cmd_export,
+     "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "untestable": cmd_untestable,
+     "export": cmd_export,
      "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)

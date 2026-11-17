@@ -191,6 +191,92 @@ def part_of(spec, path: str) -> str:
     return "top-level wiring"
 
 
+def work_of(run: Path) -> Path | None:
+    """The work dir of a run (results/<fabric>/<run> -> build/fabtest/<fabric>), if it exists."""
+    from fabtest.paths import REPO
+    w = REPO / "build" / "fabtest" / run.parent.name
+    return w if w.exists() else None
+
+
+def _undetected(rows, cfgs) -> list[dict]:
+    return [r for r in rows if not any(r[c] == "D" for c in cfgs)]
+
+
+def _untestable_ids(work, run: Path, rows, cfgs) -> set[int] | None:
+    """Ids proven untestable (run/faultsim/untestable.csv) when it was made for these
+    undetected faults and this netlist; None otherwise."""
+    f, m = run / "faultsim" / "untestable.csv", run / "faultsim" / "untestable.json"
+    if not f.exists() or not m.exists():
+        return None
+    meta = json.loads(m.read_text())
+    ids = sorted(int(r["id"]) for r in _undetected(rows, cfgs))
+    if meta.get("ids") != hashlib.sha1(json.dumps(ids).encode()).hexdigest() or \
+            (work and meta.get("netlist") != _mtime_key(work / "synth" / "netlist.json")):
+        return None
+    return {int(r["id"]) for r in csv.DictReader(f.open()) if r["sat"] == "U"}
+
+
+_CK = None
+
+
+def _check_one(item):
+    st = _CK.check(item[1], item[2])
+    return item[0], (st, _CK.why if st == "U" else "")
+
+
+def untestable(spec, work: Path, run: Path, jobs: int = 4) -> str:
+    """SAT proof per undetected fault of the run (sim/untestable.py): run/faultsim/
+    untestable.csv (id, path, polarity, sat: U untestable, T testable in its tile, C not
+    decided; why: dead or redundant), then the report with the coverage of the testable faults."""
+    global _CK
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    from fabtest.sim import untestable as ut
+    from fabtest.sim.fastsim import fastsim
+    fdir = run / "faultsim"
+    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    if not rows:
+        raise SystemExit("fabtest untestable: no fault simulation results (run faultsim first)")
+    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    und = _undetected(rows, cfgs)
+    ids = sorted(int(r["id"]) for r in und)
+    key = {"ids": hashlib.sha1(json.dumps(ids).encode()).hexdigest(),
+           "netlist": _mtime_key(work / "synth" / "netlist.json")}
+    if (fdir / "untestable.json").exists() and json.loads((fdir / "untestable.json").read_text()) == key \
+            and (fdir / "untestable.csv").exists():
+        print(f"fabtest untestable: {fdir / 'untestable.csv'} is up to date")
+        return report(spec, run)
+    try:
+        import pysat  # noqa: F401
+    except ImportError:
+        raise SystemExit("fabtest untestable: needs python-sat (pip install python-sat)")
+    nets = {i: None for i in ids}
+    with (work / "synth" / "faults.csv").open() as fh:
+        for r in csv.DictReader(fh):
+            if int(r["id"]) in nets:
+                nets[int(r["id"])] = r["net"]
+    t0 = time.time()
+    nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
+    _CK = ut.Checker(nl)
+    items = [(int(r["id"]), nl.net_bit[nets[int(r["id"])]], int(r["polarity"])) for r in und]
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=mp.get_context("fork")) as ex:
+        st = dict(ex.map(_check_one, items, chunksize=64))
+    tmp = fdir / "untestable.tmp"
+    with tmp.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["id", "path", "polarity", "sat", "why"])
+        for r in und:
+            w.writerow([r["id"], r["path"], r["polarity"], *st[int(r["id"])]])
+    tmp.replace(fdir / "untestable.csv")
+    (fdir / "untestable.json").write_text(json.dumps(key))
+    c = Counter(v[0] for v in st.values())
+    why = Counter(v[1] for v in st.values() if v[0] == "U")
+    print(f"fabtest untestable: {len(und)} undetected faults: {c['U']} untestable ({why['dead']} dead, "
+          f"{why['redundant']} redundant), {c['T']} testable in their tile, {c['C']} not decided "
+          f"({time.time() - t0:.0f} s)")
+    return report(spec, run)
+
+
 def opaque_bels(spec) -> list[str]:
     """BEL and macro modules modelled as X sources: "<module> in <type> xN (why)"."""
     from fabtest import bels
@@ -225,16 +311,27 @@ def report(spec, run: Path) -> str:
         for kk in (k, "all"):
             tot[kk] += 1
             det[kk] += d
+    unt = _untestable_ids(work_of(run), run, rows, cfgs)
+    utot = Counter()
+    for r in rows:
+        if int(r["id"]) in unt:
+            for kk in (part_of(spec, r["path"]), "all"):
+                utot[kk] += 1
     every = len(rows) == meta["of"]
     L = [f"fabtest report: all {len(rows)} faults, {len(cfgs)} configs" if every else
          f"fabtest report: {len(rows)} of {meta['of']} faults sampled (seed {meta['seed']}), {len(cfgs)} configs"]
     for k in sorted(tot, key=lambda k: (k != "all", -tot[k])):
         p = det[k] / tot[k]
+        tail = ""
+        if unt is not None:   # coverage of the faults not proven untestable
+            tail = f"   {100 * det[k] / max(tot[k] - utot[k], 1):6.2f}% of testable ({utot[k]} untestable)"
         if every:   # every fault simulated: exact
-            L.append(f"  {k:20s} {tot[k]:8d} faults:  {100 * p:6.2f}%")
+            L.append(f"  {k:20s} {tot[k]:8d} faults:  {100 * p:6.2f}%{tail}")
             continue
         ci = 1.96 * math.sqrt(p * (1 - p) / tot[k])
-        L.append(f"  {k:20s} {tot[k]:8d} sampled: {100 * p:6.2f}% +- {100 * ci:.2f}")
+        L.append(f"  {k:20s} {tot[k]:8d} sampled: {100 * p:6.2f}% +- {100 * ci:.2f}{tail}")
+    if unt is not None:
+        L.append("  untestable: proven by SAT on the fault's tile (fabtest untestable)")
     left = json.loads((fdir / "configs.json").read_text()).get("left_out", []) if (fdir / "configs.json").exists() else []
     if left:
         L.append(f"  configs left out (fault-free check): {', '.join(left)}")

@@ -27,6 +27,7 @@ QUICK = {
     "loops": [T / "patterns" / "test_loop_graph.py", "--moves", "10"],
     "export": [T / "export" / "test_export_demo.py"],
     "cfgtest": [T / "cfgtest" / "test_cfgtest_demo.py"],
+    "sat": [T / "sat" / "test_untestable.py"],
 }
 FULL = {
     "r1": [T / "patterns" / "regress_demo.py", "--level", "R1"],

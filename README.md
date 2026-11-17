@@ -345,6 +345,41 @@ On F4 the RegFiles at two tiles from the nearest LUT take their constants at the
 `const_radius` limit (in the 4-config gate run, 8 to 15 of about 450 backbone links and
 pins per config fail, as on F2), and RegFile is the lowest part (57.6%); LUT4AB 80.2%, DSP 71.6 / 79.7%, RAM_IO 84.3%, BlockRAM 77.9%.
 
+### Untestable faults: a SAT proof per fault
+
+`fabtest untestable` takes the faults a run leaves undetected and proves, one by one with
+SAT (pysat, CaDiCaL), which of them no test can detect. The problem is the fault's tile
+(both tiles for a wire between two) with everything that enters it free: the neighbours'
+wires, the pads, every config bit and every flop and latch state. The fault is testable in
+the tile when some assignment makes the fault-free and the faulty tile differ at a tile
+output or in the next state of a flop or latch. No such assignment (UNSAT) is a proof for
+the fabric: a real test has a first clock where the two differ while their stored state is
+still equal. Faults whose cone reaches a flop clock are not decided. A fault comes out:
+
+- **dead**: its cone reaches no tile output and no flop or latch (a wire that leaves the
+  fabric, a mux nobody reads)
+- **redundant**: observable, but SAT finds no difference (logic on a constant input)
+
+The report then gives the coverage of the testable faults too.
+
+| run | undetected | untestable (dead / redundant) | coverage | of testable |
+|---|---|---|---|---|
+| demo, 96 configs, 50k sample (Yosys 0.33 netlist) | 5,460 | 18 (0 / 18) | 89.08% | 89.11% |
+| F1, 24 configs, every fault | 10,110 | 84 (44 / 40) | 85.84% | 85.94% |
+| F2, 24 configs, every fault | 46,511 | 7,856 (7,856 / 0) | 70.91% | **74.58%** |
+| F3, 24 configs, every fault | 26,304 | 5,808 (5,592 / 216) | 77.09% | **81.20%** |
+| F4, 24 configs, 20k sample | 5,374 | 19 (11 / 8) | 73.13% | 73.20% |
+
+On the demo all but 18 of the undetected faults are testable in their tile: every one of
+them has simulation status P (it reaches a pad only as X: a flop, latch or memory word not
+written, a loop), so what is left is test generation, not untestable logic. The small
+fabrics lose whole wires: F2 (6 wide) and F3 (5 wide) are narrower than the 6-tile E6 / W6
+wires, which leave the fabric unread. F3's 216 redundant faults are the GND0 mux input of
+`MultiplexerStyle generic` (synthesised as an AND with a constant 0; the custom style has
+none). Soundness: none of the 44,540 detected faults of the demo sample comes out
+untestable, and the fabrics gate checks 200 detected faults per fabric. 37 ms per fault on
+the demo (one thread).
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
@@ -392,9 +427,10 @@ Tested on Ubuntu 24.04 (Linux or WSL).
 
 - FABulous, with the fabric generated (`FABulous -p <project> run "load_fabric; run_fab"`):
   fabtest reads the project and its generated RTL, it does not run FABulous
-- Yosys (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.10+ with numpy and
+- Yosys (`pip install yowasp-yosys`), Icarus Verilog 12, Python 3.11+ with numpy and
   pybind11, a C / C++ compiler (the fault simulation kernel and the native router are
   built on first use)
+- for `fabtest untestable`: python-sat (`pip install python-sat`, or `pip install .[sat]`)
 
 `scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
 on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix
@@ -455,6 +491,7 @@ scripts/fabtest synth build/fabtest/<fabric>            # gate-level netlist and
 scripts/fabtest route build/fabtest/<fabric> --run r1 --configs 24
 scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
+scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault
@@ -481,7 +518,7 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 | `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report), `cfgtest/` (configuration-logic test) |
 | `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
 | `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
-| `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py` |
+| `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py`; `untestable.py` (SAT proof per fault) |
 | `src/fabtest/synth/` | netlist flow (yosys templates, techmaps) |
 | `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
 | `src/fabtest/native/` | C++ (pybind11) router search and loop check, built on first use into `build/native` (`FABTEST_NATIVE=0`: the Python path, same results) |
