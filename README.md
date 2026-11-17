@@ -380,6 +380,22 @@ none). Soundness: none of the 44,540 detected faults of the demo sample comes ou
 untestable, and the fabrics gate checks 200 detected faults per fabric. 37 ms per fault on
 the demo (one thread).
 
+What stops the testable ones (demo, 600 of the 5,442, `Checker.check(..., fixes=)`: the
+tile's config latches fixed to each of the 96 loaded configs, its data and flop states free):
+
+| | faults |
+|---|---|
+| some loaded config detects it in the tile (median 10 configs) | 320 (53%) |
+| no loaded config can (a config gap) | 189 (32%) |
+| no config found, some solves over the conflict budget (DSP, RegFile) | 88 (15%) |
+| untestable | 3 |
+
+506 of the 600 are switch-matrix mux cells. For the 320, few tile inputs are X in the
+fault-free run (median 2%); with the X inputs free and every other input at its final
+value, 135 are detected, 163 need other input values. So the gap is spread over config
+choice (a select code or LUT table no config uses), input combinations (the other mux
+inputs at the opposite value) and observation, not X alone.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
