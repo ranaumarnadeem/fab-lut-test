@@ -311,19 +311,39 @@ out 1,218 faults (the frame data and frame select register outputs, whose nets c
 model's port names). Most faults left are in config_UART: the checksum, the LED blink
 counter and the hex path.
 
-### Other fabrics (validation fabrics F1, F2)
+### Other fabrics (validation fabrics F1 to F4)
 
-fabtest on two fabrics generated from the demo tiles with other layouts
-(`tests/fabrics/make.py`, FABulous `run_fab`), every fault simulated, 24 configs:
+fabtest on four fabrics generated from the demo tiles with other layouts
+(`tests/fabrics/make.py`, FABulous `run_fab`), 24 configs (`fabtest run --suite default`):
 
 | fabric | layout | faults | coverage | Icarus replay | bit_gen |
 |---|---|---|---|---|---|
 | F1 | 4 x 5: W_IO, 3 x LUT4AB, RAM_IO, 1 BlockRAM | 71,402 | **85.8%** | 24 / 24 | byte-equal |
 | F2 | 6 x 5: RegFile next to W_IO and at the east edge, no DSP | 159,906 | **70.9%** | 24 / 24 | byte-equal |
+| F3 | 5 x 5, MultiplexerStyle generic, a CUST column with a BEL no plugin knows | 114,816 | **77.1%** | 24 / 24 | byte-equal |
+| F4 | 7 x 8, uneven: RegFile / LUT4AB column, RegFile column, DSP, RAM_IO, 3 BlockRAMs | 328,652 | **73.1% +- 0.6** (20k sample) | 24 / 24 | byte-equal |
 
 What the demo did not show: a fabric two rows high bounces its 4-wires between the N and
 S term tiles into undriven rings (F1: 336 nets), and FABulous leaves the west-going inputs
 of the east column open (F2: 192); both are X in the model and the netlist.
+
+F3 and F4 found three more:
+
+- **Generic muxes.** With `MultiplexerStyle generic` FABulous writes each switch-matrix mux
+  as `assign #80 X = X_input[ConfigBits[hi:lo]]` instead of a `cus_mux` cell. The parser
+  reads both forms (same select code), so LUT4AB and W_IO keep their full models.
+- **Delays without a timescale.** The `#80` is `GenerateDelayInSwitchMatrix`. FABulous RTL
+  has no `` `timescale`` and BEL files end with `` `resetall``, so Icarus took 80 s per mux
+  and every pad read X. The export now puts `timescale.v` (1 ps) before each RTL file.
+- **Unconnected inputs.** eFPGA.v leaves the `Ci` of a LUT4AB under a RegFile unconnected
+  (RegFile has no `Co`). Such inputs are now undriven (X), like the open wires at the edge.
+
+An unknown BEL comes out opaque: `fabtest info --bels` and the report name it
+("opaque, outputs X and faults not tested: ALU4 in CUST x3"), and its tile's switch matrix
+is still tested (CUST: 53.6% of the 23,082 non-ALU4 faults, none of the ALU4 faults).
+On F4 the RegFiles at two tiles from the nearest LUT take their constants at the
+`const_radius` limit (in the 4-config gate run, 8 to 15 of about 450 backbone links and
+pins per config fail, as on F2), and RegFile is the lowest part (57.6%); LUT4AB 80.2%, DSP 71.6 / 79.7%, RAM_IO 84.3%, BlockRAM 77.9%.
 
 ### Pinning: shared constants, rotated per config
 
@@ -451,7 +471,7 @@ Tests (the demo fabric; R1 needs the stored 50k-fault run in `results/`, local):
 
 ```bash
 python3 tests/run_all.py             # quick, about 5 min
-python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay, F1 / F2, fabtest run
+python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay, F1 to F4, fabtest run
 ```
 
 ## Layout
