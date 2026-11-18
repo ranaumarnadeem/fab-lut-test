@@ -475,9 +475,11 @@ of the configured fabric (530k gates per clock) can reach.
 
 Clock network. FABulous clocks every tile from `UserCLK` through a `clk_buf` per tile
 (UserCLK -> UserCLKo, a chain along each column); synthesis turned each into a wire, so the
-whole clock tree was one net and its segments were not in the fault list.
-`FABTEST_KEEP_CLKBUF=1` keeps them as buffer cells (demo: 158 more cells, 278 faults on
-the 139 clock nets). A stuck segment freezes the flops after it at their power-up values:
+whole clock tree was one net and its segments were not in the fault list. They are now
+kept as buffer cells (`FABTEST_KEEP_CLKBUF=0`: the old netlist; demo: 158 more cells, 296
+more faults, 278 on the 139 clock nets), the report counts them as "clock network" and
+`fabtest clockcheck` simulates each with random power-up states (below; 210 s on the demo,
+its line then in the report). A stuck segment freezes the flops after it at their power-up values:
 every one is X-only (P) in the fault simulation. With 4 random power-up states of the
 3,612 fabric flops and 8 configs of the demo set:
 
@@ -609,6 +611,7 @@ scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
 scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99 --by items   # fewest configs
+scripts/fabtest clockcheck build/fabtest/<fabric> --run r1   # clock network, random power-up states
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault
