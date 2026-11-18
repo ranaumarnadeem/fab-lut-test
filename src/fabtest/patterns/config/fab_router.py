@@ -19,7 +19,6 @@ Configs are added until nothing open is left or configs stop adding items.
 from __future__ import annotations
 
 import heapq
-import os
 import time
 from collections import defaultdict
 
@@ -33,10 +32,6 @@ for _x in sc.LUTS:
     BELDEPS.update(sc.lut_deps(_x))
 BELDEPS.update(sc.mux8_deps(0, 0))
 _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
-# FABTEST_RF_V2=1: RegFile pinning v2: read port B takes the write address bits 0 / 1
-# directly where it routes (A their complement: A and B read different words), and the
-# read data of a RegFile whose pins all got defined values is routed to observation
-RF_V2 = os.environ.get("FABTEST_RF_V2", "0") == "1"
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
 
 
@@ -440,7 +435,6 @@ def sels_of(g: Graph, sel: dict) -> dict:
 
 def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None, post=None) -> dict:
     cfg = make_cfg(g)
-    cfg.open_work_ref = open_work
     g.last_seed = seed(cfg, bias) if seed is not None else None
 
     def work(i):
@@ -543,7 +537,7 @@ def route_to(cfg: Cfg, src: str, targets: set, wires_only: bool = False) -> bool
     try:
         banned: set = set()
         for _ in range(6):
-            path = cfg.route(src, getattr(cfg, "prefer_open", None) or {}, banned)
+            path = cfg.route(src, {}, banned)
             if path is None:
                 return False
             done = []
@@ -687,6 +681,9 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     in nearby tiles, both rotated per config. Returns a report."""
     arr = cfg.g.arr
     links = fails = 0
+    # RegFile configs (patterns/config/regfile.py): read port B takes the write address
+    # bits 0 / 1 where it routes (A their complement), fully pinned RegFiles are listed
+    rf_mode = getattr(cfg, "rf_mode", False)
     cfg.lut_const = {}
     cfg.consts = {0: [], 1: []}
     cfg.set_cut(())
@@ -724,7 +721,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                                 all(route_const(cfg, 1, [arr.canon(t, f"L{x}_I{j}")], t, bias + ri)
                                     for j in range(4) if j != kin) and \
                                 route_to(cfg, arr.canon(t, f"L{x}_O"), {p["A"][i]}, True) and \
-                                ((RF_V2 and route_to(cfg, src, {p["B"][i]}, True)) or
+                                ((rf_mode and route_to(cfg, src, {p["B"][i]}, True)) or
                                  route_to(cfg, arr.canon(t, f"L{x}_O"), {p["B"][i]}, True)):
                             cfg.lut_const.setdefault(t, {})[x] = {"tt": 0x7FFF}   # NAND: NOT pad
                             got = True
@@ -751,12 +748,8 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 links += 1
             else:
                 fails += 1
-        if RF_V2 and fails == fails0:   # every pin defined: the read data to observation
-            for port in "AB":
-                for k in range(4):
-                    n = arr.canon(r, f"{port}D{k}")
-                    if n in cfg.g.readers and route_net(cfg, n):
-                        links += 1
+        if rf_mode and fails == fails0:   # every pin defined: regfile.observe routes the read data
+            cfg.rf_ok = getattr(cfg, "rf_ok", []) + [r]
     # BRAM: C by the config index (write width C0 C1: 32 / 16 / 8 bit, read width C2 C3,
     # output register C5; C4 = 1: write every cycle, else wr_data[20] from a pad), the 0s
     # from the muxes' GND inputs; read address = write address (a constant, config index
