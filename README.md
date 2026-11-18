@@ -443,6 +443,23 @@ Every one of the 256 configs adds items (none can go for free); 99% of the items
 its own order is nearly the item cover: the choice is the number of configs (tester time)
 against coverage, along the first row.
 
+RegFile (the weakest part: 76.80% of its 556 sampled faults with the 96 configs, 80.9%
+with 256). Its tiles show 68.9% of their router items after 256 configs (the fabric
+93.5%): the router has no edge through a RegFile and the backbone pins it the same way in
+every config, so the jump muxes into its pins stay open (61 of its 106 undetected faults
+there). Tried on the demo, 96 configs, the RegFile faults and 1,000 others of the sample:
+
+| change | RegFile | other | why |
+|---|---|---|---|
+| none (the 96 configs) | 76.80% | 90.60% | |
+| router edges through the RegFile data path | 68.35% | 70.20% | reads are X until written: X into the observation chains |
+| pin routes prefer open codes, B address apart from A | 72.12% | 83.40% | longer pin routes block each other: 23.6 pin failures per config (3.3) |
+| + read data routed into observation | stopped | | a read is combinational in its address: loops through the address helpers |
+| 16 RegFile configs (`patterns/config/regfile.py`: B address apart, two read bits per RegFile point to point to its row's pads) on top of the 96 | 79.14% | (all) 89.44% | vs 16 ordinary configs: 78.60%, 90.28% |
+
+The dedicated configs add 13 of the 129 RegFile faults the 96 miss (ordinary configs 10)
+and less elsewhere (their routes take the row's pads and muxes): not worth it as they are.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
