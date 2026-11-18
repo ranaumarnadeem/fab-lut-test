@@ -15,12 +15,17 @@ is still equal, and that clock satisfies the window problem (the window only fre
 fabric constrains). SAT proves nothing about the fabric (the free inputs may be unreachable).
 
 Not decided: faults whose cone reaches a flop clock (a stuck clock is not a next-state
-difference), windows over MAX_CELLS cells and solves over BUDGET conflicts. Combinational loops need nothing special: the
-CNF allows every fixed point of both circuits, a superset of what the gates can hold.
+difference), windows over MAX_CELLS cells and solves over BUDGET conflicts. Combinational
+loops need nothing special: the CNF allows every fixed point of both circuits, a superset of
+what the gates can hold.
 
 Statuses: U untestable (proof), T testable in its window, C not decided. why (after a
 check): dead (the cone reaches no window output and no storage element) or redundant (SAT
 UNSAT: observable, but no input makes a difference).
+
+Diagnosis (check(..., fixes=)): the same window with its config latches fixed to the values
+of loaded configs, one solve per config on one CNF: which configs could detect the fault in
+its tile at all (README: "What stops the testable ones").
 """
 from __future__ import annotations
 
@@ -38,10 +43,7 @@ def instances(nl) -> np.ndarray:
 
 
 class Checker:
-    def __init__(self, nl, thru_inv: bool = False):
-        """thru_inv: an inverter / buffer outside the window on a latch output is encoded
-        too (a window of a switch matrix then keeps ConfigBits_N = NOT ConfigBits)."""
-        self.thru_inv = thru_inv
+    def __init__(self, nl):
         from pysat.solvers import Cadical195   # noqa: F401  (fail early when pysat is missing)
         self.nl = nl
         self.inst = instances(nl)
@@ -54,65 +56,37 @@ class Checker:
         self.ins = np.stack([nl.a, nl.b, nl.c], axis=1)
         self.out_ports = {b for b in nl.port_bits.values() if self.drv[b] >= 0}
         self.const = {int(n): int(v) for n, v in zip(nl.const_net, nl.const_val) if v in (0, 1)} if nl.n_const else {}
-        # X sources: undriven nets that are not top inputs, and x constants (a floating wire:
-        # its value is neither chosen by the tester nor known)
-        top_in = {b for b in nl.port_bits.values() if self.drv[b] < 0}
-        self.xsrc = {int(n) for n, v in zip(nl.const_net, nl.const_val) if v not in (0, 1)} if nl.n_const else set()
-        used = np.unique(np.concatenate([nl.a, nl.b, nl.c]))
-        self.xsrc |= {int(n) for n in used if n >= 0 and self.drv[n] < 0 and n not in top_in and n not in self.const}
-        self.last_x = 0
         self.why = ""
         self.budget = BUDGET
-        self.cfg_nets: set[int] = set()   # free nets lifted last (config bits: keep data free first)
+        self.hits: list[int] = []
+        self.undecided: list[int] = []
 
     def readers(self, net: int) -> np.ndarray:
         return self.nl.rd_idx[self.nl.rd_off[net]:self.nl.rd_off[net + 1]]
 
-    def check(self, net: int, pol: int, fix=None, fixes=None, window=None, witness: bool = False,
-              cut=frozenset()) -> str:
-        """fix: optional per-net values (int8: 0 / 1, other: free) for the free nets of the
-        window, e.g. the config latches of one loaded config: then T / U answer whether the
-        fault is detectable in the tile under that config. fixes: a list of such arrays,
-        solved incrementally on one CNF (assumptions); self.hits is then the list of their
-        indices that are T (empty when the fault is U or C without fixes), self.undecided
-        those over BUDGET / 10 conflicts. window: the cells of the window (a set), instead of
-        the tile instances of the fault net. witness: on T, self.care = the free-net values
-        that force a difference whatever the other free nets are (a lifted SAT model), and
-        self.obs_hit = the observed nets that differ under it."""
-        self.hits, self.undecided = [], []
+    def check(self, net: int, pol: int, fix=None, fixes=None) -> str:
+        """Status of fault (net, pol). fix: optional per-net values (int8: 0 / 1, other: free)
+        for the free nets of the window, e.g. the config latches of one loaded config. fixes:
+        a list of such arrays, solved one by one on the same CNF (assumptions) once the free
+        check is T: self.hits = the indices that are T, self.undecided those over BUDGET / 10
+        conflicts."""
         from pysat.solvers import Cadical195
-        nl, typ, out, ins = self.nl, self.nl.type, self.nl.out, self.ins
-        self.care, self.obs_hit, self.val = {}, [], {}
-        # cut: nets driven in the window but read as free inputs (a wire that leaves the
-        # window and comes back: no loop through it); a cone net in cut is observed
+        typ, out, ins = self.nl.type, self.nl.out, self.ins
+        self.hits, self.undecided = [], []
         self.why = "dead"
-        if window is not None:
-            inwin = window.__contains__
-        else:
-            rd = self.readers(net)
-            win = {int(self.inst[c]) for c in rd}
-            if self.drv[net] >= 0:
-                win.add(int(self.inst[self.drv[net]]))
-            if not win:
-                return "U"   # nothing reads or drives it: no effect
-            if sum(len(self.cells_of[i]) for i in win) > MAX_CELLS:
-                return "C"
-            inwin = lambda c: int(self.inst[c]) in win   # noqa: E731
-        thru = self.thru_inv
+        rd = self.readers(net)
+        win = {int(self.inst[c]) for c in rd}
+        if self.drv[net] >= 0:
+            win.add(int(self.inst[self.drv[net]]))
+        if not win:
+            return "U"   # nothing reads or drives it: no effect
+        if sum(len(self.cells_of[i]) for i in win) > MAX_CELLS:
+            return "C"
+        inwin = lambda c: int(self.inst[c]) in win   # noqa: E731
 
         def isfree(m: int) -> bool:
-            if m in cut:
-                return True
             c = self.drv[m]
-            if c < 0 or typ[c] in (LATCH, DFF):
-                return True
-            if inwin(int(c)):
-                return False
-            # thru_inv: an inverter / buffer on a latch output (ConfigBits_N) is encoded
-            if thru and typ[c] in (NOT, BUF):
-                d = self.drv[ins[c, 0]]
-                return not (d >= 0 and typ[d] == LATCH)
-            return True
+            return c < 0 or typ[c] in (LATCH, DFF) or not inwin(int(c))
         # forward cone from the fault net: combinational cells; storage cells are sinks
         cone_nets, cone_cells, sinks, stack = {net}, [], set(), [net]
         while stack:
@@ -131,11 +105,9 @@ class Checker:
                 if o not in cone_nets:
                     cone_nets.add(o)
                     cone_cells.append(c)
-                    if o not in cut:
-                        stack.append(o)
+                    stack.append(o)
         # observed nets of the cone: read outside the window or a top output port
-        obs = [n for n in cone_nets if n in self.out_ports or n in cut and n != net
-               or any(not inwin(int(c)) for c in self.readers(n))]
+        obs = [n for n in cone_nets if n in self.out_ports or any(not inwin(int(c)) for c in self.readers(n))]
         if not obs and not sinks:
             return "U"
         # fault-free values needed: the fanin of the cone cells and of the sinks' pins
@@ -156,13 +128,13 @@ class Checker:
             work = [n]
             while work:
                 m = work.pop()
-                c = self.drv[m]
                 if isfree(m):
                     if m in self.const:
                         clauses.append([V[m] if self.const[m] else -V[m]])
                     elif fix is not None and fix[m] in (0, 1):
                         clauses.append([V[m] if fix[m] else -V[m]])
                     continue
+                c = self.drv[m]
                 for x in ins[c]:
                     x = int(x)
                     if x >= 0 and x not in V:
@@ -175,9 +147,9 @@ class Checker:
             """Clauses of cell c's output y; inputs from alt (faulty) first, else src (good)."""
             def lit(x):
                 x = int(x)
-                if alt is not None and x in alt and (x not in cut or x == net):
+                if alt is not None and x in alt:
                     return alt[x]
-                return src[x] if x in src else good(x)   # good: during good() every input has one
+                return src[x] if x in src else good(x)   # during good() every input has one
             t = typ[c]
             a = lit(ins[c, 0])
             if t == AND or t == OR:
@@ -191,8 +163,7 @@ class Checker:
             else:   # BUF
                 clauses.extend([[y, -a], [-y, a]])
 
-        F: dict[int, int] = {}
-        F[net] = var()
+        F: dict[int, int] = {net: var()}
         clauses.append([F[net] if pol else -F[net]])
         for c in cone_cells:
             F[int(out[c])] = var()
@@ -200,22 +171,18 @@ class Checker:
             gate(c, V, F[int(out[c])], alt=F)
         diffs = []
 
-        dnet = {}
-
-        def differ(g: int, f: int) -> int:
+        def differ(g: int, f: int) -> None:
             d = var()
-            clauses.extend([[-d, g, f], [-d, -g, -f], [d, -g, f], [d, g, -f]])   # d = g xor f
+            clauses.extend([[-d, g, f], [-d, -g, -f]])   # d -> g != f
             diffs.append(d)
-            return d
         for n in obs:
-            dnet[differ(good(n), F[n])] = n
+            differ(good(n), F[n])
 
         def nxt(c: int, src) -> int:
             """E ? D : Q of storage cell c (latch: E, D; flop: C, E, D)."""
             e, d = (ins[c, 0], ins[c, 1]) if typ[c] == LATCH else (ins[c, 1], ins[c, 2])
-            q = int(out[c])
             lit = lambda x: src.get(int(x)) or good(int(x))   # noqa: E731
-            E, D, Q = lit(e), lit(d), lit(q)
+            E, D, Q = lit(e), lit(d), lit(int(out[c]))
             y = var()
             clauses.extend([[-y, -E, D], [-y, E, Q], [y, -E, -D], [y, E, -Q]])
             return y
@@ -223,7 +190,6 @@ class Checker:
             differ(nxt(c, {}), nxt(c, F))
         if not diffs:
             return "U"
-        self.last_x = sum(1 for n in V if n in self.xsrc)
         clauses.append(diffs)
         self.why = "redundant"
         with Cadical195(bootstrap_with=clauses) as s:
@@ -233,36 +199,15 @@ class Checker:
                 return "C"   # over the conflict budget (e.g. a multiplier miter)
             if not r:
                 return "U"
-            self.free_nets = free = [m for m in V if m not in F and isfree(m)]
-            if witness:
-                model = set(s.get_model())
-                self.val = val = {m: int(V[m] in model) for m in free}
-                hit = [d for d in dnet if d in model]
-                # lifting towards one observed net: drop a free net when the rest still forces
-                # that net to differ; a few candidate nets, the smallest result is kept
-                best = None
-                for d in hit[:4]:
-                    with Cadical195(bootstrap_with=clauses[:-1] + [[-d]]) as s2:
-                        care = dict(val)
-                        lit = lambda m: V[m] if care[m] else -V[m]   # noqa: E731
-                        for m in sorted(free, key=lambda m: m in self.cfg_nets):   # data first
-                            keep = care.pop(m)
-                            s2.conf_budget(max(self.budget // 10, 100))
-                            if s2.solve_limited(assumptions=[lit(x) for x in care]) is not False:
-                                care[m] = keep   # needed (or undecided)
-                    if best is None or len(care) < len(best[1]):
-                        best = (dnet[d], care)
-                self.obs_hit = [best[0]]
-                self.care = best[1]
             if fixes is not None:
+                free = [m for m in V if m not in F and isfree(m)]
                 fa = np.array(free, dtype=np.int64)
                 va = np.array([V[m] for m in free], dtype=np.int64)
                 for k, fx in enumerate(fixes):
                     vals = fx[fa]
                     sel = (vals == 0) | (vals == 1)
-                    assume = np.where(vals[sel] == 1, va[sel], -va[sel]).tolist()
                     s.conf_budget(max(self.budget // 10, 100))
-                    r = s.solve_limited(assumptions=assume)
+                    r = s.solve_limited(assumptions=np.where(vals[sel] == 1, va[sel], -va[sel]).tolist())
                     if r:
                         self.hits.append(k)
                     elif r is None:

@@ -1,17 +1,43 @@
-# fab-lut-test
+# fab-lut-test (fabtest)
 
 Configuration-based manufacturing test for [FABulous](https://github.com/FPGA-Research/FABulous)
-eFPGA fabrics: test configurations, stimulus and stuck-at fault simulation for the
-LUT4AB tile, built only from what FABulous generates. FABulous itself is not modified.
+eFPGA fabrics, without scan chains and without changing FABulous. From a FABulous project
+with its generated RTL, fabtest builds test configurations (bitstreams), input vectors
+and the expected outputs for a tester, and measures their stuck-at fault coverage on a
+gate-level netlist of the whole fabric.
 
-A test is a sequence of bitstream frame writes (FrameData / FrameStrobe) followed by
-input vectors. Faults are single stuck-at faults on every net of the synthesized
-netlist (stems, and in the `_br` netlists every fanout branch). A fault counts as
-detected only on a definite 0 / 1 difference at an observed output; every storage
-element starts unknown (X), and faults left X-only are decided by enumerating all
-power-up values of the elements they leave unwritten.
+```bash
+scripts/fabtest run /path/to/fabulous_project      # init, synth, route, faultsim, report, export
+```
 
-## Results
+Each config routes signals from the input pads through the switch matrices, LUTs and BELs
+to the output pads (observation chains of XOR LUTs, RegFile and BlockRAM pinned to defined
+values); the tester loads it through the configuration port, applies its vectors and
+compares the outputs. The export holds one bitstream and one vector file per config, a
+manifest, a test plan and an Icarus testbench that replays everything on the RTL.
+
+Demo fabric (16 x 10 tiles, 1,170,462 faults; sampled fault simulation):
+
+| | coverage |
+|---|---|
+| 96 configs, 64 vectors each (the `demo` suite) | 89.00% +- 0.87 |
+| 96 configs, 256 vectors each | 89.96% |
+| 256 configs | 92.78% +- 0.72 (switch matrices 94.4%) |
+| configuration logic (`fabtest cfgtest`: FSM, frame registers, UART, bitbang) | 73.3% of 9,758 faults |
+| clock network (`fabtest clockcheck`) | 198 of 278 faults |
+| proven untestable (`fabtest untestable`, SAT per tile) | 18 of the 5,460 undetected (sample) |
+
+Validated on four more fabrics built with FABulous (other layouts, generic multiplexers,
+an unknown BEL, an uneven RegFile / DSP / BlockRAM mix): the configs pass a fault-free
+check against the gates, replay in Icarus on FABulous's RTL and are byte-equal to
+FABulous `bit_gen`.
+
+Fault model: single stuck-at faults on every net of the synthesized netlist. A fault
+counts as detected only on a definite 0 / 1 difference at an observed output; every
+storage element starts unknown (X), and faults left X-only can be decided by enumerating
+the power-up values of the elements they leave unwritten (`fabtest powerup`).
+
+## Results (in the order they were obtained)
 
 ### LUT test: 3 configs, 100%
 
@@ -396,8 +422,7 @@ value, 135 are detected, 163 need other input values. So the gap is spread over 
 choice (a select code or LUT table no config uses), input combinations (the other mux
 inputs at the opposite value) and observation, not X alone.
 
-Targeted configs from the SAT models (experiment, `patterns/config/target.py`,
-`pipeline.target`; no command). Every mux of the flat netlist as a gate tree (the forward
+Targeted configs from the SAT models (an experiment; its code is not kept). Every mux of the flat netlist as a gate tree (the forward
 cone of its select bits, so no names are needed: F1 1,348 of 1,348 muxes); per undetected
 fault in a tree a SAT model on its trees, lifted to the values that force a difference at
 one mux output: one select code and one or two inputs for most faults. The router places
@@ -455,7 +480,7 @@ there). Tried on the demo, 96 configs, the RegFile faults and 1,000 others of th
 | router edges through the RegFile data path | 68.35% | 70.20% | reads are X until written: X into the observation chains |
 | pin routes prefer open codes, B address apart from A | 72.12% | 83.40% | longer pin routes block each other: 23.6 pin failures per config (3.3) |
 | + read data routed into observation | stopped | | a read is combinational in its address: loops through the address helpers |
-| 16 RegFile configs (`patterns/config/regfile.py`: B address apart, two read bits per RegFile point to point to its row's pads) on top of the 96 | 79.14% | (all) 89.44% | vs 16 ordinary configs: 78.60%, 90.28% |
+| 16 RegFile configs (B address apart, two read bits per RegFile point to point to its row's pads; code not kept) on top of the 96 | 79.14% | (all) 89.44% | vs 16 ordinary configs: 78.60%, 90.28% |
 
 The dedicated configs add 13 of the 129 RegFile faults the 96 miss (ordinary configs 10)
 and less elsewhere (their routes take the row's pads and muxes): not worth it as they are.
@@ -635,17 +660,17 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 
 | path | contents |
 |---|---|
-| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report), `cfgtest/` (configuration-logic test) |
+| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report, untestable, compact, clockcheck), `cfgtest/` (configuration-logic test) |
 | `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
 | `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
 | `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py`; `untestable.py` (SAT proof per fault) |
-| `src/fabtest/synth/` | netlist flow (yosys templates, techmaps) |
+| `src/fabtest/synth/` | netlist flow (yosys templates, techmaps; `clkbuf_keep.v`: the tiles' clock buffers as cells) |
 | `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
 | `src/fabtest/native/` | C++ (pybind11) router search and loop check, built on first use into `build/native` (`FABTEST_NATIVE=0`: the Python path, same results) |
 | `rtl/` | input RTL: LUT4AB, W_IO and term tile copies, the demo fabric copy, `bram/sram_model.v` |
-| `tb/` | testbench templates (`fabtest_tb.v.in`, `sram_sim.v`) |
-| `tests/` | `run_all.py`; `model/`, `patterns/` (R0 / R1 / R2), `export/`, `cli/`, `rtl/` (Icarus replay), `golden/` (reference hashes and the four config sets) |
-| `scripts/` | `env.sh`, `fabtest`, `run_demo.sh` |
+| `tb/` | testbench templates (`fabtest_tb.v.in`, `fabtest_ports_tb.v.in`, `sram_sim.v`) |
+| `tests/` | `run_all.py`; `model/`, `patterns/` (R0 / R1 / R2), `export/`, `cli/` (commands, `fabtest run`), `cfgtest/`, `sat/` (the untestable check), `fabrics/` (F1 to F4: `make.py` builds them with FABulous), `rtl/` (Icarus replay), `golden/` (reference hashes and the four config sets) |
+| `scripts/` | `env.sh`, `fabtest`, `run_demo.sh`, `compare_with_stored.py` (a config set against the stored 96-config demo run in `results/`, local) |
 | `package/` | packaging (placeholder) |
 
 The results above up to the full fabric were produced with research scripts of the earlier
@@ -653,9 +678,11 @@ phases (the script names in those sections); they are retired from the repositor
 
 ## Not covered yet
 
-the SRAM macro itself (memory BIST), the faults that only reach a pad as X (power-up
-values, words not yet written), the configuration logic together with the fabric in one simulation (it is
-tested against a model of the config memory), bridging faults and timing.
+the SRAM macro itself (memory BIST, e.g. a soft MBIST configured into the fabric), the
+faults that only reach a pad as X (power-up values, words not yet written), the registered
+modes of W_IO, RAM_IO and DSP (and so the clock segments of their columns), several clock
+domains, the configuration logic together with the fabric in one simulation (it is tested
+against a model of the config memory), bridging faults and timing.
 
 ## License
 

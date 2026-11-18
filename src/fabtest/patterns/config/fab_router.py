@@ -433,7 +433,7 @@ def sels_of(g: Graph, sel: dict) -> dict:
     return out
 
 
-def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None, post=None) -> dict:
+def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
     cfg = make_cfg(g)
     g.last_seed = seed(cfg, bias) if seed is not None else None
 
@@ -449,8 +449,6 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None, po
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
-    if post is not None:   # e.g. targets (patterns/config/target.py) in the muxes left free
-        g.last_post = post(cfg, bias)
     return fill(g, cfg, open_work, bias)
 
 
@@ -681,9 +679,6 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     in nearby tiles, both rotated per config. Returns a report."""
     arr = cfg.g.arr
     links = fails = 0
-    # RegFile configs (patterns/config/regfile.py): read port B takes the write address
-    # bits 0 / 1 where it routes (A their complement), fully pinned RegFiles are listed
-    rf_mode = getattr(cfg, "rf_mode", False)
     cfg.lut_const = {}
     cfg.consts = {0: [], 1: []}
     cfg.set_cut(())
@@ -701,7 +696,6 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     for ri, (r, p) in enumerate(rf.items()):
         if not arr.lut_tiles:
             break
-        fails0 = fails
         if route_const(cfg, 1, [p["en"]], r, bias + ri):
             links += 1
         else:
@@ -720,9 +714,7 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                         if kin is not None and \
                                 all(route_const(cfg, 1, [arr.canon(t, f"L{x}_I{j}")], t, bias + ri)
                                     for j in range(4) if j != kin) and \
-                                route_to(cfg, arr.canon(t, f"L{x}_O"), {p["A"][i]}, True) and \
-                                ((rf_mode and route_to(cfg, src, {p["B"][i]}, True)) or
-                                 route_to(cfg, arr.canon(t, f"L{x}_O"), {p["B"][i]}, True)):
+                                all(route_to(cfg, arr.canon(t, f"L{x}_O"), {p[port][i]}, True) for port in "AB"):
                             cfg.lut_const.setdefault(t, {})[x] = {"tt": 0x7FFF}   # NAND: NOT pad
                             got = True
                             break
@@ -748,8 +740,6 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 links += 1
             else:
                 fails += 1
-        if rf_mode and fails == fails0:   # every pin defined: regfile.observe routes the read data
-            cfg.rf_ok = getattr(cfg, "rf_ok", []) + [r]
     # BRAM: C by the config index (write width C0 C1: 32 / 16 / 8 bit, read width C2 C3,
     # output register C5; C4 = 1: write every cycle, else wr_data[20] from a pad), the 0s
     # from the muxes' GND inputs; read address = write address (a constant, config index
@@ -856,11 +846,10 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
               hist0: dict | None = None, prior: list | None = None, seed=None, idx0: int = 0,
-              checkpoint=None, post=None):
+              checkpoint=None):
     """prior: configs already chosen (selects per tile name): their shown items
     are removed first and the new configs only add to them (--extend). idx0: index
-    of the first new config (fill decorrelation, frame order). post(cfg, bias): called
-    after the greedy cover, before fill."""
+    of the first new config (fill decorrelation, frame order)."""
     g = Graph(arr)
     reach = g.reachable()
     open_work = {(t, o, k): fabric.work_items_m(MM((t, o)), k) for t, o in g.ids if (t, o) in reach
@@ -878,7 +867,7 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
     configs, log, stall = [], [], 0
     while len(configs) < max_configs and any(open_work.values()):
         t0 = time.time()
-        sels = build_config(g, open_work, hist, idx0 + len(configs), seed, post)
+        sels = build_config(g, open_work, hist, idx0 + len(configs), seed)
         shown = fabric.grade(arr, sels)
         for t, o in g.ids:
             k = sels[t].get(o, 0) if arr.MT(t)[o].model != "direct" else 0
