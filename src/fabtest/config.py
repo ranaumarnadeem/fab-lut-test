@@ -15,6 +15,9 @@
   jobs = 4
   [bels]
   opaque = []             # BEL or macro modules modelled as X sources (not tested)
+  [vectors]
+  random = 54             # random vectors per config, after the 2 x log2(pads) counting ones
+                          # (vectors cost ~1 clock each, a config load thousands)
 
 The route caps default to the demo's values, scaled up by tile count (a fabric with
 more tiles than the demo's 158 gets proportionally larger caps; smaller ones keep the
@@ -42,6 +45,7 @@ DEFAULTS = {
               "bram_max_pop": 60000, "const_radius": 2},
     "faultsim": {"sample": 2000, "seed": 1, "chunk": 2000, "jobs": 4},
     "bels": {"opaque": []},
+    "vectors": {"random": 54},
 }
 SCALED = ("max_pop", "max_reach", "loop_max_moves", "bram_max_pop")
 SUITES = Path(__file__).resolve().parent / "suites"

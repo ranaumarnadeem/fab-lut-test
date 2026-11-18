@@ -17,8 +17,11 @@ from fabtest.bels import base, std  # noqa: E402
 
 
 class GenericFabric(fullfabric.FullFabric):
-    def __init__(self, spec, n_rand: int = 54, macros: bool = True):
+    def __init__(self, spec, n_rand: int | None = None, macros: bool = True):
+        """n_rand: random vectors per config (default: fabtest.toml [vectors] random, 54)."""
         self.spec = spec
+        if n_rand is None:
+            n_rand = (getattr(spec, "cfg", None) or {}).get("vectors", {}).get("random", 54)
         self.kinds = belreg.classify(spec)
         for typ, k in self.kinds.items():
             want = {"lut": "LUT4AB", "io": "W_IO"}.get(k["kind"])

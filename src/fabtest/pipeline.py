@@ -133,11 +133,13 @@ def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chu
     smp = sorted(random.Random(seed).sample(range(len(faults)), n)) if n < len(faults) else list(range(n))
     meta = {"seed": seed, "n": n, "of": len(faults), "chunk": chunk,
             "configs": hashlib.sha1((run / "configs.json").read_bytes()).hexdigest(),
-            "netlist": _mtime_key(work / "synth" / "netlist.json")}
+            "netlist": _mtime_key(work / "synth" / "netlist.json"),
+            "vectors": spec.cfg["vectors"]["random"]}
     old = fdir / "sample.json"
     if old.exists():
         om = json.loads(old.read_text())
-        if {k: meta[k] for k in om} != om or not set(meta) - set(om) <= {"configs", "netlist"}:
+        if {k: meta[k] for k in om} != om or not set(meta) - set(om) <= {"configs", "netlist", "vectors"} or \
+                om.get("vectors", 54) != meta["vectors"]:
             for p in fdir.glob("chunk_*.csv"):
                 p.unlink()
     old.write_text(json.dumps(meta))
@@ -166,12 +168,16 @@ def _mtime_key(p: Path) -> str:
 
 
 def faultsim_done(work: Path, run: Path, sample: int, seed: int, chunk: int) -> bool:
-    """Every chunk of this sample is there, for these configs and this netlist."""
+    """Every chunk of this sample is there, for these configs, this netlist and this many
+    random vectors (fabtest.toml [vectors])."""
     fdir = run / "faultsim"
     f = fdir / "sample.json"
     if not f.exists() or not (fdir / "configs.json").exists():
         return False
     m = json.loads(f.read_text())
+    from fabtest import config
+    if m.get("vectors", 54) != config.load(work)["vectors"]["random"]:
+        return False
     if m.get("configs") != hashlib.sha1((run / "configs.json").read_bytes()).hexdigest() or \
             m.get("netlist") != _mtime_key(work / "synth" / "netlist.json") or \
             (m["seed"], m["chunk"]) != (seed, chunk) or m["n"] != (min(sample, m["of"]) if sample else m["of"]):

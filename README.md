@@ -460,6 +460,19 @@ there). Tried on the demo, 96 configs, the RegFile faults and 1,000 others of th
 The dedicated configs add 13 of the 129 RegFile faults the 96 miss (ordinary configs 10)
 and less elsewhere (their routes take the row's pads and muxes): not worth it as they are.
 
+Vectors instead of configs (`fabtest.toml [vectors] random`, default 54: with the 10
+counting vectors 64 per config). The demo's 96 configs with 246 random vectors (256 per
+config), the sample's 550 faults the 64-vector set misses: 48 detected, 89.00% -> 89.96%,
+about what 16 more configs give (90.28%). On the tester a config costs 60 us to load
+(parallel, 50 MHz; about 1 s through the UART) and 1.3 us for 64 vectors: the 192 more
+vectors in all 96 configs take 0.37 ms, 16 more configs 0.98 ms.
+
+SAT-generated vectors for a config (the configured fabric from the state its vectors leave,
+pads free, faults the tile check says the config sets up) found none for 68 (fault, config)
+pairs over 2 clocks: the observation chains are registered, so a fault's effect takes up
+to a chain's length (about 60 LUTs) in clocks to reach a pad, far more than an unrolled SAT
+of the configured fabric (530k gates per clock) can reach.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
@@ -560,6 +573,8 @@ chunk = 2000
 jobs = 4
 [bels]
 opaque = []             # BEL or macro modules modelled as X sources (not tested)
+[vectors]
+random = 54             # random vectors per config (cheap: ~1 clock each)
 ```
 
 The steps one by one:
