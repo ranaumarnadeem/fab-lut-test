@@ -46,8 +46,15 @@ def yosys() -> str:
     raise SystemExit("fabtest: no yosys found (set $YOSYS)")
 
 
+# FABTEST_KEEP_CLKBUF=1: the tiles' clk_buf stay buffer cells (the clock network in the
+# fault list); else they become wires and the whole clock tree is one net
+KEEP_CLKBUF = os.environ.get("FABTEST_KEEP_CLKBUF", "0") == "1"
+
+
 def _script(top: str, sources: list[Path], out: Path) -> str:
     s = TEMPLATE.read_text()
+    if KEEP_CLKBUF:
+        s = s.replace("\nflatten\n", f"\ntechmap -map {SYNTH / 'clkbuf_keep.v'} t:clk_buf\nflatten\n", 1)
     s = s.replace("@TOP@", top).replace("@SOURCES@", " ".join(str(p) for p in sources))
     s = s.replace("@TAGS@", "").replace("@CHECK@", "").replace("@OUT@", str(out))
     lines = [PATCH[1] if ln.startswith(PATCH[0]) else ln for ln in s.split("\n")]
@@ -222,6 +229,8 @@ def stamp_hash(work: Path) -> str:
         if f.is_file() and f.suffix in (".py", ".in", ".v"):
             h.update(f.name.encode())
             h.update(f.read_bytes())
+    if KEEP_CLKBUF:
+        h.update(b"keep clk_buf")
     return h.hexdigest()
 
 

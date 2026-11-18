@@ -43,6 +43,10 @@ ARRAY_OUT = re.compile(r"[^.]+\.(N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2B
                        r"S1BEG|S2BEG|S2BEGb|S4BEG|SS4BEG|W1BEG|W2BEG|W2BEGb|WW4BEG|W6BEG|Co|UserCLKo|"
                        r"FrameData_O|FrameStrobe_O)(\[\d+\])?$")
 TILE_PORT = re.compile(r"[^.]+\.\w+(\[\d+\])?$")   # <instance>.<port>[bit]: a port of a tile instance
+# an output of a sub-tile inside a supertile, <supertile>.Tile_X<i>Y<j>_<out>: the driver side
+# where the rules above leave several names (a kept clk_buf of a supertile's sub-tile)
+SUPER_OUT = re.compile(r"[^.]+\.Tile_X\d+Y\d+_(UserCLKo|N1BEG|N2BEG|N2BEGb|N4BEG|NN4BEG|E1BEG|E2BEG|E2BEGb|"
+                       r"EE4BEG|E6BEG|S1BEG|S2BEG|S2BEGb|S4BEG|SS4BEG|W1BEG|W2BEG|W2BEGb|WW4BEG|W6BEG|Co)(\[\d+\])?$")
 
 
 def analyse(mod: dict) -> dict:
@@ -128,6 +132,10 @@ def analyse(mod: dict) -> dict:
                     pick = inner
                 elif not inner and len(drv) == 1:
                     pick = drv
+            if len(pick) > 1:
+                sup = [nm for nm in pick if SUPER_OUT.match(nm[0])]
+                if len(sup) == 1:
+                    pick = sup
             if len(pick) != 1:
                 raise SystemExit(f"bit {b} has names {e['names']}; rerun synth with rename")
             e["aliases"] = [nm[0] for nm in e["names"] if nm is not pick[0]]
