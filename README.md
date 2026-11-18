@@ -473,6 +473,27 @@ pairs over 2 clocks: the observation chains are registered, so a fault's effect 
 to a chain's length (about 60 LUTs) in clocks to reach a pad, far more than an unrolled SAT
 of the configured fabric (530k gates per clock) can reach.
 
+Clock network. FABulous clocks every tile from `UserCLK` through a `clk_buf` per tile
+(UserCLK -> UserCLKo, a chain along each column); synthesis turned each into a wire, so the
+whole clock tree was one net and its segments were not in the fault list.
+`FABTEST_KEEP_CLKBUF=1` keeps them as buffer cells (demo: 158 more cells, 278 faults on
+the 139 clock nets). A stuck segment freezes the flops after it at their power-up values:
+every one is X-only (P) in the fault simulation. With 4 random power-up states of the
+3,612 fabric flops and 8 configs of the demo set:
+
+| clock segments of | detected in every state |
+|---|---|
+| LUT4AB columns | 156 of 156 |
+| RegFile column | 26 of 26 |
+| term tiles, root `UserCLK` | 16 of 16 |
+| W_IO column | 0 of 26 |
+| RAM_IO column (+ term tile) | 0 of 28 |
+| DSP column (+ term tile) | 0 of 26 |
+
+198 of 278 (71%). The three columns where no test uses a flop: the W_IO registered pad
+paths, the RAM_IO pass registers and the MULADD registers are never configured (the model
+treats them as unknown sources), so nothing after a broken clock there changes.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
