@@ -46,9 +46,9 @@ def yosys() -> str:
     raise SystemExit("fabtest: no yosys found (set $YOSYS)")
 
 
-# FABTEST_KEEP_CLKBUF=1: the tiles' clk_buf stay buffer cells (the clock network in the
-# fault list); else they become wires and the whole clock tree is one net
-KEEP_CLKBUF = os.environ.get("FABTEST_KEEP_CLKBUF", "0") == "1"
+# The tiles' clk_buf stay buffer cells: each tile's clock segment (UserCLK -> UserCLKo) is in
+# the fault list. FABTEST_KEEP_CLKBUF=0: they become wires (the whole clock tree one net)
+KEEP_CLKBUF = os.environ.get("FABTEST_KEEP_CLKBUF", "1") == "1"
 
 
 def _script(top: str, sources: list[Path], out: Path) -> str:
@@ -64,10 +64,12 @@ def _script(top: str, sources: list[Path], out: Path) -> str:
 def _run(top: str, sources: list[Path], outdir: Path) -> Path:
     out = outdir / top
     j = out.with_suffix(".json")
-    if j.exists() and all(j.stat().st_mtime > p.stat().st_mtime for p in sources):
-        return j   # up to date
     ys = outdir / f"{top}.ys"
-    ys.write_text(_script(top, sources, out))
+    script = _script(top, sources, out)
+    if j.exists() and ys.exists() and ys.read_text() == script and \
+            all(j.stat().st_mtime > p.stat().st_mtime for p in sources):
+        return j   # up to date: the same script, newer than its sources
+    ys.write_text(script)
     r = subprocess.run([yosys(), "-q", "-l", str(outdir / f"{top}.log"), "-s", str(ys)],
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:

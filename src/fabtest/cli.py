@@ -1,5 +1,5 @@
 """fabtest command line (run, init, info, synth, route, faultsim, report, powerup, untestable,
-compact, export, cfgtest, bitgen-check).
+compact, clockcheck, export, cfgtest, bitgen-check).
 
   python3 -m fabtest run <FABulous project> [--suite default] [--run NAME] [--configs N]
                          [--sample N] [--jobs N] [--no-export] [--cfgtest] [--work DIR]
@@ -11,6 +11,7 @@ compact, export, cfgtest, bitgen-check).
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
   python3 -m fabtest untestable <work dir> [--run NAME] [--jobs 4]
+  python3 -m fabtest clockcheck <work dir> [--run NAME] [--states 4] [--configs 8]
   python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME] [--by items]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
@@ -113,6 +114,12 @@ def cmd_untestable(a) -> None:
     print(pipeline.untestable(spec.load(w), w, _run(a), a.jobs), end="")
 
 
+def cmd_clockcheck(a) -> None:
+    from fabtest import pipeline, spec
+    w = Path(a.work)
+    print(pipeline.clockcheck(spec.load(w), w, _run(a), a.states, a.configs), end="")
+
+
 def cmd_compact(a) -> None:
     from fabtest import pipeline, spec
     w = Path(a.work)
@@ -205,6 +212,11 @@ def main(argv=None) -> None:
     p.add_argument("work")
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--jobs", type=int, default=4)
+    p = sub.add_parser("clockcheck", help="clock-network faults under random power-up states")
+    p.add_argument("work")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--states", type=int, default=4, help="random power-up states per fault")
+    p.add_argument("--configs", type=int, default=8, help="the run's first N configs")
     p = sub.add_parser("compact", help="fewer configs: greedy set cover of the fault simulation")
     p.add_argument("work")
     p.add_argument("--run", help="run name (default: the latest run)")
@@ -237,5 +249,5 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "untestable": cmd_untestable,
-     "compact": cmd_compact, "export": cmd_export,
+     "compact": cmd_compact, "clockcheck": cmd_clockcheck, "export": cmd_export,
      "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)

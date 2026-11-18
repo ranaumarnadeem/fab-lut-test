@@ -24,7 +24,7 @@ import random
 import re
 import shutil
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 os.environ.setdefault("FASTSIM_OSC", "local")
@@ -100,10 +100,10 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
     return out
 
 
-def _stims(spec, cfg_path: Path):
+def _stims(spec, cfg_path: Path, only: list[int] | None = None):
     from fabtest.sim import stimuli as rf
     ff = model(spec)
-    return rf.build_stims(ff, cfg_path, quiet=True)
+    return rf.build_stims(ff, cfg_path, only=only, quiet=True)
 
 
 def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chunk: int = 2000, jobs: int = 4) -> Path:
@@ -185,8 +185,14 @@ def faultsim_done(work: Path, run: Path, sample: int, seed: int, chunk: int) -> 
     return all((fdir / f"chunk_{i:04d}.csv").exists() for i in range((m["n"] + chunk - 1) // chunk))
 
 
+CLOCK_NET = re.compile(r"(?:^|\.)(?:Tile_X\d+Y\d+_)?UserCLKo?$|^(?:CLK|UserCLK)$")
+
+
 def part_of(spec, path: str) -> str:
-    """Tile type (or macro module, or top-level wiring) a fault path belongs to."""
+    """Tile type (or macro module, top-level wiring, or the clock network: a tile's UserCLK
+    or UserCLKo segment) a fault path belongs to."""
+    if CLOCK_NET.search(path):
+        return "clock network"
     sup = "|".join(map(re.escape, spec.supertiles)) or "(?!)"
     m = re.match(rf"Tile_X\d+Y\d+_(?:(?:{sup})\.Tile_X\d+Y\d+_)?(\w+?)\.", path)
     if m and m.group(1) in spec.types:
@@ -533,6 +539,62 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     return text
 
 
+def clock_nets(nl) -> set:
+    """Nets of the clock network: the flops' clock pins and the buffers / inverters behind them."""
+    out = {int(nl.a[i]) for i in range(nl.n_cells) if nl.type[i] == 5}
+    stack = list(out)
+    while stack:
+        d = nl.driver.get(stack.pop())
+        if d is not None and nl.type[d] in (2, 3):
+            x = int(nl.a[d])
+            if x not in out:
+                out.add(x)
+                stack.append(x)
+    return out
+
+
+def clockcheck(spec, work: Path, run: Path, states: int = 4, n_configs: int = 8, seed: int = 4) -> str:
+    """Every fault of the clock network (clock_nets) in the run's first n_configs configs,
+    each with `states` random power-up states of the fabric's flops (Tile_* storage, not the
+    latches): a stuck clock freezes the flops after it, which the fault simulation can only
+    call X (P). A fault detected in every state by some config counts as detected (an
+    estimate: the power-up check's proof is too slow on a whole fabric). run/clock.json."""
+    import numpy as np
+    from fabtest.sim.fastsim import fastsim, powerup as pu_mod
+    t0 = time.time()
+    netlist = work / "synth" / "netlist.json"
+    nl = fastsim.Netlist("fabtest", netlist)
+    cn = clock_nets(nl)
+    faults = [f for f in csv.DictReader((work / "synth" / "faults.csv").open()) if nl.net_bit.get(f["net"]) in cn]
+    n_all = len(json.loads((run / "configs.json").read_text())["configs"])
+    stims = _stims(spec, run / "configs.json", only=list(range(min(n_configs, n_all))))
+    pu = pu_mod.PowerUp(nl, stims, netlist, limit_factor=200)
+    flops = [k for k in range(len(nl.store)) if not nl.store_is_latch[k] and nl.store_names[k].startswith("Tile_")]
+    rnd = random.Random(seed)
+    st = [{k: rnd.getrandbits(1) for k in flops} for _ in range(states)]
+    lanes = [(nl.net_bit[f["net"]], int(f["polarity"]), st[r]) for f in faults for r in range(states)]
+    det = np.zeros(len(lanes), dtype=bool)
+    for c in stims:
+        for i in range(0, len(lanes), 1000):
+            res, *_ = pu.run(c.name, lanes[i:i + 1000])
+            det[i:i + 1000] |= (res[1:len(lanes[i:i + 1000]) + 1] & 1).astype(bool)
+    every = det.reshape(-1, states).all(axis=1) if faults else np.zeros(0, dtype=bool)
+    by = defaultdict(lambda: [0, 0])
+    for f, d in zip(faults, every):
+        typ = re.sub(r"Tile_X\d+Y\d+_", "", f["path"].split(".")[0]) if "." in f["path"] else "top"
+        by[typ][0] += 1
+        by[typ][1] += int(d)
+    (run / "clock.json").write_text(json.dumps({
+        "faults": len(faults), "detected": int(every.sum()), "states": states, "configs": len(stims),
+        "configs_sha": hashlib.sha1((run / "configs.json").read_bytes()).hexdigest(),
+        "netlist": _mtime_key(netlist), "by_tile": {k: v for k, v in sorted(by.items())},
+        "missed": [f["path"] + f":{f['polarity']}" for f, d in zip(faults, every) if not d]}, indent=0))
+    L = [f"fabtest clockcheck: {len(faults)} clock-network faults, {int(every.sum())} detected in every one of "
+         f"{states} random power-up states by {len(stims)} configs ({time.time() - t0:.0f} s)"]
+    L += [f"  {k:20s} {v[1]:4d} of {v[0]}" for k, v in sorted(by.items(), key=lambda kv: -kv[1][0])]
+    return "\n".join(L) + "\n"
+
+
 def opaque_bels(spec) -> list[str]:
     """BEL and macro modules modelled as X sources: "<module> in <type> xN (why)"."""
     from fabtest import bels
@@ -591,6 +653,14 @@ def report(spec, run: Path) -> str:
     left = json.loads((fdir / "configs.json").read_text()).get("left_out", []) if (fdir / "configs.json").exists() else []
     if left:
         L.append(f"  configs left out (fault-free check): {', '.join(left)}")
+    ck = run / "clock.json"
+    if ck.exists():
+        m = json.loads(ck.read_text())
+        w = work_of(run)
+        if m.get("configs_sha") == hashlib.sha1((run / "configs.json").read_bytes()).hexdigest() and \
+                (w is None or m.get("netlist") == _mtime_key(w / "synth" / "netlist.json")):
+            L.append(f"  clock network: {m['detected']} of {m['faults']} faults detected in every one of "
+                     f"{m['states']} random power-up states ({m['configs']} configs; fabtest clockcheck)")
     op = opaque_bels(spec)
     if op:
         L.append("  opaque, outputs X and faults not tested: " + ", ".join(op))
