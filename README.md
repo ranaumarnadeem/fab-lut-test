@@ -426,7 +426,22 @@ that (91.88%), 48 for 95%, 134 for all of it. On faults it did not choose from (
 half the sample, measured on the other half) the gain over the router's own first k is
 small: 79.40 vs 77.76% at 24, 89.92 vs 89.08% at 92, 90.40 vs 91.00% at 134. The router
 order is close to greedy already, and 2,500 faults are too few to choose among 256
-configs: compaction needs the whole fault list or the router items, not a sample.
+configs.
+
+`fabtest compact --by items` covers the router items every config shows in the whole
+fabric instead (fabric.grade, 667,058 items, 4 min for 256 configs, cached in
+`items.npz`), so the fault sample only measures. Same demo run, 5,000 faults:
+
+| configs | 24 | 48 | 96 | 128 | 160 |
+|---|---|---|---|---|---|
+| router order (the first k) | 77.98% | 84.14% | 89.00% | 90.94% | 91.72% |
+| item cover | 77.80% | 84.76% | 89.64% | 91.18% | 91.92% |
+| fault cover, in-sample (optimistic) | 81.26% | 88.24% | 92.02% | 92.66% | 92.78% |
+
+Every one of the 256 configs adds items (none can go for free); 99% of the items take
+201 configs (92.54%). The router already builds each config for the most new items, so
+its own order is nearly the item cover: the choice is the number of configs (tester time)
+against coverage, along the first row.
 
 ### Pinning: shared constants, rotated per config
 
@@ -540,7 +555,7 @@ scripts/fabtest route build/fabtest/<fabric> --run r1 --configs 24
 scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
-scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99   # fewest configs for 99%
+scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99 --by items   # fewest configs
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
 scripts/fabtest cfgtest build/fabtest/<fabric> --run r1 # configuration logic, every fault

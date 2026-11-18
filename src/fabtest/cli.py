@@ -11,7 +11,7 @@ compact, export, cfgtest, bitgen-check).
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
   python3 -m fabtest untestable <work dir> [--run NAME] [--jobs 4]
-  python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME]
+  python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME] [--by items]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -116,7 +116,7 @@ def cmd_untestable(a) -> None:
 def cmd_compact(a) -> None:
     from fabtest import pipeline, spec
     w = Path(a.work)
-    pipeline.compact(spec.load(w), w, _run(a), a.target, a.configs, a.to)
+    pipeline.compact(spec.load(w), w, _run(a), a.target, a.configs, a.to, a.by, a.jobs)
 
 
 def cmd_export(a) -> None:
@@ -211,6 +211,9 @@ def main(argv=None) -> None:
     p.add_argument("--target", type=float, help="percent of what all configs detect (default 100)")
     p.add_argument("--configs", type=int, help="keep the N best configs instead")
     p.add_argument("--to", help="name of the new run (default: <run>_c<N>)")
+    p.add_argument("--by", choices=("faults", "items"), default="faults",
+                   help="cover the run's fault simulation, or the router items of every config")
+    p.add_argument("--jobs", type=int, default=4)
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")

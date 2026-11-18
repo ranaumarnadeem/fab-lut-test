@@ -388,20 +388,91 @@ def cover(rows: list[dict], cfgs: list[str]) -> list[tuple[str, int, int]]:
     return out
 
 
+_GR = None
+
+
+def _grade_one(c):
+    from fabtest.model import fabric
+    ff, data = _GR
+    sels = {t: dict(data["configs"][c][ff.tn(t)]) for t in ff.tiles}
+    return c, [(key, sorted(v, key=str)) for key, v in fabric.grade(ff, sels).items()]
+
+
+def item_sets(spec, run: Path, jobs: int = 4) -> list:
+    """Per config of the run, the router items it shows (fabric.grade, the whole fabric):
+    sorted int32 id arrays, cached in run/items.npz (keyed by the configs)."""
+    global _GR
+    import multiprocessing as mp
+    import numpy as np
+    cfg = run / "configs.json"
+    key = hashlib.sha1(cfg.read_bytes()).hexdigest()
+    cache = run / "items.npz"
+    if cache.exists():
+        z = np.load(cache, allow_pickle=False)
+        if str(z["key"]) == key:
+            return [z[f"c{i}"] for i in range(int(z["n"]))]
+    data = json.loads(cfg.read_text())
+    _GR = (model(spec), data)
+    ids: dict = {}
+    out = [None] * len(data["configs"])
+    t0 = time.time()
+    with mp.get_context("fork").Pool(jobs) as pool:
+        for c, shown in pool.imap_unordered(_grade_one, range(len(data["configs"]))):
+            out[c] = np.array(sorted(ids.setdefault((k, it), len(ids)) for k, v in shown for it in v),
+                              dtype=np.int32)
+    _GR = None
+    np.savez(cache, key=key, n=len(out), **{f"c{i}": a for i, a in enumerate(out)})
+    print(f"  graded {len(out)} configs: {len(ids)} items shown ({time.time() - t0:.0f} s)", flush=True)
+    return out
+
+
+def cover_items(sets: list, names: list[str]) -> list[tuple[str, int, int]]:
+    """Greedy set cover over item id arrays (lazy: a config's gain only shrinks)."""
+    import heapq
+    import numpy as np
+    n = 1 + max((int(a.max()) for a in sets if len(a)), default=0)
+    done = np.zeros(n, dtype=bool)
+    heap = [(-len(a), i) for i, a in enumerate(sets)]
+    heapq.heapify(heap)
+    out, total = [], 0
+    while heap:
+        g, i = heapq.heappop(heap)
+        new = int((~done[sets[i]]).sum())
+        if new == 0:
+            continue
+        if heap and new < -heap[0][0]:
+            heapq.heappush(heap, (-new, i))
+            continue
+        done[sets[i]] = True
+        total += new
+        out.append((names[i], new, total))
+    return out
+
+
 def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_configs: int | None = None,
-            name: str | None = None) -> str:
-    """A run with fewer configs (greedy set cover over the fault simulation of run): the
-    fewest configs that detect target_pct % of what all of them detect (default 100), or
-    the max_configs best. The new run <run>_c<k> holds them in cover order, renumbered
+            name: str | None = None, by: str = "faults", jobs: int = 4) -> str:
+    """A run with fewer configs (greedy set cover): the fewest configs that detect target_pct %
+    of what all of them detect (default 100), or the max_configs best. by="faults": over the
+    run's fault simulation (a sample overfits: the configs are chosen on the faults they are
+    measured on); by="items": over the router items every config shows in the whole fabric
+    (fabric.grade, cached in run/items.npz), the fault simulation only measures. The new run <run>_c<k> holds them in cover order, renumbered
     FF00.., with the fault simulation columns carried over (report and export work on it
     without simulating again); compact.json the whole cover curve."""
     fdir = run / "faultsim"
     chunks = sorted(fdir.glob("chunk_*.csv"))
     rows = [r for p in chunks for r in csv.DictReader(p.open())]
-    if not rows:
-        raise SystemExit("fabtest compact: no fault simulation results (run faultsim first)")
-    cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
-    curve = cover(rows, cfgs)
+    if by == "faults" and not rows:
+        raise SystemExit("fabtest compact: no fault simulation results (run faultsim first, or --by items)")
+    n_cfg = len(json.loads((run / "configs.json").read_text())["configs"])
+    if by == "items":   # the router items of the whole fabric: no fault sample to overfit
+        kept = [c for c in rows[0] if c not in ("id", "path", "polarity")] if rows else [f"FF{i:02d}" for i in range(n_cfg)]
+        sets = item_sets(spec, run, jobs)
+        idx = {f"FF{i:02d}": i for i in range(n_cfg)}
+        cfgs = kept
+        curve = cover_items([sets[idx[c]] for c in kept], kept)
+    else:
+        cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+        curve = cover(rows, cfgs)
     final = curve[-1][2] if curve else 0
     if max_configs:
         k = min(max_configs, len(curve))
@@ -420,24 +491,36 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
            "chains": data.get("chains"), "compacted_from": str(run)}
     (out / "configs.json").write_text(json.dumps(new, indent=0))
     ren = {c: f"FF{i:02d}" for i, c in enumerate(pick)}
-    for p in chunks:
+    for p in chunks if rows else ():
         rs = list(csv.DictReader(p.open()))
         with (out / "faultsim" / p.name).open("w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["id", "path", "polarity", *ren.values()])
             for r in rs:
                 w.writerow([r["id"], r["path"], r["polarity"], *[r[c] for c in pick]])
-    meta = json.loads((fdir / "sample.json").read_text())
-    meta["configs"] = hashlib.sha1((out / "configs.json").read_bytes()).hexdigest()
-    (out / "faultsim" / "sample.json").write_text(json.dumps(meta))
-    (out / "faultsim" / "configs.json").write_text(json.dumps({"kept": list(ren.values()), "left_out": []}))
+    if rows:
+        meta = json.loads((fdir / "sample.json").read_text())
+        meta["configs"] = hashlib.sha1((out / "configs.json").read_bytes()).hexdigest()
+        (out / "faultsim" / "sample.json").write_text(json.dumps(meta))
+        (out / "faultsim" / "configs.json").write_text(json.dumps({"kept": list(ren.values()), "left_out": []}))
     marks = {m: next(i + 1 for i, e in enumerate(curve) if e[2] >= final * m / 100) for m in (90, 95, 99, 100)} if curve else {}
-    (out / "compact.json").write_text(json.dumps({"from": str(run), "faults": len(rows), "detected": final,
+    (out / "compact.json").write_text(json.dumps({"from": str(run), "by": by, "faults": len(rows), "detected": final,
                                                   "configs": len(cfgs), "curve": curve, "picked": k,
                                                   "configs_for_pct": marks}, indent=0))
-    n = len(rows)
-    L = [f"fabtest compact: {len(cfgs)} configs detect {final} of {n} faults ({100 * final / n:.2f}%); "
-         f"{k} kept ({100 * curve[k - 1][2] / n:.2f}%) -> {out}" if curve else "fabtest compact: nothing detected"]
+    unit = "router items" if by == "items" else "faults"
+    if by == "items":
+        n = final
+        L = [f"fabtest compact: {len(cfgs)} configs show {final} router items; {k} kept "
+             f"({100 * curve[k - 1][2] / max(final, 1):.2f}% of them) -> {out}" if curve else "fabtest compact: nothing shown"]
+        if rows:
+            fk = sum(any(r[c] == "D" for c in pick) for r in rows)
+            fa = sum(any(r[c] == "D" for c in cfgs) for r in rows)
+            L.append(f"  faults of the run's simulation: {100 * fk / len(rows):.2f}% with them, "
+                     f"{100 * fa / len(rows):.2f}% with all")
+    else:
+        n = len(rows)
+        L = [f"fabtest compact: {len(cfgs)} configs detect {final} of {n} {unit} ({100 * final / n:.2f}%); "
+             f"{k} kept ({100 * curve[k - 1][2] / n:.2f}%) -> {out}" if curve else "fabtest compact: nothing detected"]
     L += [f"  {m:3d}% of it: {c} configs" for m, c in marks.items()]
     text = "\n".join(L) + "\n"
     print(text, end="")
