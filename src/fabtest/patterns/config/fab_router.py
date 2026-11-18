@@ -19,6 +19,7 @@ Configs are added until nothing open is left or configs stop adding items.
 from __future__ import annotations
 
 import heapq
+import os
 import time
 from collections import defaultdict
 
@@ -32,6 +33,9 @@ for _x in sc.LUTS:
     BELDEPS.update(sc.lut_deps(_x))
 BELDEPS.update(sc.mux8_deps(0, 0))
 _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
+# FABTEST_RF_EDGES=1: the router routes through RegFile data (D -> AD / BD), the backbone
+# leaves the data pins to the cover and drives those still free from pads afterwards
+RF_EDGES = os.environ.get("FABTEST_RF_EDGES", "0") == "1"
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
 
 
@@ -68,6 +72,12 @@ class Graph:
                 edge(cn(t, f"{p}_O_top"), cn(t, f"{p}_O"), 0.0)
                 edge(cn(t, f"{p}_I"), cn(t, f"{p}_I_top"), 0.0)
                 edge(cn(t, f"{p}_T"), cn(t, f"{p}_T_top"), 0.0)
+        for t in getattr(arr, "other_tiles", []) if RF_EDGES else ():
+            # RegFile: write data D[k] -> read data AD[k] / BD[k] (through the memory, a
+            # clock later; the grading's two-valued model passes D the same way)
+            for n, (op, a) in arr.bel_ops(t).items():
+                if op == "F":
+                    edge(a[0][0], cn(t, n), 4.0)
         for t in getattr(arr, "other_tiles", []):   # full fabric: other tile types
             gt = arr.generic(t)
             for o, m in gt.muxes.items():
@@ -449,6 +459,12 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None, po
         for k in ks:
             if cfg.try_cover(i, k, open_work):
                 break
+    for p, pads in getattr(cfg, "rf_data", ()):   # RegFile data pins the cover left free: pads
+        for k in range(4):
+            n = p["D"][k]
+            if g.mux_of.get(n) in cfg.sel or not g.mux_of.get(n):
+                continue
+            any(route_to(cfg, src, {n}, True) for src in _rot(pads, k))
     if post is not None:   # e.g. targets (patterns/config/target.py) in the muxes left free
         g.last_post = post(cfg, bias)
     return fill(g, cfg, open_work, bias)
@@ -737,6 +753,9 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
                 links += 3
             else:
                 fails += 1
+        if RF_EDGES:   # the data pins after the cover (rf_data)
+            cfg.rf_data = getattr(cfg, "rf_data", []) + [(p, pads)]
+            continue
         for k in range(4):   # write data from pad inputs (defined every vector)
             if any(route_to(cfg, src, {p["D"][k]}, True) for src in _rot(pads, k)):
                 links += 1
