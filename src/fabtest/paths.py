@@ -12,3 +12,5 @@ SYNTH = PKG / "synth"                              # yosys templates and techmap
 BUILD = REPO / "build"                             # scratch: work dirs, compiled kernel, logs
 RESULTS = Path(os.environ.get("FABTEST_RESULTS") or REPO / "results")   # one directory per run (local)
 GOLDEN = REPO / "tests" / "golden"                 # committed reference data of the tests
+# the FABulous demo project (with its generated RTL) the tests and the demo script use
+DEMO = Path(os.environ.get("FABTEST_DEMO") or REPO.parent / "ext" / "demo")

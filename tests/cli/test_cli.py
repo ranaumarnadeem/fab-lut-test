@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import ROOT, TEST_RUNS, demo_work  # noqa: E402
+from common import DEMO_PROJECT, ROOT, TEST_RUNS, demo_work  # noqa: E402
 
 CMDS = ["run", "init", "info", "synth", "route", "faultsim", "report", "untestable", "compact", "clockcheck",
         "export",
@@ -32,7 +32,7 @@ def main() -> None:
         if fabtest(c, "--help").returncode != 0:
             fails.append(f"{c} --help")
     w = demo_work()
-    r = fabtest("init", "/home/user/ext/demo")
+    r = fabtest("init", DEMO_PROJECT)
     if "up to date" not in r.stdout:
         fails.append("init: cached work dir")
     r = fabtest("info", w, "--bels")

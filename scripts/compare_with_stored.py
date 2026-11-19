@@ -37,7 +37,7 @@ from fabtest.model.generic import GenericFabric  # noqa: E402
 from fabtest.sim import stimuli  # noqa: E402
 from fabtest.sim.fastsim import fastsim  # noqa: E402
 
-DEMO = Path("/home/user/ext/demo")
+from fabtest.paths import DEMO  # noqa: E402
 
 
 def part(path: str) -> str:

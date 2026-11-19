@@ -5,7 +5,7 @@
 # export, Icarus replay of every exported config.
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJ="${1:-/home/user/ext/demo}"
+PROJ="${1:-${FABTEST_DEMO:-$ROOT/../ext/demo}}"
 CFG="${2:-$ROOT/tests/golden/configs/v3.json}"
 RUN="${3:-demo_v3}"
 SAMPLE="${4:-2000}"

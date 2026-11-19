@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validation fabrics: the FABulous demo project with another fabric layout.
 
-  python3 tests/fabrics/make.py F1 [F2 ...] [--demo /home/user/ext/demo] [--out build/fabrics]
+  python3 tests/fabrics/make.py F1 [F2 ...] [--demo $FABTEST_DEMO] [--out build/fabrics]
 
 <name>.csv here holds the FabricBegin .. FabricEnd rows (tile names). The demo project is
 copied to build/fabrics/<name> (tiles, fabric-level RTL, parameters unchanged), its
@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "src"))
+from fabtest.paths import DEMO  # noqa: E402
 ROOT = HERE.parents[1]
 SKIP = shutil.ignore_patterns(".git", "Test", "user_design", "__pycache__", "*.json", "bitStreamSpec.*", "*.vcd", "*.fst")
 
@@ -93,7 +95,7 @@ def make(name: str, demo: Path, out: Path) -> Path:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("names", nargs="+")
-    ap.add_argument("--demo", default="/home/user/ext/demo")
+    ap.add_argument("--demo", default=str(DEMO))
     ap.add_argument("--out", default=str(ROOT / "build" / "fabrics"))
     a = ap.parse_args()
     for n in a.names:

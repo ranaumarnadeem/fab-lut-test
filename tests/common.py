@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from fabtest.paths import BUILD, GOLDEN, RESULTS  # noqa: E402
+from fabtest.paths import BUILD, DEMO, GOLDEN, RESULTS  # noqa: E402
 
-DEMO_PROJECT = Path("/home/user/ext/demo")          # the FABulous demo project (generated RTL)
+DEMO_PROJECT = DEMO                                  # the FABulous demo project ($FABTEST_DEMO)
 SETS = {s: GOLDEN / "configs" / f"{s}.json" for s in ("muladd", "regfile", "v2", "v3")}
 REF_RUN = RESULTS / "demo_fullbram_96cfg_50k"       # local: the stored 50k-fault matrices (R1)
 TEST_RUNS = BUILD / "tests"                          # scratch runs of the tests (not results/)

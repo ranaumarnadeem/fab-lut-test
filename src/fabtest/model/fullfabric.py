@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fabtest.paths import REPO as ROOT  # noqa: E402
+from fabtest.paths import DEMO, REPO as ROOT  # noqa: E402
 from fabtest.model import fabric  # noqa: E402
 from fabtest.model import sm_configs as sc  # noqa: E402
 from fabtest.model import tile_model  # noqa: E402
@@ -94,7 +94,7 @@ class FullFabric(fabric.Array):
         else:
             self.type_dir = dict(TYPE_DIR, LUT4AB=ROOT / "rtl", W_IO=ROOT / "rtl" / "W_IO")
             self.efpga_v = FAB / "eFPGA.v"
-            self.top_v = Path("/home/user/ext/demo/Fabric/eFPGA_top.v")
+            self.top_v = DEMO / "Fabric" / "eFPGA_top.v"
             super_v = {"DSP": FAB / "DSP" / "DSP.v"}
             self.R, self.C = 16, 10
             self.frame_bits, self.frames = 32, 20

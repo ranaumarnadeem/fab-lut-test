@@ -3,7 +3,7 @@
 
   python3 tests/cli/test_run.py [--sample 2000]
 
-1. `fabtest run /home/user/ext/demo --suite demo --configs 2 --sample N`: the two routed
+1. `fabtest run $FABTEST_DEMO --suite demo --configs 2 --sample N`: the two routed
    configs equal the routing golden (R2: selects hash, gain), every step ran, and the
    export holds both configs.
 2. The same command again: every step is up to date (nothing routed or simulated).
