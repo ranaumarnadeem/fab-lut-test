@@ -470,6 +470,8 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
         u = used[i[0]]
         ks = sorted((k for k in range(fan) if not g.forbidden(i, k)),
                     key=lambda k: (not open_work.get((*i, k)), g.src(i, k) in u, (k + bias) % fan))
+        if not ks:   # every input unknown (its output is tainted): X whatever the code, left at 0
+            continue
         ok = next((k for k in ks if cfg.assign(i, k)), None)
         if ok is not None:
             u.add(g.src(i, ok))

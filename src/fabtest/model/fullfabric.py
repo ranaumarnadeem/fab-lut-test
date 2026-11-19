@@ -288,13 +288,22 @@ class FullFabric(fabric.Array):
         self.rings = {n for c in tarjan(nodes, lambda n: succ.get(n, ()))
                       if len(c) > 1 or c[0] in succ.get(c[0], ()) for n in c}
         seeds += sorted(self.rings)
+        # a mux whose every input is unknown is unknown whatever its code (a fabric narrower
+        # than the 6-wires: the W_IO 4-wire muxes EE4BEG2 / EE4BEG12 read only undriven
+        # W6END and A_Q); a constant input is a known value
+        muxes = [(self.canon(t, m.net), [self.canon(t, s.net) for s in m.inputs])
+                 for t in self.tiles for m in self.MT(t).values()
+                 if m.model != "direct" and m.inputs and all(s.kind != "const" for s in m.inputs)]
         out, stack = set(seeds), list(seeds)
         while stack:
-            n = stack.pop()
-            for m in succ.get(n, ()):
-                if m not in out:
-                    out.add(m)
-                    stack.append(m)
+            while stack:
+                n = stack.pop()
+                for m in succ.get(n, ()):
+                    if m not in out:
+                        out.add(m)
+                        stack.append(m)
+            stack = [n for n, ins in muxes if n not in out and all(s in out for s in ins)]
+            out.update(stack)
         return out
 
     def _is_bus(self, t, p) -> bool:
