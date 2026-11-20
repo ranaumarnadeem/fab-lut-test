@@ -19,6 +19,7 @@ Configs are added until nothing open is left or configs stop adding items.
 from __future__ import annotations
 
 import heapq
+import os
 import time
 from collections import defaultdict
 
@@ -32,6 +33,12 @@ for _x in sc.LUTS:
     BELDEPS.update(sc.lut_deps(_x))
 BELDEPS.update(sc.mux8_deps(0, 0))
 _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
+# FABTEST_BIDIR=1: bidirectional cover: besides routing the mux output forward to an
+# observed net, the selected input is routed backward to a net that carries a pad-driven
+# (varying) signal when it does not already (drive_input)
+BIDIR = os.environ.get("FABTEST_BIDIR", "0") == "1"
+BACK_MAX_POP = 4000   # backward search cap (nets popped)
+BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
 
 
@@ -280,6 +287,14 @@ class Cfg:
         return None
 
     def try_cover(self, i, k, open_work) -> bool:
+        ok = self._try_cover(i, k, open_work)
+        if ok and BIDIR:
+            s = self.g.src(i, k)
+            if s is not None:
+                drive_input(self, s)
+        return ok
+
+    def _try_cover(self, i, k, open_work) -> bool:
         direct = MM(i).model == "direct"
         if not direct and not self.assign(i, k):
             return False
@@ -503,6 +518,115 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
                                   pinned=getattr(cfg, "pinned", frozenset()))
         print(f"    (array check: {len(moves)} loop moves)", flush=True)
     return sels
+
+
+def _const_nets(cfg) -> set:
+    """Outputs of the constant LUTs of the config (their inputs do not reach the output)."""
+    return {out for v in (0, 1) for _t, out in getattr(cfg, "consts", {}).get(v, ())}
+
+
+def _ctrl(cfg) -> set:
+    """Nets that carry a pad-driven, varying signal in cfg: forward from the border inputs
+    through wires, BEL edges (not out of a constant LUT) and selected muxes. Computed once
+    per config (after the seed) and grown by drive_input."""
+    c = cfg.__dict__.get("_ctrl_set")
+    if c is not None:
+        return c
+    g = cfg.g
+    const = _const_nets(cfg)
+    c = set(g.arr.border_in)
+    stack = list(c)
+    while stack:
+        n = stack.pop()
+        nxt = [b for b, _c in g.fixed.get(n, ()) if b not in const]
+        nxt += [g.net_of[i] for i, k in g.readers.get(n, ()) if cfg.sel.get(i) == k]
+        for b in nxt:
+            if b not in c:
+                c.add(b)
+                stack.append(b)
+    cfg.__dict__["_ctrl_set"] = c
+    return c
+
+
+def _fixed_pred_cost(g) -> dict:
+    fp = g.__dict__.get("_fpc")
+    if fp is None:
+        fp = defaultdict(list)
+        for a, lst in g.fixed.items():
+            for b, c in lst:
+                fp[b].append((a, c))
+        g.__dict__["_fpc"] = fp
+    return fp
+
+
+def drive_input(cfg, net: str) -> bool:
+    """Route backward from net to a net with a pad-driven signal (_ctrl) through free muxes,
+    wires and non-constant LUTs (Dijkstra; a free mux costs 1, a LUT 2); the muxes of the
+    path get their codes. True if net is driven (already, or by the new path)."""
+    g = cfg.g
+    ctrl = _ctrl(cfg)
+    if net in ctrl:
+        BIDIR_STATS["already"] += 1
+        return True
+    const = _const_nets(cfg)
+    fpc = _fixed_pred_cost(g)
+    dist, prev, pq, pops = {net: 0.0}, {}, [(0.0, net)], 0
+    end = None
+    while pq:
+        d, n = heapq.heappop(pq)
+        if d > dist.get(n, 1e18):
+            continue
+        if n in ctrl:
+            end = n
+            break
+        pops += 1
+        if pops > BACK_MAX_POP:
+            BIDIR_STATS["failed"] += 1
+            return False
+        cand = []
+        for a, c in fpc.get(n, ()):
+            if c > 0 and n in const:
+                continue   # a constant LUT: its inputs do not drive its output
+            cand.append((a, c, None))
+        i = g.mux_of.get(n)
+        if i is not None and MM(i).model != "direct":
+            if i in cfg.sel:
+                s0 = g.src(i, cfg.sel[i])
+                if s0 is not None:
+                    cand.append((s0, 0.0, None))
+            else:
+                for k in range(MM(i).fan_in):
+                    if g.forbidden(i, k):
+                        continue
+                    s0 = g.src(i, k)
+                    if s0 is not None:
+                        cand.append((s0, 1.0, (i, k)))
+        for a, c, step in cand:
+            nd = d + c
+            if nd < dist.get(a, 1e18):
+                dist[a] = nd
+                prev[a] = (n, step)
+                heapq.heappush(pq, (nd, a))
+    if end is None:
+        BIDIR_STATS["failed"] += 1
+        return False
+    steps, path, n = [], [], end
+    while n != net:
+        nn, step = prev[n]
+        if step is not None:
+            steps.append(step)
+        path.append(n)
+        n = nn
+    path.append(net)
+    before = set(cfg.sel)
+    for i, k in steps:
+        if not cfg.assign(i, k):
+            _undo(cfg, before)
+            BIDIR_STATS["failed"] += 1
+            return False
+    ctrl.update(path)
+    BIDIR_STATS["routed"] += 1
+    return True
 
 
 def route_net(cfg: Cfg, net: str) -> bool:
