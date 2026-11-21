@@ -20,7 +20,7 @@ Demo fabric (16 x 10 tiles, 1,169,398 faults; sampled fault simulation):
 
 | | coverage |
 |---|---|
-| 96 configs, 64 vectors each (the `demo` suite, 50k sample) | 89.02% +- 0.27 |
+| 96 configs, 64 vectors each (the `demo` suite, 50k sample) | 89.02% +- 0.27 (router before the bidirectional cover; with it +1.2 points on a 2,000-fault comparison) |
 | 96 configs, 256 vectors each | 89.96% |
 | 256 configs | 92.78% +- 0.72 (switch matrices 94.4%) |
 | configuration logic (`fabtest cfgtest`: FSM, frame registers, UART, bitbang) | 73.3% of 9,758 faults |
@@ -520,6 +520,31 @@ every one is X-only (P) in the fault simulation. With 4 random power-up states o
 198 of 278 (71%). The three columns where no test uses a flop: the W_IO registered pad
 paths, the RAM_IO pass registers and the MULADD registers are never configured (the model
 treats them as unknown sources), so nothing after a broken clock there changes.
+
+Bidirectional cover (the default; `FABTEST_BIDIR=0`: the router before it, `1`: step 1
+only). The router used to route only the output side of a tested mux code (forward from
+the mux to an observed net); its input carried whatever drove it. Now:
+
+1. the selected input is routed backward (Dijkstra through free muxes, wires and LUTs)
+   to a net that carries a pad-driven signal, one that none of the mux's other inputs
+   carries;
+2. one other input of the mux (rotated per config) is routed back to a different signal,
+   so the two take opposite values in some vector (the select and decode faults of a mux
+   need that);
+3. backward paths prefer open codes, as the forward routes do.
+
+Demo, 96 configs each, the same 2,000 faults of the sample (current netlist):
+
+| | before | step 1 | steps 1 to 3 |
+|---|---|---|---|
+| all faults | 87.90% | 88.80% | **89.10%** |
+| LUT4AB | 90.87% | 91.59% | 92.03% |
+| RegFile | 76.72% | 77.59% | 78.02% |
+| router items | 83.5% | 86.9% | 88.4% |
+| routing time | 31 min | 33 min | 34 min |
+
+Steps 1 to 3 against before: 55 faults gained, 31 lost (+1.2 points), at no extra
+configs or tester time.
 
 ### Pinning: shared constants, rotated per config
 

@@ -39,7 +39,7 @@ _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
 # input of the mux (rotated per config) driven by another signal, so the two take opposite
 # values in some vector (select / decode faults); the selected input avoids the signals of
 # the mux's other inputs; backward paths prefer open codes, as forward routes do
-BIDIR = int(os.environ.get("FABTEST_BIDIR", "0") or 0)
+BIDIR = int(os.environ.get("FABTEST_BIDIR", "2") or 0)
 BACK_MAX_POP = 4000   # backward search cap (nets popped)
 BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
