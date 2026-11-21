@@ -35,8 +35,11 @@ BELDEPS.update(sc.mux8_deps(0, 0))
 _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
 # FABTEST_BIDIR=1: bidirectional cover: besides routing the mux output forward to an
 # observed net, the selected input is routed backward to a net that carries a pad-driven
-# (varying) signal when it does not already (drive_input)
-BIDIR = os.environ.get("FABTEST_BIDIR", "0") == "1"
+# (varying) signal when it does not already (drive_input). FABTEST_BIDIR=2 also: a second
+# input of the mux (rotated per config) driven by another signal, so the two take opposite
+# values in some vector (select / decode faults); the selected input avoids the signals of
+# the mux's other inputs; backward paths prefer open codes, as forward routes do
+BIDIR = int(os.environ.get("FABTEST_BIDIR", "0") or 0)
 BACK_MAX_POP = 4000   # backward search cap (nets popped)
 BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
@@ -291,7 +294,10 @@ class Cfg:
         if ok and BIDIR:
             s = self.g.src(i, k)
             if s is not None:
-                drive_input(self, s)
+                if BIDIR >= 2:
+                    _drive_pair(self, i, k, s)
+                else:
+                    drive_input(self, s)
         return ok
 
     def _try_cover(self, i, k, open_work) -> bool:
@@ -450,6 +456,7 @@ def sels_of(g: Graph, sel: dict) -> dict:
 
 def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) -> dict:
     cfg = make_cfg(g)
+    cfg.bias, cfg._open_work = bias, open_work
     g.last_seed = seed(cfg, bias) if seed is not None else None
 
     def work(i):
@@ -535,17 +542,48 @@ def _ctrl(cfg) -> set:
     g = cfg.g
     const = _const_nets(cfg)
     c = set(g.arr.border_in)
+    root = {n: n for n in c}   # the signal a net carries: its pad, or the LUT it comes out of
     stack = list(c)
     while stack:
         n = stack.pop()
-        nxt = [b for b, _c in g.fixed.get(n, ()) if b not in const]
-        nxt += [g.net_of[i] for i, k in g.readers.get(n, ()) if cfg.sel.get(i) == k]
-        for b in nxt:
+        nxt = [(b, b if cost > 0 else root[n]) for b, cost in g.fixed.get(n, ()) if b not in const]
+        nxt += [(g.net_of[i], root[n]) for i, k in g.readers.get(n, ()) if cfg.sel.get(i) == k]
+        for b, r in nxt:
             if b not in c:
                 c.add(b)
+                root[b] = r
                 stack.append(b)
     cfg.__dict__["_ctrl_set"] = c
+    cfg.__dict__["_root"] = root
     return c
+
+
+def _drive_pair(cfg, i, k, s) -> None:
+    """BIDIR 2: input k (source net s) driven by a signal none of the mux's other inputs
+    carries, then one other input (rotated by the config) driven by a different signal."""
+    g = cfg.g
+    ctrl = _ctrl(cfg)
+    root = cfg.__dict__["_root"]
+    fan = MM(i).fan_in
+    others = [g.src(i, j) for j in range(fan) if j != k and not g.forbidden(i, j)]
+    others = [x for x in others if x is not None and x != s]
+    if not drive_input(cfg, s, avoid={root[x] for x in others if x in ctrl}):
+        return
+    r = root.get(s)
+    order = [(k + 1 + getattr(cfg, "bias", 0) + j) % fan for j in range(fan)]
+    for j in order:
+        if j == k or g.forbidden(i, j):
+            continue
+        x = g.src(i, j)
+        if x is None or x == s:
+            continue
+        if x in ctrl and root.get(x) != r:
+            BIDIR_STATS["pair already"] += 1
+            return
+        if x not in ctrl and drive_input(cfg, x, avoid={r}):
+            BIDIR_STATS["pair routed"] += 1
+            return
+    BIDIR_STATS["pair failed"] += 1
 
 
 def _fixed_pred_cost(g) -> dict:
@@ -559,15 +597,21 @@ def _fixed_pred_cost(g) -> dict:
     return fp
 
 
-def drive_input(cfg, net: str) -> bool:
+def drive_input(cfg, net: str, avoid=frozenset()) -> bool:
     """Route backward from net to a net with a pad-driven signal (_ctrl) through free muxes,
-    wires and non-constant LUTs (Dijkstra; a free mux costs 1, a LUT 2); the muxes of the
-    path get their codes. True if net is driven (already, or by the new path)."""
+    wires and non-constant LUTs (Dijkstra; a free mux costs 1, a LUT 2; BIDIR 2: 0.4 on an
+    open code, 4 on another code of a mux with open codes); the muxes of the path get their
+    codes. avoid: signals (_ctrl roots) not to end on. True if net is driven by a signal
+    not in avoid (already, or by the new path)."""
     g = cfg.g
     ctrl = _ctrl(cfg)
+    root = cfg.__dict__["_root"]
     if net in ctrl:
-        BIDIR_STATS["already"] += 1
-        return True
+        ok = root.get(net) not in avoid
+        BIDIR_STATS["already" if ok else "same signal"] += 1
+        return ok
+    ow = getattr(cfg, "_open_work", None) if BIDIR >= 2 else None
+    om = cfg._open_muxes(ow) if ow else set()
     const = _const_nets(cfg)
     fpc = _fixed_pred_cost(g)
     dist, prev, pq, pops = {net: 0.0}, {}, [(0.0, net)], 0
@@ -576,9 +620,11 @@ def drive_input(cfg, net: str) -> bool:
         d, n = heapq.heappop(pq)
         if d > dist.get(n, 1e18):
             continue
-        if n in ctrl:
+        if n in ctrl and root.get(n) not in avoid:
             end = n
             break
+        if n in ctrl:
+            continue   # an avoided signal: not through it either
         pops += 1
         if pops > BACK_MAX_POP:
             BIDIR_STATS["failed"] += 1
@@ -600,7 +646,8 @@ def drive_input(cfg, net: str) -> bool:
                         continue
                     s0 = g.src(i, k)
                     if s0 is not None:
-                        cand.append((s0, 1.0, (i, k)))
+                        c = 1.0 if not ow else 0.4 if ow.get((*i, k)) else 4.0 if i in om else 1.0
+                        cand.append((s0, c, (i, k)))
         for a, c, step in cand:
             nd = d + c
             if nd < dist.get(a, 1e18):
@@ -625,6 +672,8 @@ def drive_input(cfg, net: str) -> bool:
             BIDIR_STATS["failed"] += 1
             return False
     ctrl.update(path)
+    for n in path:
+        root[n] = root[end]
     BIDIR_STATS["routed"] += 1
     return True
 
