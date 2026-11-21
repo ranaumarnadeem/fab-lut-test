@@ -16,16 +16,16 @@ values); the tester loads it through the configuration port, applies its vectors
 compares the outputs. The export holds one bitstream and one vector file per config, a
 manifest, a test plan and an Icarus testbench that replays everything on the RTL.
 
-Demo fabric (16 x 10 tiles, 1,170,462 faults; sampled fault simulation):
+Demo fabric (16 x 10 tiles, 1,169,398 faults; sampled fault simulation):
 
 | | coverage |
 |---|---|
-| 96 configs, 64 vectors each (the `demo` suite) | 89.00% +- 0.87 |
+| 96 configs, 64 vectors each (the `demo` suite, 50k sample) | 89.02% +- 0.27 |
 | 96 configs, 256 vectors each | 89.96% |
 | 256 configs | 92.78% +- 0.72 (switch matrices 94.4%) |
 | configuration logic (`fabtest cfgtest`: FSM, frame registers, UART, bitbang) | 73.3% of 9,758 faults |
 | clock network (`fabtest clockcheck`) | 198 of 278 faults |
-| proven untestable (`fabtest untestable`, SAT per tile) | 18 of the 5,460 undetected (sample) |
+| proven untestable (`fabtest untestable`, SAT per tile) | 16 of the 5,488 undetected (sample; 6 not decided) |
 
 Validated on four more fabrics built with FABulous (other layouts, generic multiplexers,
 an unknown BEL, an uneven RegFile / DSP / BlockRAM mix): the configs pass a fault-free
@@ -390,23 +390,23 @@ The report then gives the coverage of the testable faults too.
 
 | run | undetected | untestable (dead / redundant) | coverage | of testable |
 |---|---|---|---|---|
-| demo, 96 configs, 50k sample (Yosys 0.33 netlist) | 5,460 | 18 (0 / 18) | 89.08% | 89.11% |
+| demo, 96 configs, 50k sample (Yosys 0.71 netlist) | 5,488 | 16 (6 / 10); 6 not decided | 89.02% | 89.05% |
 | F1, 24 configs, every fault | 10,110 | 84 (44 / 40) | 85.84% | 85.94% |
 | F2, 24 configs, every fault | 46,511 | 7,856 (7,856 / 0) | 70.91% | **74.58%** |
 | F3, 24 configs, every fault | 26,304 | 5,808 (5,592 / 216) | 77.09% | **81.20%** |
 | F4, 24 configs, 20k sample | 5,374 | 19 (11 / 8) | 73.13% | 73.20% |
 
-On the demo all but 18 of the undetected faults are testable in their tile: every one of
-them has simulation status P (it reaches a pad only as X: a flop, latch or memory word not
-written, a loop), so what is left is test generation, not untestable logic. The small
+On the demo, 5,466 of the 5,488 undetected faults are testable in their tile, 16 are
+untestable and 6 are not decided (their cone reaches a flop clock). So what is left is
+test generation, not untestable logic. The small
 fabrics lose whole wires: F2 (6 wide) and F3 (5 wide) are narrower than the 6-tile E6 / W6
 wires, which leave the fabric unread. F3's 216 redundant faults are the GND0 mux input of
 `MultiplexerStyle generic` (synthesised as an AND with a constant 0; the custom style has
-none). Soundness: none of the 44,540 detected faults of the demo sample comes out
+none). Soundness (earlier run): none of the 44,540 detected faults of the demo sample comes out
 untestable, and the fabrics gate checks 200 detected faults per fabric. 37 ms per fault on
 the demo (one thread).
 
-What stops the testable ones (demo, 600 of the 5,442, `Checker.check(..., fixes=)`: the
+What stops the testable ones (demo, earlier run: 600 of the 5,442, `Checker.check(..., fixes=)`: the
 tile's config latches fixed to each of the 96 loaded configs, its data and flop states free):
 
 | | faults |
