@@ -397,8 +397,9 @@ The report then gives the coverage of the testable faults too.
 | F4, 24 configs, 20k sample | 5,374 | 19 (11 / 8) | 73.13% | 73.20% |
 
 On the demo, 5,466 of the 5,488 undetected faults are testable in their tile, 16 are
-untestable and 6 are not decided (their cone reaches a flop clock). So what is left is
-test generation, not untestable logic. The small
+untestable and 6 are not decided (their cone reaches a flop clock). All 5,488 have
+simulation status P in some config (they reach a pad only as X: a flop, latch or memory
+word not written, a loop), so what is left is test generation, not untestable logic. The small
 fabrics lose whole wires: F2 (6 wide) and F3 (5 wide) are narrower than the 6-tile E6 / W6
 wires, which leave the fabric unread. F3's 216 redundant faults are the GND0 mux input of
 `MultiplexerStyle generic` (synthesised as an AND with a constant 0; the custom style has
