@@ -12,6 +12,7 @@ dependencies = ["numpy", "pybind11"]
 
 [project.optional-dependencies]
 sat = ["python-sat>=1.8.dev0"]   # fabtest untestable
+pack = ["ortools"]               # fabtest pack (CP-SAT; greedy without it)
 
 [project.scripts]
 fabtest = "fabtest.cli:main"

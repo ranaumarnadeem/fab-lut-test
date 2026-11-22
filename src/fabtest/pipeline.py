@@ -458,6 +458,79 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     return text
 
 
+def pack(spec, work: Path, run: Path, n_configs: int = 8, name: str | None = None, time_limit: float = 300,
+         types: list[str] | None = None, jobs: int = 4, solver: str = "greedy") -> Path:
+    """n_configs more configs for the faults the run's fault simulation leaves undetected
+    (fault-targeted bin packing, patterns.config.pack; types: only faults of these tile types).
+    The new run <run>_p<k> holds the run's configs and the new ones; its fault simulation is
+    the run's, with columns of the new configs added (only they are simulated)."""
+    from fabtest.patterns.config import fab_router as fr
+    from fabtest.patterns.config import pack as pk
+    from fabtest.sim.fastsim import fastsim
+    fdir = run / "faultsim"
+    chunks = sorted(fdir.glob("chunk_*.csv"))
+    if not chunks:
+        raise SystemExit("fabtest pack: no fault simulation results (run faultsim first)")
+    _same_netlist(work, fdir, "pack")
+    t0 = time.time()
+    data = json.loads((run / "configs.json").read_text())
+    rows = [r for p in chunks for r in csv.DictReader(p.open())]
+    cols = [c for c in rows[0] if c not in ("id", "path", "polarity")]
+    faults = {f["id"]: f for f in csv.DictReader((work / "synth" / "faults.csv").open())}
+    und = [faults[r["id"]] for r in rows if not any(r[c] == "D" for c in cols)
+           and (not types or part_of(spec, r["path"]) in types)]
+    ff = model(spec)
+    apply_caps(ff, spec)
+    fr.CHAINS = data.get("chains") or 2
+    nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
+    print(f"fabtest pack: {len(data['configs'])} configs, {len(und)} of {len(rows)} sampled faults undetected"
+          + (f" in {', '.join(types)}" if types else ""), flush=True)
+    new, log, info = pk.pack(ff, data["configs"], nl, und, n_configs, time_limit, jobs, solver=solver)
+    out = run.parent / (name or f"{run.name}_p{n_configs}")
+    if out.exists():
+        shutil.rmtree(out)
+    (out / "faultsim").mkdir(parents=True)
+    passes = data.get("passes") or [{"configs": len(data["configs"]), "chains": data.get("chains")}]
+    (out / "configs.json").write_text(json.dumps({
+        "configs": data["configs"] + new, "log": (data.get("log") or []) + log, "chains": fr.CHAINS,
+        "passes": passes + [{"configs": len(new), "chains": fr.CHAINS, "packed": True}],
+        "packed_from": str(run)}, indent=0))
+    # fault simulation of the new configs only, on the run's sample
+    idx = list(range(len(data["configs"]), len(data["configs"]) + len(new)))
+    stims = _stims(spec, out / "configs.json", only=idx)
+    ffr = fastsim.fault_free(nl, stims, jobs)
+    keep = [st for st in stims if ffr[st.name] is None]
+    for st in stims:
+        if ffr[st.name] is not None:
+            print(f"  left out {st.name}: {ffr[st.name]}", flush=True)
+    kept0 = json.loads((fdir / "configs.json").read_text())
+    names = [st.name for st in keep]
+    for p in chunks:
+        rs = list(csv.DictReader(p.open()))
+        _, stat = fastsim.run_faults("fabtest", keep, [faults[r["id"]] for r in rs], jobs,
+                                     limit_factor=200, nl=nl, quiet=True) if keep else (None, [{} for _ in rs])
+        with (out / "faultsim" / p.name).open("w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["id", "path", "polarity", *cols, *names])
+            for r, st in zip(rs, stat):
+                w.writerow([r["id"], r["path"], r["polarity"], *[r[c] for c in cols], *[st[c] for c in names]])
+    meta = json.loads((fdir / "sample.json").read_text())
+    meta["configs"] = hashlib.sha1((out / "configs.json").read_bytes()).hexdigest()
+    (out / "faultsim" / "sample.json").write_text(json.dumps(meta))
+    (out / "faultsim" / "configs.json").write_text(json.dumps(
+        {"kept": kept0["kept"] + names, "left_out": kept0["left_out"] + [st.name for st in stims if st not in keep]}))
+    rows2 = [r for p in sorted((out / "faultsim").glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    got = sum(1 for r in rows2 if not any(r[c] == "D" for c in cols) and any(r[c] == "D" for c in names))
+    cov0 = sum(any(r[c] == "D" for c in cols) for r in rows)
+    info.update({"from": str(run), "configs": len(new), "detected_before": cov0, "newly_detected": got,
+                 "sampled": len(rows), "seconds": round(time.time() - t0)})
+    (out / "pack.json").write_text(json.dumps(info, indent=0))
+    print(f"fabtest pack: {len(new)} configs packed, {got} of {len(und)} undetected faults now detected; "
+          f"sample {100 * cov0 / len(rows):.2f}% -> {100 * (cov0 + got) / len(rows):.2f}% "
+          f"({time.time() - t0:.0f} s) -> {out}", flush=True)
+    return out
+
+
 def clock_nets(nl) -> set:
     """Nets of the clock network: the flops' clock pins and the buffers / inverters behind them."""
     out = {int(nl.a[i]) for i in range(nl.n_cells) if nl.type[i] == 5}

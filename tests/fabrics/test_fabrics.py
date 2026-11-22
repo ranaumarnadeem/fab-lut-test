@@ -9,7 +9,7 @@ equality and the Icarus replay of the first configs and the port test. Scratch r
 build/tests/<name>. Slow (synth: minutes). OPAQUE: BELs a fabric's report must name as
 opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none. SAT soundness:
 SAT_SAMPLE detected faults per fabric, none proven untestable. compact: 2 configs, the
-report of the new run equals the cover.
+report of the new run equals the cover. pack: 1 config more, up to date and no worse.
 """
 from __future__ import annotations
 
@@ -46,6 +46,24 @@ def compact_ok(s, w: Path, run_dir: Path) -> str:
     got = pipeline.report(s, c).splitlines()[1]
     if f"{want:6.2f}%" not in got or not pipeline.faultsim_done(w, c, m["faults"], 1, m["faults"]):
         return f"report {got.strip()} (cover {want:.2f}%)"
+    return ""
+
+
+def pack_ok(s, w: Path, run_dir: Path) -> str:
+    """fabtest pack, 1 config: the new run has it, its fault simulation is up to date (only
+    the new config simulated) and detects at least what the run did, with routes packed."""
+    import json
+    from fabtest import pipeline
+    out = pipeline.pack(s, w, run_dir, 1, name=run_dir.name + "_p", time_limit=20, jobs=2)
+    m = json.loads((out / "pack.json").read_text())
+    n = len(json.loads((run_dir / "configs.json").read_text())["configs"])
+    meta = json.loads((out / "faultsim" / "sample.json").read_text())
+    if len(json.loads((out / "configs.json").read_text())["configs"]) != n + 1:
+        return "no config added"
+    if not pipeline.faultsim_done(w, out, meta["n"], meta["seed"], meta["chunk"]):
+        return "fault simulation of the new run not up to date"
+    if m["newly_detected"] < 0 or json.loads((out / "configs.json").read_text())["log"][-1]["backbone"]["packed"] == 0 and m["mapped"]:
+        return f"nothing packed ({m})"
     return ""
 
 
@@ -103,6 +121,9 @@ def main() -> None:
         bad = compact_ok(s, w, run_dir)
         if bad:
             fails.append(f"{name}: compact: {bad}")
+        bad = pack_ok(s, w, run_dir)
+        if bad:
+            fails.append(f"{name}: pack: {bad}")
         bad = sat_sound(w, run_dir)
         if bad:
             fails.append(f"{name}: SAT calls detected faults untestable: {bad[:3]}")

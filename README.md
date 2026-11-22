@@ -546,6 +546,35 @@ Demo, 96 configs each, the same 2,000 faults of the sample (current netlist):
 Steps 1 to 3 against before: 55 faults gained, 31 lost (+1.2 points), at no extra
 configs or tester time.
 
+### Packing: configs for the undetected faults (`fabtest pack`)
+
+The router fills a config greedily: a target fails when the mux it needs is already taken
+by another route of the config, and adding configs gains less and less. `fabtest pack`
+treats the extra configs as bin packing with conflicts (OR-Tools CP-SAT; greedy first fit
+without it): every fault the run's fault simulation leaves undetected is mapped to the
+switch-matrix outputs its value reaches first, every code of those muxes is routed alone
+on the backbone of each new config, and CP-SAT puts the routes into the configs (a mux
+takes one code per config), maximizing the faults' weight, then the router items. Each
+config then gets the router's cover of what is left. The new run holds the old configs
+and the new ones; only the new ones are fault-simulated.
+
+Against the router's own extra configs (`route --extend`), the same number:
+
+| | router | pack |
+|---|---|---|
+| demo, 96 + 8 configs, the 550 faults of the sample the 96 miss | 180 detected | **199** |
+| of them LUT4AB (258) | 89 | **100** |
+| of them, the half held out of the targeting (LUT4AB, 140) | 51 | **57** |
+| F1, 24 + 4 configs, a 20k sample other than the targeted one | 88.30% | **88.59%** |
+| F1, of it LUT4AB | 89.23% | **89.58%** |
+
+What did not help: packing by router items instead of faults (50% more items than the
+router, the same faults: an item is a model-level select test, a fault also needs the
+input values), mixing router and packed configs (8 + 8: 251 against 245 with 16 router
+configs) and freeing the LUT flops' EN / SR muxes (the flops in the chains then reset and
+hold: 155 against 180). Run time: about 1.5 min on F1, 25 min on the demo (candidate
+routes on 4 workers, CP-SAT 300 s).
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
@@ -597,6 +626,8 @@ Tested on Ubuntu 24.04 (Linux or WSL).
   pybind11, a C / C++ compiler (the fault simulation kernel and the native router are
   built on first use)
 - for `fabtest untestable`: python-sat (`pip install python-sat`, or `pip install .[sat]`)
+- for `fabtest pack`: OR-Tools (`pip install ortools`, or `pip install .[pack]`); without
+  it a greedy first fit packs
 
 `scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
 on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix
@@ -661,6 +692,7 @@ scripts/fabtest faultsim build/fabtest/<fabric> --run r1 --sample 2000
 scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
 scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99 --by items   # fewest configs
+scripts/fabtest pack build/fabtest/<fabric> --run r1 --configs 8   # configs for the undetected faults
 scripts/fabtest clockcheck build/fabtest/<fabric> --run r1   # clock network, random power-up states
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL
@@ -685,9 +717,9 @@ python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus repla
 
 | path | contents |
 |---|---|
-| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report, untestable, compact, clockcheck), `cfgtest/` (configuration-logic test) |
+| `src/fabtest/` | the tool: `cli.py`, `project.py` (work dir), `spec.py` + `fabulous_loader.py` (the FABulous project), `config.py` (`fabtest.toml`, suites), `suites/`, `bels/` (BEL plugins), `pipeline.py` (run, route, faultsim, report, untestable, compact, pack, clockcheck), `cfgtest/` (configuration-logic test) |
 | `src/fabtest/model/` | fabric models: `generic.py` (GenericFabric), `fullfabric.py`, `fabric.py`, tile models (`sm_model.py`, `wio_model.py`, `tile_model.py`, `tile_parse.py`), LUT bits (`configs.py`, `sm_configs.py`) |
-| `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`); `faults/`: fault list generator |
+| `src/fabtest/patterns/` | `config/`: test config router (`fab_router.py`), fault-targeted packing (`pack.py`); `faults/`: fault list generator |
 | `src/fabtest/sim/` | fault simulator: `fastsim/` (C kernel and driver, power-up check), `stimuli.py`, `conesplit.py`, `graph.py`; `untestable.py` (SAT proof per fault) |
 | `src/fabtest/synth/` | netlist flow (yosys templates, techmaps; `clkbuf_keep.v`: the tiles' clock buffers as cells) |
 | `src/fabtest/export/` | test program: `.bin` / `.hex` / `.vec`, plan, manifest, Icarus testbench |
