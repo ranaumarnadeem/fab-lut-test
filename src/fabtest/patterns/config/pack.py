@@ -14,9 +14,8 @@ by another route of that config. Packing chooses which targets share a config fi
      items), or CP-SAT (OR-Tools) maximizing the weight of every code the routes set;
   4. each config: backbone, its packed routes, then the router's greedy cover and fill.
 
-On the demo (96 configs, 8 more, 550 undetected faults of the sample): 199 detected against
-180 with the router's own 8 (LUT4AB 100 against 89), also on the half of the faults that was
-held out of the targeting (README).
+On the demo (96 configs, 8 more, 550 undetected faults of the sample): greedy 199 and CP-SAT
+232 detected against 180 with the router's own 8 (README).
 """
 from __future__ import annotations
 

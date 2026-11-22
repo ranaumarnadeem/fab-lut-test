@@ -560,20 +560,25 @@ and the new ones; only the new ones are fault-simulated.
 
 Against the router's own extra configs (`route --extend`), the same number:
 
-| | router | pack |
-|---|---|---|
-| demo, 96 + 8 configs, the 550 faults of the sample the 96 miss | 180 detected | **199** |
-| of them LUT4AB (258) | 89 | **100** |
-| of them, the half held out of the targeting (LUT4AB, 140) | 51 | **57** |
-| F1, 24 + 4 configs, a 20k sample other than the targeted one | 88.30% | **88.59%** |
-| F1, of it LUT4AB | 89.23% | **89.58%** |
+| | router | pack, greedy | pack, CP-SAT |
+|---|---|---|---|
+| demo, 96 + 8 configs, the 550 faults of the sample the 96 miss | 180 | 199 | **232** |
+| of them LUT4AB (258) | 89 | 91 | **111** |
+| F1, 24 + 4 configs, a 20k sample other than the targeted one | 88.30% | **88.67%** | 88.59% |
+| F1, of it LUT4AB | 89.23% | **89.68%** | 89.58% |
+
+On the demo a CP-SAT prototype that targeted only a random half of the 550 also detected
+more of the other half than the router (LUT4AB 57 against 51 of 140), so the gain is not
+only on the faults that were targeted. CP-SAT is the better packing on the demo (the solver
+stops at `--time`, not optimal); on F1 the two are within the sample's noise. Greedy is the
+default as it needs no OR-Tools and is faster.
 
 What did not help: packing by router items instead of faults (50% more items than the
 router, the same faults: an item is a model-level select test, a fault also needs the
 input values), mixing router and packed configs (8 + 8: 251 against 245 with 16 router
 configs) and freeing the LUT flops' EN / SR muxes (the flops in the chains then reset and
-hold: 155 against 180). Run time: about 1.5 min on F1, 25 min on the demo (candidate
-routes on 4 workers, CP-SAT 300 s).
+hold: 155 against 180). Run time (4 workers): about 1.5 min on F1; on the demo 16 min greedy,
+23 min CP-SAT (7 min candidate routes, CP-SAT 300 s, the rest fault simulation).
 
 ### Pinning: shared constants, rotated per config
 
