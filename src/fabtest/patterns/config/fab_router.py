@@ -42,9 +42,6 @@ _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
 BIDIR = int(os.environ.get("FABTEST_BIDIR", "2") or 0)
 BACK_MAX_POP = 4000   # backward search cap (nets popped)
 BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
-# FABTEST_ENSR=N:k: every Nth config leaves the EN / SR muxes of k LUTs per tile (rotated) to
-# the router instead of EN = VCC, SR = GND (their jump-wire codes are otherwise never tested)
-ENSR = tuple(int(v) for v in (os.environ.get("FABTEST_ENSR") or "0:0").split(":"))
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
 
 
@@ -862,11 +859,8 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
     cfg.set_cut(())
     rf = getattr(arr, "rf_pins", {})
     br = getattr(arr, "bram_pins", {})
-    free = set(letters(bias)[:ENSR[1]]) if ENSR[0] and bias % ENSR[0] == ENSR[0] - 1 else set()
-    for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND (ENSR: some left free)
+    for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
         for x in sc.LUTS:
-            if x in free:
-                continue
             cfg.assign((t, f"L{x}_SR"), 0)
             cfg.assign((t, f"L{x}_EN"), 0)
     sel0 = set(cfg.sel)
