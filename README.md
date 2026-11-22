@@ -550,12 +550,12 @@ configs or tester time.
 
 The router fills a config greedily: a target fails when the mux it needs is already taken
 by another route of the config, and adding configs gains less and less. `fabtest pack`
-treats the extra configs as bin packing with conflicts (OR-Tools CP-SAT; greedy first fit
-without it): every fault the run's fault simulation leaves undetected is mapped to the
-switch-matrix outputs its value reaches first, every code of those muxes is routed alone
-on the backbone of each new config, and CP-SAT puts the routes into the configs (a mux
-takes one code per config), maximizing the faults' weight, then the router items. Each
-config then gets the router's cover of what is left. The new run holds the old configs
+treats the extra configs as bin packing with conflicts: every fault the run's fault
+simulation leaves undetected is mapped to the switch-matrix outputs its value reaches
+first, every code of those muxes is routed alone on the backbone of each new config, and
+the routes go into the configs (a mux takes one code per config) by the faults' weight,
+then the router items: greedy first fit (default), or CP-SAT with `--solver cpsat`
+(OR-Tools, `--time` seconds). Each config then gets the router's cover of what is left. The new run holds the old configs
 and the new ones; only the new ones are fault-simulated.
 
 Against the router's own extra configs (`route --extend`), the same number:
@@ -626,8 +626,8 @@ Tested on Ubuntu 24.04 (Linux or WSL).
   pybind11, a C / C++ compiler (the fault simulation kernel and the native router are
   built on first use)
 - for `fabtest untestable`: python-sat (`pip install python-sat`, or `pip install .[sat]`)
-- for `fabtest pack`: OR-Tools (`pip install ortools`, or `pip install .[pack]`); without
-  it a greedy first fit packs
+- for `fabtest pack --solver cpsat`: OR-Tools (`pip install ortools`, or
+  `pip install .[pack]`); the default greedy solver needs nothing
 
 `scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
 on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix
