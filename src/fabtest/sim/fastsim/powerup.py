@@ -70,6 +70,8 @@ class PowerUp:
         """lanes: [(fault net bit, polarity, deposits {slot: 0/1})] (at most LANES).
         Returns (res, detmap [n_out, W], wr [n_store, W], stq_h, stq_l) as numpy."""
         nl = self.nl
+        if len(lanes) > LANES:   # fixed lane arrays in fsim.c
+            raise ValueError(f"powerup: {len(lanes)} lanes in one call, at most {LANES}")
         st, in_nets, out_nets, rows, sample = self.eng.prepared[self.cfg_index[cfg]]
         W = max(1, (len(lanes) + 1 + 63) // 64)
         fnet = np.array([n for n, _, _ in lanes] or [0], dtype=np.int32)

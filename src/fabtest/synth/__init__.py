@@ -14,10 +14,12 @@ From the spec (fabtest/spec.py) and the project copy:
      SRAM model's read during a write of the same address); every net bit with more than
      one name keeps one (the name inside the instance that drives it), as gen_faults needs;
   4. patterns/faults/gen_faults.py; faults inside models and on the X sources left out.
-Outputs in <work>/synth/: netlist.json, faults.csv, tiles/*.json, logs.
+Outputs in <work>/synth/: netlist.json (+ netlist.key.json, its content hash), faults.csv,
+tiles/*.json, logs.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -28,11 +30,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fabtest.paths import REPO as ROOT  # noqa: E402
-from fabtest.paths import SYNTH  # noqa: E402
+from fabtest.paths import SYNTH, ext_tool  # noqa: E402
+from fabtest.util import atomic_open, atomic_write_json, sha1_file  # noqa: E402
 TEMPLATE = SYNTH / "synth_generic.ys.in"
 MODELS = {"sram_1rw1r_32_256_8_sky130": ROOT / "rtl" / "bram" / "sram_model.v"}
 PATCH = ("techmap -map synth/mux_decompose.v",
-         f"dfflegalize -cell $_DFFE_PP_ 01 -cell $_DLATCH_P_ x\ntechmap -map {SYNTH / 'xor_decompose.v'} t:$_XOR_\n"
+         f"dfflegalize -cell $_DFFE_PP_ 01 -cell $_DLATCH_P_ x\n"
+         f"techmap -map {SYNTH / 'xor_decompose.v'} t:$_XOR_ t:$_XNOR_\n"
          f"simplemap\ntechmap -map {SYNTH / 'mux_decompose.v'}")
 
 
@@ -40,10 +44,106 @@ def yosys() -> str:
     env = os.environ.get("YOSYS")
     if env:
         return env
-    for cand in ("/home/user/ext/venv/bin/yowasp-yosys", shutil.which("yowasp-yosys"), shutil.which("yosys")):
+    for cand in (ext_tool("yowasp-yosys"), shutil.which("yowasp-yosys"), shutil.which("yosys")):
         if cand and Path(cand).exists():
-            return cand
-    raise SystemExit("fabtest: no yosys found (set $YOSYS)")
+            return str(cand)
+    raise SystemExit("fabtest: no yosys found (pip install yowasp-yosys, or set $YOSYS)")
+
+
+_YOSYS_VERSION = None
+
+
+def yosys_version() -> str:
+    """`yosys -V` (part of the cache keys: another yosys may give another netlist)."""
+    global _YOSYS_VERSION
+    if _YOSYS_VERSION is None:
+        try:
+            r = subprocess.run([yosys(), "-V"], capture_output=True, text=True, timeout=300)
+            _YOSYS_VERSION = (r.stdout.strip() or r.stderr.strip()).splitlines()[-1] if (r.stdout or r.stderr) else "?"
+        except (OSError, subprocess.TimeoutExpired):
+            _YOSYS_VERSION = "?"
+    return _YOSYS_VERSION
+
+
+def _techmap_key() -> str:
+    """The techmaps the scripts name by path (their content is part of the tile cache key)."""
+    h = hashlib.sha1()
+    for f in sorted(SYNTH.glob("*.v")):
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+# ------------------------------------------------------------ netlist key
+
+KEYFILE = "netlist.key.json"
+
+
+def legacy_key(p: Path) -> str:
+    """The key older fabtest stored with a fault simulation: size and mtime (seconds)."""
+    st = p.stat()
+    return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def _stat(p: Path) -> str:
+    st = p.stat()
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def _read_key(out: Path) -> dict:
+    try:
+        return json.loads((out / KEYFILE).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_key(out: Path, sha: str, aliases: list) -> None:
+    p = out / "netlist.json"
+    atomic_write_json(out / KEYFILE, {"sha1": sha, "stat": _stat(p), "legacy": legacy_key(p),
+                                      "aliases": sorted(set(aliases))})
+
+
+def _key_of(out: Path) -> str:
+    """Content hash of out/netlist.json: from the key file while the file is unchanged,
+    else hashed again (a touched but identical file keeps its earlier keys as aliases)."""
+    k = _read_key(out)
+    p = out / "netlist.json"
+    if k.get("stat") == _stat(p):
+        return k["sha1"]
+    sha = sha1_file(p)
+    same = k.get("sha1") == sha
+    _write_key(out, sha, (k.get("aliases", []) + [k["legacy"]] if same and k.get("legacy") else []))
+    return sha
+
+
+def netlist_key(work: Path) -> str:
+    """The key of the work dir's netlist that results are stored with (its content hash)."""
+    return _key_of(Path(work) / "synth")
+
+
+def netlist_ok(work: Path, stored: str | None) -> bool:
+    """A key stored with a result names the current netlist: its content hash, its older
+    size:mtime key, or a key of an identical earlier netlist (a re-synth with the same
+    result keeps the fault simulations made with it). None (no key stored): True."""
+    if stored is None:
+        return True
+    out = Path(work) / "synth"
+    if stored == _key_of(out):
+        return True
+    return stored in _read_key(out).get("aliases", ()) or stored == legacy_key(out / "netlist.json")
+
+
+def write_netlist(out: Path, d: dict) -> None:
+    """out/netlist.json (atomic) and its key file. When the new netlist equals the one it
+    replaces byte for byte, the old one's keys stay valid (aliases)."""
+    p = out / "netlist.json"
+    prev = None
+    if p.exists():
+        sha0 = _key_of(out)
+        prev = (sha0, [legacy_key(p)] + _read_key(out).get("aliases", []))
+    atomic_write_json(p, d)
+    sha = sha1_file(p)
+    _write_key(out, sha, prev[1] if prev and prev[0] == sha else [])
 
 
 # The tiles' clk_buf stay buffer cells: each tile's clock segment (UserCLK -> UserCLKo) is in
@@ -52,7 +152,8 @@ KEEP_CLKBUF = os.environ.get("FABTEST_KEEP_CLKBUF", "1") == "1"
 
 
 def _script(top: str, sources: list[Path], out: Path) -> str:
-    s = TEMPLATE.read_text()
+    # the header makes the techmap contents and the yosys version part of the tile cache key
+    s = f"# fabtest: techmaps {_techmap_key()}, {yosys_version()}\n" + TEMPLATE.read_text()
     if KEEP_CLKBUF:
         s = s.replace("\nflatten\n", f"\ntechmap -map {SYNTH / 'clkbuf_keep.v'} t:clk_buf\nflatten\n", 1)
     s = s.replace("@TOP@", top).replace("@SOURCES@", " ".join(str(p) for p in sources))
@@ -69,12 +170,17 @@ def _run(top: str, sources: list[Path], outdir: Path) -> Path:
     if j.exists() and ys.exists() and ys.read_text() == script and \
             all(j.stat().st_mtime > p.stat().st_mtime for p in sources):
         return j   # up to date: the same script, newer than its sources
-    ys.write_text(script)
-    r = subprocess.run([yosys(), "-q", "-l", str(outdir / f"{top}.log"), "-s", str(ys)],
+    # <top>.ys is the record of a finished run: removed first and written only after yosys
+    # succeeded, so a json left by an interrupted run is never taken as up to date
+    ys.unlink(missing_ok=True)
+    tmp = outdir / f"{top}.ys.tmp"
+    tmp.write_text(script)
+    r = subprocess.run([yosys(), "-q", "-l", str(outdir / f"{top}.log"), "-s", str(tmp)],
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
         log = (outdir / f"{top}.log").read_text()[-3000:] if (outdir / f"{top}.log").exists() else r.stderr
         raise SystemExit(f"fabtest synth: yosys failed on {top}:\n{log}")
+    tmp.replace(ys)
     return out.with_suffix(".json")
 
 
@@ -223,9 +329,12 @@ def _fix_names(m: dict, macros: list) -> tuple[int, int]:
 
 
 def stamp_hash(work: Path) -> str:
-    """What the netlist and fault list are built from: spec.json and the synthesis code."""
-    import hashlib
+    """What the netlist and fault list are built from: spec.json, the project's RTL (a BEL
+    edit can leave the spec as it was), the synthesis code and the yosys version."""
+    from fabtest import project
     h = hashlib.sha1((work / "spec.json").read_bytes())
+    h.update(project.project_hash(work / "project").encode())
+    h.update(yosys_version().encode())
     here = Path(__file__).resolve().parent
     for f in sorted([*here.glob("*"), here.parent / "patterns" / "faults" / "gen_faults.py"]):
         if f.is_file() and f.suffix in (".py", ".in", ".v"):
@@ -266,7 +375,7 @@ def build(spec, work: Path, jobs: int = 4, force: bool = False) -> Path:
         p = tiles / f"{mod}.json"
         d = json.loads(p.read_text())
         d["modules"] = {k: v for k, v in d["modules"].items() if k == mod or k not in MODELS}
-        p.write_text(json.dumps(d))
+        atomic_write_json(p, d)
     wrap = _wrapper(spec, out, set(macro_src))
     top = "fabtest_top" if wrap else "eFPGA"
     ys = out / "top.ys"
@@ -282,7 +391,7 @@ def build(spec, work: Path, jobs: int = 4, force: bool = False) -> Path:
     m = d["modules"][top]
     nx, gone = _fix_names(m, spec.d["top"]["macros"])
     d["modules"] = {top: m}
-    (out / "netlist.json").write_text(json.dumps(d))
+    write_netlist(out, d)
     (out / "raw.json").unlink()
     ncell = len(m["cells"])
     print(f"fabtest synth: {ncell} cells, {nx} X sources, {gone} alias names removed", flush=True)
@@ -303,7 +412,7 @@ def faults(out: Path) -> Path:
     keep = [r for r in rows if not model_inst.search(r["path"]) and not r["path"].startswith("XSRC")]
     for k, r in enumerate(keep):
         r["id"] = k
-    with (out / "faults.csv").open("w", newline="") as fh:
+    with atomic_open(out / "faults.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(keep)

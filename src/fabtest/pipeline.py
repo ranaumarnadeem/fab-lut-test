@@ -5,13 +5,19 @@ The fabric's work dir (build/fabtest/<fabric>, fabtest/project.py) holds the int
 results/<fabric>/<run>/:
   configs.json              the test configs: routed (route, checkpointed after every
                             config; --extend adds configs) or copied (--configs-from)
-  faultsim/sample.json      the fault sample (seed, size)
+  work.json                 the work dir the run belongs to
+  faultsim/sample.json      the fault sample (seed, size) and what it was simulated from
+                            (configs, netlist, kernel, vectors)
   faultsim/chunk_<i>.csv    per sampled fault: status per config (D detected, P possibly,
                             T / U not); a chunk that exists is not run again
   faultsim/configs.json     configs that pass the fault-free check, and those left out
+  faultsim/stale/<time>/    a fault simulation set aside: its netlist, configs or kernel
+                            changed, or (--force) another sample was asked for
   report.txt                coverage, all configs and per tile type, 95% interval
   powerup.json              power-up check of a sample of the X-only faults (powerup)
   export/                   the test program (fabtest/export)
+Nothing a step made is deleted without --force: results that no longer match their
+inputs are moved aside, and a run that holds other configs or another sample is refused.
 """
 from __future__ import annotations
 
@@ -27,24 +33,53 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from fabtest.util import atomic_open, atomic_write_json, atomic_write_text
+
 os.environ.setdefault("FASTSIM_OSC", "local")
+LIMIT_FACTOR = 200   # kernel steps per cell before a lane counts as a timeout (T)
+
+
+def _runs(base: Path) -> list[str]:
+    return sorted(p.name for p in base.glob("*") if (p / "configs.json").exists())
 
 
 def run_dir(work: Path, name: str | None, create: bool = False) -> Path:
-    """results/<fabric>/<name>; without a name a new one (create: timestamp) or the latest."""
+    """results/<fabric>/<name>; without a name a new one (create: timestamp) or the latest
+    (the run whose configs changed last). A named run that does not exist is an error
+    unless create."""
     from fabtest.paths import RESULTS
     base = RESULTS / work.name
     if name:
         d = base / name
+        if not create and not d.exists():
+            raise SystemExit(f"fabtest: no run {name} in {base} (runs: {', '.join(_runs(base)) or 'none'})")
     elif create:
         d = base / time.strftime("%Y%m%d-%H%M%S")
     else:
-        runs = sorted((p for p in base.glob("*") if (p / "configs.json").exists()), key=lambda p: p.stat().st_mtime)
+        runs = sorted((p for p in base.glob("*") if (p / "configs.json").exists()),
+                      key=lambda p: (p / "configs.json").stat().st_mtime)
         if not runs:
             raise SystemExit(f"fabtest: no run in {base} (fabtest route, or --run NAME --configs-from JSON)")
         d = runs[-1]
     d.mkdir(parents=True, exist_ok=True)
+    if not (d / "work.json").exists():
+        atomic_write_json(d / "work.json", {"work": str(Path(work).resolve())})
     return d
+
+
+def _rows(fdir: Path) -> list[dict]:
+    """Every row of a run's fault simulation chunks (all of them with the same configs)."""
+    rows, head = [], None
+    for p in sorted(fdir.glob("chunk_*.csv")):
+        with p.open() as fh:
+            r = csv.DictReader(fh)
+            if head is None:
+                head = r.fieldnames
+            elif r.fieldnames != head:
+                raise SystemExit(f"fabtest: {p} has other configs than the run's first chunk: "
+                                 "run faultsim again (--force)")
+            rows += list(r)
+    return rows
 
 
 def use_configs(run: Path, configs_from: Path | None) -> Path:
@@ -87,9 +122,9 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
     t0 = time.time()
 
     def save(cs, lg, total, left):   # chains: of the last pass (passes: every pass)
-        out.write_text(json.dumps({"configs": prior + cs, "log": plog + lg, "chains": chains,
-                                   "passes": ppass + [{"configs": len(cs), "chains": chains}],
-                                   "items": {"total": total, "shown": total - left}}, indent=0))
+        atomic_write_text(out, json.dumps({"configs": prior + cs, "log": plog + lg, "chains": chains,
+                                           "passes": ppass + [{"configs": len(cs), "chains": chains}],
+                                           "items": {"total": total, "shown": total - left}}, indent=0))
     configs, open_work, total, log, _ = fr.route_all(ff, n_configs, prior=prior or None,
                                                      seed=lambda cfg, b: fr.backbone(cfg, b),
                                                      idx0=len(prior), checkpoint=save)
@@ -106,15 +141,85 @@ def _stims(spec, cfg_path: Path, only: list[int] | None = None):
     return rf.build_stims(ff, cfg_path, only=only, quiet=True)
 
 
-def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chunk: int = 2000, jobs: int = 4) -> Path:
+def _inputs_meta(work: Path, run: Path, vectors: int) -> dict:
+    """What a fault simulation is simulated from (sample.json): the configs, the netlist
+    (content hash), the random vectors, the kernel and its mode."""
+    from fabtest import synth
+    from fabtest.sim.fastsim import fastsim
+    return {"configs": hashlib.sha1((run / "configs.json").read_bytes()).hexdigest(),
+            "netlist": synth.netlist_key(work), "vectors": vectors, "kernel": fastsim.kernel_key(),
+            "osc": os.environ.get("FASTSIM_OSC", "kill"), "limit_factor": LIMIT_FACTOR}
+
+
+_INPUT_KEYS = {"configs": "other configs", "of": "another fault list", "kernel": "another fault-simulation kernel",
+               "osc": "another FASTSIM_OSC mode", "limit_factor": "another step limit"}
+
+
+def _stale(old: dict, new: dict, work: Path) -> tuple[str, str] | None:
+    """Why the chunks of a stored sample.json (old) do not belong to new: ("inputs", why)
+    when what they were simulated from changed (they are wrong now), ("sample", why) when
+    another sample is asked for (they are right for theirs), None when they belong. A key
+    an older fabtest did not write is not compared."""
+    from fabtest import synth
+    if "netlist" in old and not synth.netlist_ok(work, old["netlist"]):
+        return "inputs", "another netlist"
+    for k, why in _INPUT_KEYS.items():
+        if k in old and k in new and old[k] != new[k]:
+            return "inputs", why
+    if "vectors" in new and old.get("vectors", 54) != new["vectors"]:   # older runs: 54 random vectors
+        return "inputs", "another [vectors] random"
+    if any(k in new and old.get(k) != new[k] for k in ("seed", "n", "chunk")):
+        return "sample", (f"another sample (seed {old.get('seed')}, {old.get('n')} of {old.get('of')} faults, "
+                          f"chunks of {old.get('chunk')})")
+    return None
+
+
+def _retire(fdir: Path, why: str) -> Path | None:
+    """Move a fault simulation that no longer belongs to the run (its chunks, sample.json,
+    the untestable proof) to faultsim/stale/<time>/ instead of deleting it."""
+    files = [p for p in fdir.iterdir() if p.is_file() and (p.name.startswith("chunk_") or p.name in (
+        "sample.json", "configs.json", "untestable.csv", "untestable.json"))]
+    n = sum(p.name.startswith("chunk_") and p.suffix == ".csv" for p in files)
+    if not n:
+        return None
+    dest = fdir / "stale" / time.strftime("%Y%m%d-%H%M%S")
+    k = 1
+    while dest.exists():
+        dest = dest.with_name(f"{dest.name.split('_')[0]}_{k}")
+        k += 1
+    dest.mkdir(parents=True)
+    for p in files:
+        p.rename(dest / p.name)
+    print(f"fabtest faultsim: {n} chunks of {why} moved to {dest}", flush=True)
+    return dest
+
+
+def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chunk: int = 2000, jobs: int = 4,
+             force: bool = False) -> Path:
     """Sampled fault simulation of every config that passes the fault-free check. A chunk
-    that exists is not run again; one of other configs, netlist or sample is removed first."""
+    that exists is not run again. Chunks of other configs, another netlist or kernel are
+    moved to faultsim/stale/; a run that holds another sample is refused (force: moved
+    aside as well)."""
     from fabtest.sim.fastsim import fastsim
     fdir = run / "faultsim"
     fdir.mkdir(parents=True, exist_ok=True)
     if faultsim_done(work, run, sample, seed, chunk):
         print(f"fabtest faultsim: {fdir} is up to date")
         return fdir
+    with (work / "synth" / "faults.csv").open() as fh:
+        faults = list(csv.DictReader(fh))
+    n = min(sample, len(faults)) if sample else len(faults)
+    meta = {"seed": seed, "n": n, "of": len(faults), "chunk": chunk,
+            **_inputs_meta(work, run, spec.cfg["vectors"]["random"])}
+    old = fdir / "sample.json"
+    if old.exists():
+        why = _stale(json.loads(old.read_text()), meta, work)
+        if why and why[0] == "sample" and not force and any(fdir.glob("chunk_*.csv")):
+            raise SystemExit(f"fabtest faultsim: {run} holds the fault simulation of {why[1]}; "
+                             "use another --run for this one, or --force to move the old one aside")
+        if why:
+            _retire(fdir, why[1])
+    atomic_write_json(old, meta)
     stims = _stims(spec, run / "configs.json")
     nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
     ff_res = fastsim.fault_free(nl, stims, jobs)
@@ -126,23 +231,11 @@ def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chu
         else:
             print(f"  left out {st.name}: {err}", flush=True)
     print(f"fabtest faultsim: {len(keep)} of {len(stims)} configs pass the fault-free check", flush=True)
-    (fdir / "configs.json").write_text(json.dumps({"kept": [s.name for s in keep],
-                                                   "left_out": [s.name for s in stims if s not in keep]}))
-    faults = list(csv.DictReader((work / "synth" / "faults.csv").open()))
-    n = min(sample, len(faults)) if sample else len(faults)
+    if not keep:
+        raise SystemExit("fabtest faultsim: no config passes the fault-free check (see above)")
+    atomic_write_json(fdir / "configs.json", {"kept": [s.name for s in keep],
+                                              "left_out": [s.name for s in stims if s not in keep]})
     smp = sorted(random.Random(seed).sample(range(len(faults)), n)) if n < len(faults) else list(range(n))
-    meta = {"seed": seed, "n": n, "of": len(faults), "chunk": chunk,
-            "configs": hashlib.sha1((run / "configs.json").read_bytes()).hexdigest(),
-            "netlist": _mtime_key(work / "synth" / "netlist.json"),
-            "vectors": spec.cfg["vectors"]["random"]}
-    old = fdir / "sample.json"
-    if old.exists():
-        om = json.loads(old.read_text())
-        if {k: meta[k] for k in om} != om or not set(meta) - set(om) <= {"configs", "netlist", "vectors"} or \
-                om.get("vectors", 54) != meta["vectors"]:
-            for p in fdir.glob("chunk_*.csv"):
-                p.unlink()
-    old.write_text(json.dumps(meta))
     names = [s.name for s in keep]
     for i in range(0, n, chunk):
         path = fdir / f"chunk_{i // chunk:04d}.csv"
@@ -150,49 +243,40 @@ def faultsim(spec, work: Path, run: Path, sample: int = 2000, seed: int = 1, chu
             continue
         fl = [faults[j] for j in smp[i:i + chunk]]
         t0 = time.time()
-        cfgs, stat = fastsim.run_faults("fabtest", keep, fl, jobs, limit_factor=200, nl=nl, quiet=True)
-        tmp = path.with_suffix(".tmp")
-        with tmp.open("w", newline="") as fh:
+        cfgs, stat = fastsim.run_faults("fabtest", keep, fl, jobs, limit_factor=LIMIT_FACTOR, nl=nl, quiet=True)
+        with atomic_open(path, "w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["id", "path", "polarity", *names])
             for f, st in zip(fl, stat):
                 w.writerow([f["id"], f["path"], f["polarity"], *[st[c] for c in names]])
-        tmp.rename(path)
         print(f"  chunk {i // chunk}: {len(fl)} faults in {time.time() - t0:.0f} s", flush=True)
     return fdir
-
-
-def _mtime_key(p: Path) -> str:
-    st = p.stat()
-    return f"{st.st_size}:{int(st.st_mtime)}"
 
 
 def _same_netlist(work: Path, fdir: Path, cmd: str) -> None:
     """Fault ids of a run's fault simulation are those of the netlist it was made with:
     refuse another (newer synth: other fault list) before mapping ids to nets."""
+    from fabtest import synth
     meta = json.loads((fdir / "sample.json").read_text())
-    now = _mtime_key(work / "synth" / "netlist.json")
     with (work / "synth" / "faults.csv").open() as fh:
         n_faults = sum(1 for _ in fh) - 1
-    if meta.get("netlist", now) != now or meta.get("of", n_faults) != n_faults:
+    if not synth.netlist_ok(work, meta.get("netlist")) or meta.get("of", n_faults) != n_faults:
         raise SystemExit(f"fabtest {cmd}: the fault simulation is of another netlist "
                          "(fault ids differ): run faultsim again")
 
 
 def faultsim_done(work: Path, run: Path, sample: int, seed: int, chunk: int) -> bool:
-    """Every chunk of this sample is there, for these configs, this netlist and this many
-    random vectors (fabtest.toml [vectors])."""
+    """Every chunk of this sample is there, for these configs, this netlist, this kernel
+    and this many random vectors (fabtest.toml [vectors])."""
     fdir = run / "faultsim"
     f = fdir / "sample.json"
     if not f.exists() or not (fdir / "configs.json").exists():
         return False
     m = json.loads(f.read_text())
     from fabtest import config
-    if m.get("vectors", 54) != config.load(work)["vectors"]["random"]:
-        return False
-    if m.get("configs") != hashlib.sha1((run / "configs.json").read_bytes()).hexdigest() or \
-            m.get("netlist") != _mtime_key(work / "synth" / "netlist.json") or \
-            (m["seed"], m["chunk"]) != (seed, chunk) or m["n"] != (min(sample, m["of"]) if sample else m["of"]):
+    want = {"seed": seed, "chunk": chunk, "n": min(sample, m["of"]) if sample else m["of"],
+            **_inputs_meta(work, run, config.load(work)["vectors"]["random"])}
+    if _stale(m, want, work):
         return False
     return all((fdir / f"chunk_{i:04d}.csv").exists() for i in range((m["n"] + chunk - 1) // chunk))
 
@@ -216,10 +300,13 @@ def part_of(spec, path: str) -> str:
 
 
 def work_of(run: Path) -> Path | None:
-    """The work dir of a run (results/<fabric>/<run> -> build/fabtest/<fabric>), if it exists."""
+    """The work dir of a run (its work.json; older runs: build/fabtest/<fabric>), if it exists."""
     from fabtest.paths import REPO
-    w = REPO / "build" / "fabtest" / run.parent.name
-    return w if w.exists() else None
+    try:
+        w = Path(json.loads((run / "work.json").read_text())["work"])
+    except (OSError, ValueError, KeyError):
+        w = REPO / "build" / "fabtest" / run.parent.name
+    return w if (w / "synth" / "netlist.json").exists() else None
 
 
 def _undetected(rows, cfgs) -> list[dict]:
@@ -232,10 +319,11 @@ def _untestable_ids(work, run: Path, rows, cfgs) -> set[int] | None:
     f, m = run / "faultsim" / "untestable.csv", run / "faultsim" / "untestable.json"
     if not f.exists() or not m.exists():
         return None
+    from fabtest import synth
     meta = json.loads(m.read_text())
     ids = sorted(int(r["id"]) for r in _undetected(rows, cfgs))
     if meta.get("ids") != hashlib.sha1(json.dumps(ids).encode()).hexdigest() or \
-            (work and meta.get("netlist") != _mtime_key(work / "synth" / "netlist.json")):
+            (work and not synth.netlist_ok(work, meta.get("netlist"))):
         return None
     return {int(r["id"]) for r in csv.DictReader(f.open()) if r["sat"] == "U"}
 
@@ -255,19 +343,20 @@ def untestable(spec, work: Path, run: Path, jobs: int = 4) -> str:
     global _CK
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
+    from fabtest import synth
     from fabtest.sim import untestable as ut
     from fabtest.sim.fastsim import fastsim
     fdir = run / "faultsim"
-    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    rows = _rows(fdir)
     if not rows:
         raise SystemExit("fabtest untestable: no fault simulation results (run faultsim first)")
     _same_netlist(work, fdir, "untestable")
     cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
     und = _undetected(rows, cfgs)
     ids = sorted(int(r["id"]) for r in und)
-    key = {"ids": hashlib.sha1(json.dumps(ids).encode()).hexdigest(),
-           "netlist": _mtime_key(work / "synth" / "netlist.json")}
-    if (fdir / "untestable.json").exists() and json.loads((fdir / "untestable.json").read_text()) == key \
+    key = {"ids": hashlib.sha1(json.dumps(ids).encode()).hexdigest(), "netlist": synth.netlist_key(work)}
+    done = json.loads((fdir / "untestable.json").read_text()) if (fdir / "untestable.json").exists() else {}
+    if done.get("ids") == key["ids"] and synth.netlist_ok(work, done.get("netlist")) \
             and (fdir / "untestable.csv").exists():
         print(f"fabtest untestable: {fdir / 'untestable.csv'} is up to date")
         return report(spec, run)
@@ -286,14 +375,13 @@ def untestable(spec, work: Path, run: Path, jobs: int = 4) -> str:
     items = [(int(r["id"]), nl.net_bit[nets[int(r["id"])]], int(r["polarity"])) for r in und]
     with ProcessPoolExecutor(max_workers=jobs, mp_context=mp.get_context("fork")) as ex:
         st = dict(ex.map(_check_one, items, chunksize=64))
-    tmp = fdir / "untestable.tmp"
-    with tmp.open("w", newline="") as fh:
+    (fdir / "untestable.json").unlink(missing_ok=True)   # the marker goes first, comes back last
+    with atomic_open(fdir / "untestable.csv", "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", "sat", "why"])
         for r in und:
             w.writerow([r["id"], r["path"], r["polarity"], *st[int(r["id"])]])
-    tmp.replace(fdir / "untestable.csv")
-    (fdir / "untestable.json").write_text(json.dumps(key))
+    atomic_write_json(fdir / "untestable.json", key)
     c = Counter(v[0] for v in st.values())
     why = Counter(v[1] for v in st.values() if v[0] == "U")
     print(f"fabtest untestable: {len(und)} undetected faults: {c['U']} untestable ({why['dead']} dead, "
@@ -352,7 +440,8 @@ def item_sets(spec, run: Path, jobs: int = 4) -> list:
             out[c] = np.array(sorted(ids.setdefault((k, it), len(ids)) for k, v in shown for it in v),
                               dtype=np.int32)
     _GR = None
-    np.savez(cache, key=key, n=len(out), **{f"c{i}": a for i, a in enumerate(out)})
+    with atomic_open(cache, "wb") as fh:
+        np.savez(fh, key=key, n=len(out), **{f"c{i}": a for i, a in enumerate(out)})
     print(f"  graded {len(out)} configs: {len(ids)} items shown ({time.time() - t0:.0f} s)", flush=True)
     return out
 
@@ -388,10 +477,11 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     measured on); by="items": over the router items every config shows in the whole fabric
     (fabric.grade, cached in run/items.npz), the fault simulation only measures. The new run <run>_c<k> holds them in cover order, renumbered
     FF00.., with the fault simulation columns carried over (report and export work on it
-    without simulating again); compact.json the whole cover curve."""
+    without simulating again); compact.json the whole cover curve. The new run is never the
+    run itself or another run (only an earlier compaction of this run is replaced)."""
     fdir = run / "faultsim"
     chunks = sorted(fdir.glob("chunk_*.csv"))
-    rows = [r for p in chunks for r in csv.DictReader(p.open())]
+    rows = _rows(fdir)
     if by == "faults" and not rows:
         raise SystemExit("fabtest compact: no fault simulation results (run faultsim first, or --by items)")
     n_cfg = len(json.loads((run / "configs.json").read_text())["configs"])
@@ -414,17 +504,30 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     data = json.loads((run / "configs.json").read_text())
     idx = {f"FF{i:02d}": i for i in range(len(data["configs"]))}
     out = run.parent / (name or f"{run.name}_c{k}")
+    if out.resolve() == run.resolve():
+        raise SystemExit(f"fabtest compact: --to {out.name} is the run itself: choose another name")
     if out.exists():
-        shutil.rmtree(out)
+        prev = out / "compact.json"
+        try:
+            ours = json.loads(prev.read_text()).get("from") == str(run)
+        except (OSError, ValueError):
+            ours = False
+        if not ours:
+            raise SystemExit(f"fabtest compact: {out} exists and is not a compaction of {run.name}: "
+                             "choose another --to")
+        shutil.rmtree(out)   # an earlier compaction of this run: made again from the run
     (out / "faultsim").mkdir(parents=True)
     new = {"configs": [data["configs"][idx[c]] for c in pick],
            "log": [{"from": c, **(data.get("log") or [{}] * len(data["configs"]))[idx[c]]} for c in pick],
            "chains": data.get("chains"), "compacted_from": str(run)}
-    (out / "configs.json").write_text(json.dumps(new, indent=0))
+    atomic_write_text(out / "configs.json", json.dumps(new, indent=0))
+    if (run / "work.json").exists():
+        shutil.copy(run / "work.json", out / "work.json")
     ren = {c: f"FF{i:02d}" for i, c in enumerate(pick)}
     for p in chunks if rows else ():
-        rs = list(csv.DictReader(p.open()))
-        with (out / "faultsim" / p.name).open("w", newline="") as fh:
+        with p.open() as fh:
+            rs = list(csv.DictReader(fh))
+        with atomic_open(out / "faultsim" / p.name, "w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["id", "path", "polarity", *ren.values()])
             for r in rs:
@@ -432,12 +535,12 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     if rows:
         meta = json.loads((fdir / "sample.json").read_text())
         meta["configs"] = hashlib.sha1((out / "configs.json").read_bytes()).hexdigest()
-        (out / "faultsim" / "sample.json").write_text(json.dumps(meta))
-        (out / "faultsim" / "configs.json").write_text(json.dumps({"kept": list(ren.values()), "left_out": []}))
+        atomic_write_json(out / "faultsim" / "sample.json", meta)
+        atomic_write_json(out / "faultsim" / "configs.json", {"kept": list(ren.values()), "left_out": []})
     marks = {m: next(i + 1 for i, e in enumerate(curve) if e[2] >= final * m / 100) for m in (90, 95, 99, 100)} if curve else {}
-    (out / "compact.json").write_text(json.dumps({"from": str(run), "by": by, "faults": len(rows), "detected": final,
-                                                  "configs": len(cfgs), "curve": curve, "picked": k,
-                                                  "configs_for_pct": marks}, indent=0))
+    atomic_write_text(out / "compact.json", json.dumps({"from": str(run), "by": by, "faults": len(rows),
+                                                        "detected": final, "configs": len(cfgs), "curve": curve,
+                                                        "picked": k, "configs_for_pct": marks}, indent=0))
     unit = "router items" if by == "items" else "faults"
     if by == "items":
         n = final
@@ -503,10 +606,11 @@ def clockcheck(spec, work: Path, run: Path, states: int = 4, n_configs: int = 8,
         typ = re.sub(r"Tile_X\d+Y\d+_", "", f["path"].split(".")[0]) if "." in f["path"] else "top"
         by[typ][0] += 1
         by[typ][1] += int(d)
-    (run / "clock.json").write_text(json.dumps({
+    from fabtest import synth
+    atomic_write_text(run / "clock.json", json.dumps({
         "faults": len(faults), "detected": int(every.sum()), "states": states, "configs": len(stims),
         "configs_sha": hashlib.sha1((run / "configs.json").read_bytes()).hexdigest(),
-        "netlist": _mtime_key(netlist), "by_tile": {k: v for k, v in sorted(by.items())},
+        "netlist": synth.netlist_key(work), "by_tile": {k: v for k, v in sorted(by.items())},
         "missed": [f["path"] + f":{f['polarity']}" for f, d in zip(faults, every) if not d]}, indent=0))
     L = [f"fabtest clockcheck: {len(faults)} clock-network faults, {int(every.sum())} detected in every one of "
          f"{states} random power-up states by {len(stims)} configs ({time.time() - t0:.0f} s)"]
@@ -532,8 +636,9 @@ def opaque_bels(spec) -> list[str]:
 
 
 def report(spec, run: Path) -> str:
+    from fabtest import synth
     fdir = run / "faultsim"
-    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    rows = _rows(fdir)
     if not rows:
         raise SystemExit("fabtest report: no fault simulation results (run faultsim first)")
     cfgs = [c for c in rows[0] if c not in ("id", "path", "polarity")]
@@ -577,14 +682,14 @@ def report(spec, run: Path) -> str:
         m = json.loads(ck.read_text())
         w = work_of(run)
         if m.get("configs_sha") == hashlib.sha1((run / "configs.json").read_bytes()).hexdigest() and \
-                (w is None or m.get("netlist") == _mtime_key(w / "synth" / "netlist.json")):
+                (w is None or synth.netlist_ok(w, m.get("netlist"))):
             L.append(f"  clock network: {m['detected']} of {m['faults']} faults detected in every one of "
                      f"{m['states']} random power-up states ({m['configs']} configs; fabtest clockcheck)")
     op = opaque_bels(spec)
     if op:
         L.append("  opaque, outputs X and faults not tested: " + ", ".join(op))
     text = "\n".join(L) + "\n"
-    (run / "report.txt").write_text(text)
+    atomic_write_text(run / "report.txt", text)
     return text
 
 
@@ -597,7 +702,7 @@ def powerup(spec, work: Path, run: Path, sample: int = 400, seed: int = 2, max_u
     import gc
     from fabtest.sim.fastsim import fastsim, powerup as pu_mod
     fdir = run / "faultsim"
-    rows = [r for p in sorted(fdir.glob("chunk_*.csv")) for r in csv.DictReader(p.open())]
+    rows = _rows(fdir)
     if not rows:
         raise SystemExit("fabtest powerup: no fault simulation results (run faultsim first)")
     _same_netlist(work, fdir, "powerup")
@@ -621,7 +726,7 @@ def powerup(spec, work: Path, run: Path, sample: int = 400, seed: int = 2, max_u
     cnt = _C(r["verdict"] for r in v.values())
     p = cnt["detected"] / len(fl) if fl else 0.0
     ci = 1.96 * math.sqrt(p * (1 - p) / len(fl)) if fl else 0.0
-    (run / "powerup.json").write_text(json.dumps(
+    atomic_write_text(run / "powerup.json", json.dumps(
         {"sample": len(fl), "x_only": len(xo), "faults": n, "detected_strict": det, "verdicts": dict(cnt),
          "faults_decided": [{"id": fl[k]["id"], "path": fl[k]["path"], "polarity": fl[k]["polarity"], **r}
                             for k, r in v.items()]}, indent=0))
@@ -645,36 +750,53 @@ def suite_passes(suite: dict, n_configs: int | None) -> list:
     return out
 
 
-def route_suite(spec, run: Path, passes: list) -> Path:
+def route_suite(spec, run: Path, passes: list, force: bool = False) -> Path:
     """Every pass of a suite, each on top of the passes before it; configs.json then gets
-    the recipe (passes, route caps, spec), so `fabtest run` can tell it is complete."""
+    the recipe (passes, route caps, spec), so `fabtest run` can tell it is complete.
+    route_pending.json marks routing that `fabtest run` started: configs.json without a
+    recipe is then an interrupted run (routed again, the partial set kept as
+    configs.partial.json). Other configs (another recipe, or made by fabtest route,
+    --configs-from or compact) are refused; force: moved to configs.<time>.json."""
     from fabtest import config
     out = run / "configs.json"
+    pending = run / "route_pending.json"
     recipe = {"passes": passes, "route": spec.cfg["route"], "spec": config.sha(spec.d)}
     if out.exists():
         d = json.loads(out.read_text())
         if d.get("recipe") == recipe:
             print(f"fabtest route: {out} is up to date")
             return out
-        if d.get("recipe") is not None:
-            raise SystemExit(f"fabtest run: {run} holds configs of another recipe (use another --run)")
-        print(f"fabtest route: {out} is incomplete, routing again")
-        out.unlink()
+        interrupted = d.get("recipe") is None and pending.exists() and json.loads(pending.read_text()) == recipe
+        if interrupted:
+            print(f"fabtest route: {out} is incomplete (an interrupted fabtest run), routing again; "
+                  f"the partial set is kept as configs.partial.json")
+            out.replace(run / "configs.partial.json")
+        elif not force:
+            what = ("configs of another recipe" if d.get("recipe") is not None else
+                    "configs that fabtest run did not route (fabtest route, --configs-from or compact)")
+            raise SystemExit(f"fabtest run: {run} holds {what}: use another --run, or --force to set them aside")
+        else:
+            dest = run / f"configs.{time.strftime('%Y%m%d-%H%M%S')}.json"
+            out.replace(dest)
+            print(f"fabtest route: the run's configs moved to {dest} (--force)")
+    atomic_write_json(pending, recipe)
     ff = model(spec)
     for i, p in enumerate(passes):
         route(spec, run, p["configs"], p["chains"], extend=i > 0, ff=ff)
     d = json.loads(out.read_text())
     d["recipe"] = recipe
-    out.write_text(json.dumps(d, indent=0))
+    atomic_write_text(out, json.dumps(d, indent=0))
+    pending.unlink(missing_ok=True)
     return out
 
 
 def run_all(proj: Path, suite_name: str = "default", run_name: str | None = None, n_configs: int | None = None,
             sample: int | None = None, jobs: int | None = None, do_export: bool = True,
-            work: Path | None = None, do_cfgtest: bool = False) -> Path:
+            work: Path | None = None, do_cfgtest: bool = False, force: bool = False) -> Path:
     """fabtest run: init, synth, route (the suite), faultsim, report, export; a step whose
     inputs did not change is skipped, so a second run (or one after a crash) only does
-    what is left."""
+    what is left. A run that holds other configs or another fault sample is refused
+    (force: they are moved aside)."""
     from fabtest import config, export, project, spec as specmod, synth
     t0 = time.time()
     su = config.suite(suite_name)
@@ -688,11 +810,11 @@ def run_all(proj: Path, suite_name: str = "default", run_name: str | None = None
     print(f"fabtest run: suite {su['name']} ({sum(p['configs'] for p in passes)} configs), sample "
           f"{sample or 'all'}, run {run}", flush=True)
     synth.build(s, w, jobs)
-    route_suite(s, run, passes)
-    faultsim(s, w, run, sample, fs["seed"], fs["chunk"], jobs)
+    route_suite(s, run, passes, force)
+    faultsim(s, w, run, sample, fs["seed"], fs["chunk"], jobs, force)
     print(report(s, run), end="")
     if do_export:   # with --cfgtest also the port test
-        if export.up_to_date(run, ports=do_cfgtest):
+        if export.up_to_date(run, ports=do_cfgtest, work=w):
             print(f"fabtest export: {run / 'export'} is up to date")
         else:
             export.export(s, w, run, ports=do_cfgtest)

@@ -151,6 +151,11 @@ def load(work: Path) -> Spec:
     """The spec of a work dir, with its settings (fabtest/config.py) as .cfg; BEL / macro
     modules forced opaque go into .d["opaque"] (part of the model's cache keys)."""
     from fabtest import config
+    work = Path(work)
+    if not (work / "spec.json").exists():
+        hint = (f" (it is a FABulous project: its work dir comes from `fabtest init {work}`)"
+                if (work / "fabric.csv").exists() else " (make one with `fabtest init <FABulous project>`)")
+        raise SystemExit(f"fabtest: {work} is not a fabtest work dir: no spec.json{hint}")
     s = Spec(json.loads((work / "spec.json").read_text()), work)
     s.cfg = config.load(work, sum(1 for _ in s.tiles()))
     if s.cfg["bels"]["opaque"]:

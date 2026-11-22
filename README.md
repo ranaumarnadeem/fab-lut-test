@@ -617,8 +617,22 @@ scripts/fabtest run /path/to/fabulous_project --suite demo     # -> results/<fab
 It does init, synth, route (the suite's passes), faultsim, report and export (and with
 `--cfgtest` the configuration-logic test), each step
 skipped when its inputs did not change: a second run, or one after a crash, only does what
-is left (faultsim resumes per chunk). `--configs N` cuts the suite to N configs,
-`--sample N` sets the sampled faults (0: every fault), `--run NAME` the run directory.
+is left (faultsim resumes per chunk; interrupted routing starts again). `--configs N` cuts
+the suite to N configs, `--sample N` sets the sampled faults (0: every fault), `--run NAME`
+the run directory.
+
+Nothing a step made is deleted on its own:
+
+- A fault simulation whose inputs changed (netlist, configs, kernel, `[vectors]`) is moved
+  to `faultsim/stale/<time>/`.
+- A run that holds another fault sample (another `--sample` or seed) is refused: use
+  another `--run`, or `--force` to move the old sample aside.
+- `fabtest run` on a run whose configs it did not route (`fabtest route`, `--configs-from`,
+  `compact`) is refused; `--force` keeps them as `configs.<time>.json`.
+- `compact --to` never replaces another run.
+
+Every step writes its files atomically, so an interrupted step is redone, never trusted.
+The work dir argument of the steps can also be the FABulous project itself.
 Suites (`src/fabtest/suites/`): `default` (24 configs) and `demo` (96 configs, the 89.1%
 set); a suite file lists routing passes, each on top of the passes before it:
 
@@ -674,10 +688,11 @@ fabric with a stored config set. Every run writes its own directory `results/<fa
 (`configs.json`, `faultsim/`, `report.txt`, `export/`); `faultsim` and `export` take
 `--configs-from JSON` to start a run from a stored config set. `results/` is local.
 
-Tests (the demo fabric; R1 needs the stored 50k-fault run in `results/`, local):
+Tests (the demo fabric; R1 needs the stored 50k-fault run in `results/`, local, and
+reports SKIP without it):
 
 ```bash
-python3 tests/run_all.py             # quick, about 5 min
+python3 tests/run_all.py             # quick, about 10 min
 python3 tests/run_all.py --full      # also R1, R2, all 96 configs, Icarus replay, F1 to F4, fabtest run
 ```
 

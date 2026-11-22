@@ -18,6 +18,7 @@ DEMO_PROJECT = DEMO                                  # the FABulous demo project
 SETS = {s: GOLDEN / "configs" / f"{s}.json" for s in ("muladd", "regfile", "v2", "v3")}
 REF_RUN = RESULTS / "demo_fullbram_96cfg_50k"       # local: the stored 50k-fault matrices (R1)
 TEST_RUNS = BUILD / "tests"                          # scratch runs of the tests (not results/)
+SKIP = 77                                            # exit code of a test that could not run (run_all: SKIP)
 
 
 def demo_work() -> Path:

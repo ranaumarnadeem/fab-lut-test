@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """All fabtest tests on the demo fabric.
 
-  python3 tests/run_all.py            quick: spec, R0, model (2 configs per set), CLI, export
-                                      + bit_gen (2 configs), cfgtest (build, fault-free); about 12 min
+  python3 tests/run_all.py            quick: spec, R0, model (2 configs per set), CLI, safety
+                                      rules, export + bit_gen (2 configs), cfgtest (build,
+                                      fault-free), SAT; about 10 min
   python3 tests/run_all.py --full     also R1 (stored 50k-fault run, local), model on all 96
                                       configs, Icarus replay (2 configs), R2 routing, the
                                       validation fabrics F1 / F2 end to end, `fabtest run` on the
@@ -19,11 +20,13 @@ import time
 from pathlib import Path
 
 T = Path(__file__).resolve().parent
+SKIP = 77   # tests/common.py: a test that could not run (missing local data)
 QUICK = {
     "spec": [T / "model" / "test_spec_demo.py"],
     "r0": [T / "patterns" / "regress_demo.py", "--level", "R0"],
     "model": [T / "model" / "test_model_demo.py", "--quick"],
     "cli": [T / "cli" / "test_cli.py"],
+    "safety": [T / "cli" / "test_safety.py"],
     "loops": [T / "patterns" / "test_loop_graph.py", "--moves", "10"],
     "export": [T / "export" / "test_export_demo.py"],
     "cfgtest": [T / "cfgtest" / "test_cfgtest_demo.py"],
@@ -60,12 +63,13 @@ def main() -> None:
             cmd = cmd[2:]
         r = subprocess.run([sys.executable, *map(str, cmd)], capture_output=True, text=True, env=env)
         last = (r.stdout.strip().splitlines() or [""])[-1]
-        res[n] = r.returncode == 0
-        print(f"{'PASS' if res[n] else 'FAIL'} {n:10s} {time.time() - t0:6.0f} s  {last}", flush=True)
-        if not res[n]:
+        res[n] = "SKIP" if r.returncode == SKIP else "PASS" if r.returncode == 0 else "FAIL"
+        print(f"{res[n]} {n:10s} {time.time() - t0:6.0f} s  {last}", flush=True)
+        if res[n] == "FAIL":
             print((r.stdout + r.stderr)[-3000:])
-    print(f"run_all: {sum(res.values())} of {len(res)} pass")
-    sys.exit(0 if all(res.values()) else 1)
+    v = list(res.values())
+    print(f"run_all: {v.count('PASS')} of {len(v)} pass" + (f", {v.count('SKIP')} skipped" if "SKIP" in v else ""))
+    sys.exit(0 if "FAIL" not in v else 1)
 
 
 if __name__ == "__main__":
