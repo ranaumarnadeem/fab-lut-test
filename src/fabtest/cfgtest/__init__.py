@@ -47,11 +47,14 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
+
+from fabtest.util import atomic_open, atomic_write_json, atomic_write_text
 
 HERE = Path(__file__).resolve()
 SYNC, PINS_EVERY = 0xFAB0FAB1, 16
@@ -139,9 +142,14 @@ def sources(spec, top: Path) -> list[Path]:
 
 
 def stamp_hash(work: Path) -> str:
-    from fabtest import synth
+    """What the config-logic netlist is built from: spec.json, the project's RTL (ConfigFSM,
+    frame registers ...), this code, the synthesis template and techmaps, the yosys version."""
+    from fabtest import project, synth
     h = hashlib.sha1((work / "spec.json").read_bytes())
-    for f in (HERE, synth.TEMPLATE, Path(synth.__file__), HERE.parents[1] / "patterns" / "faults" / "gen_faults.py"):
+    h.update(project.project_hash(work / "project").encode())
+    h.update(synth.yosys_version().encode())
+    for f in (HERE, synth.TEMPLATE, Path(synth.__file__), HERE.parents[1] / "patterns" / "faults" / "gen_faults.py",
+              *sorted(synth.SYNTH.glob("*.v"))):
         h.update(f.read_bytes())
     return h.hexdigest()
 
@@ -174,7 +182,7 @@ def build(spec, work: Path, force: bool = False) -> Path:
         raise SystemExit(f"fabtest cfgtest: yosys failed:\n{(out / 'cfg_top.log').read_text()[-3000:]}")
     (out / "netlist.v").unlink(missing_ok=True)
     allf = out / "faults_all.csv"
-    r = subprocess.run(["python3", str(HERE.parents[1] / "patterns" / "faults" / "gen_faults.py"),
+    r = subprocess.run([sys.executable, str(HERE.parents[1] / "patterns" / "faults" / "gen_faults.py"),
                         str(out / "netlist.json"), "--out", str(allf)], capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"fabtest cfgtest: gen_faults failed:\n{r.stdout[-2000:]}{r.stderr[-2000:]}")
@@ -188,7 +196,7 @@ def build(spec, work: Path, force: bool = False) -> Path:
     keep = [x for x in rows if x["driver"].rsplit(".", 1)[0] not in model and not x["driver"].startswith("port:CM")]
     for k, x in enumerate(keep):
         x["id"] = k
-    with (out / "faults.csv").open("w", newline="") as fh:
+    with atomic_open(out / "faults.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(keep)
@@ -579,9 +587,11 @@ def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs:
           f"power-up value ({time.time() - t1:.0f} s)", flush=True)
     out = run_dir / "cfgtest"
     out.mkdir(parents=True, exist_ok=True)
+    # inputs.json marks finished results (up_to_date): it goes first and is written last
+    (out / "inputs.json").unlink(missing_ok=True)
     parts = part_map(d / "netlist.json", sources(spec, d / "cfg_top.v"))
     tot, det, best, pos = Counter(), Counter(), Counter(), Counter()
-    with (out / "matrix.csv").open("w", newline="") as fh:
+    with atomic_open(out / "matrix.csv", "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "path", "polarity", "part", *names, "powerup", "any", "best"])
         for f, s in zip(fl, stat):
@@ -605,8 +615,8 @@ def run(spec, work: Path, run_dir: Path, configs: list[int] | None = None, jobs:
         L.append(f"  {k:20s} {tot[k]:7d}  {100 * det[k] / tot[k]:5.1f}%  {100 * best[k] / tot[k]:6.1f}%  "
                  f"{100 * pos[k] / tot[k]:6.1f}%")
     text = "\n".join(L) + "\n"
-    (out / "report.txt").write_text(text)
-    (out / "inputs.json").write_text(json.dumps({"key": key, "final": pl["final"], "fill": pl["fill"],
-                                                  "sequence": seq, "ports": [p for p, _ in ports],
-                                                  "not_delivered": left}))
+    atomic_write_text(out / "report.txt", text)
+    atomic_write_json(out / "inputs.json", {"key": key, "final": pl["final"], "fill": pl["fill"],
+                                            "sequence": seq, "ports": [p for p, _ in ports],
+                                            "not_delivered": left})
     return text

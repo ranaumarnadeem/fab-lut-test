@@ -86,7 +86,7 @@ def build_stim(ff, data: dict, c: int):
         try:
             with cache.open("rb") as fh:
                 return pickle.load(fh)
-        except (OSError, EOFError, pickle.UnpicklingError, AttributeError):
+        except Exception:   # unreadable (another numpy, a half-written file): built again
             pass
     sels, order, luts = config_setup(ff, data, c)
     st = fabric.stim_clocked(ff, f"FF{c:02d}", sels, order, None, list(ff.vecs), luts, partial=True)

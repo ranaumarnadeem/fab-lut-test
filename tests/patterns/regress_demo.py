@@ -36,7 +36,7 @@ os.environ.setdefault("FASTSIM_OSC", "local")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import ROOT  # noqa: E402,F401
 
-from common import REF_RUN, SETS  # noqa: E402
+from common import REF_RUN, SETS, SKIP  # noqa: E402
 
 PICK = [0, 1]
 SPEC = None   # --spec: a fabtest work dir (the model from the FABulous project copy)
@@ -87,8 +87,8 @@ def r1() -> bool:
     t0 = time.time()
     ff = _fabric()
     if not (REF_RUN / "netlist" / "faults.csv").exists():
-        print(f"R1 skipped: {REF_RUN} not there (local results)")
-        return True
+        print(f"R1 SKIP: {REF_RUN} not there (local results)")
+        return None
     stims = {name: rf.build_stims(ff, path, only=PICK, quiet=True) for name, path in SETS.items()}
     del ff
     faults = list(csv.DictReader((REF_RUN / "netlist" / "faults.csv").open()))
@@ -162,7 +162,7 @@ def main() -> None:
     global SPEC
     SPEC = a.spec
     ok = {"R0": lambda: r0(a.record), "R1": r1, "R2": lambda: r2(a.record)}[a.level]()
-    sys.exit(0 if ok else 1)
+    sys.exit(SKIP if ok is None else 0 if ok else 1)
 
 
 if __name__ == "__main__":

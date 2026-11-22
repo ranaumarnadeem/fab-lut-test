@@ -1005,6 +1005,8 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
         pads = pads_near(arr, y, ("A_I_top", "B_I_top", "A_T_top", "B_T_top"))[:4] \
             if arr.fabric else []
         for si, seg in enumerate(segs):
+            if not seg:   # a row with fewer free LUTs than CHAINS: no chain here
+                continue
             for (ta, xa), (tb, xb) in zip(seg, seg[1:]):
                 pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)}
                 if route_to(cfg, arr.canon(ta, f"L{xa}_O"), pins):

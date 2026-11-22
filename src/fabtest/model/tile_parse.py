@@ -24,13 +24,21 @@ LATCH_RE = re.compile(
 
 
 def parse_configmem(path: Path) -> dict[int, tuple[int, int]]:
-    """tile config bit -> (frame, FrameData bit)."""
-    body = path.read_text().split("`else", 1)[1]
+    """tile config bit -> (frame, FrameData bit), from the config_latch instances of a
+    FABulous ConfigMem (the `else branch of its `ifdef EMULATION); one per config bit."""
+    text = path.read_text()
+    if "`else" not in text:
+        raise SystemExit(f"{path}: no `ifdef EMULATION ... `else block: not a FABulous ConfigMem")
+    body = text.split("`else", 1)[1]
     out = {}
     for _inst, d, s, q, qn in LATCH_RE.findall(body):
         if q != qn:
             raise SystemExit(f"{path}: Q/QN index mismatch for bit {q}")
         out[int(q)] = (int(s), int(d))
+    m = re.search(r"\bNoConfigBits\s*=\s*(\d+)", text)
+    if m and len(out) != int(m.group(1)):
+        raise SystemExit(f"{path}: {len(out)} config_latch instances for NoConfigBits={m.group(1)} "
+                         "(another latch cell, or another port order: fabtest reads FABulous's config_latch)")
     return out
 
 

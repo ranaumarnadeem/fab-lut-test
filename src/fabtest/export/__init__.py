@@ -6,7 +6,8 @@ results/<fabric>/<run>/export/
                          (big-endian, bit k = FrameData bit k), desync. Frames in the
                          fault-simulated order (sm_configs.frame_order), or 0 .. F-1 with
                          --canonical (byte-equal to bit_gen)
-  bitstreams/<cfg>.hex   Test/makehex.py format (one byte per line, padded to 16384)
+  bitstreams/<cfg>.hex   Test/makehex.py format (one byte per line, padded to 16384;
+                         a longer bitstream is not padded, see manifest hex_note)
   vectors/<cfg>.vec      per vector the chip inputs and the expected chip outputs (0 / 1 / x:
                          not checked), after the load; one UserCLK (= CLK) cycle per vector
   vectors/<cfg>.mem      the same for the testbench ($readmemb: inputs, expected, mask)
@@ -33,7 +34,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from fabtest.paths import TB  # noqa: E402
+from fabtest.paths import TB, ext_tool  # noqa: E402
+from fabtest.util import atomic_write_text  # noqa: E402
 
 HEADER = "00AAFF01000000010000000000000000FAB0FAB1"
 HEX_BYTES = 16384
@@ -86,10 +88,10 @@ def parse_bitstream(ff, data: bytes, header_len: int = 20) -> dict:
 
 
 def hexfile(data: bytes, nbytes: int = HEX_BYTES) -> str:
-    """Test/makehex.py: one byte per line (two hex digits), padded with "0" lines."""
-    if len(data) > nbytes:
-        raise SystemExit(f"fabtest export: bitstream of {len(data)} bytes > {nbytes} (MAX_BITBYTES)")
-    return "".join(f"{b:02x}\n" for b in data) + "0\n" * (nbytes - len(data))
+    """Test/makehex.py: one byte per line (two hex digits), padded with "0" lines to nbytes
+    (FABulous's MAX_BITBYTES), or not padded when the bitstream is longer (a large fabric:
+    MAX_BITBYTES of FABulous's testbench must then be raised too; export says so)."""
+    return "".join(f"{b:02x}\n" for b in data) + "0\n" * max(0, nbytes - len(data))
 
 
 # ------------------------------------------------------------ FASM (bit_gen cross-check)
@@ -283,20 +285,29 @@ def cover_plan(run: Path, load_s: dict) -> list[dict]:
 
 # ------------------------------------------------------------ driver
 
-def inputs_key(run: Path, only, canonical: bool, ports: bool = False) -> str:
-    """What an export is made from: the configs, the fault simulation (plan), the options."""
+def inputs_key(run: Path, only, canonical: bool, ports: bool = False, work: Path | None = None) -> str:
+    """What an export is made from: the configs, the fault simulation (its chunks: the
+    plan), the work dir's spec, this code and the testbench templates, the options."""
     import hashlib
     h = hashlib.sha1((run / "configs.json").read_bytes())
     for f in ("sample.json", "configs.json"):
         p = run / "faultsim" / f
         h.update(p.read_bytes() if p.exists() else b"-")
+    for p in sorted((run / "faultsim").glob("chunk_*.csv")):
+        h.update(p.name.encode())
+        h.update(p.read_bytes())
+    if work is not None:
+        h.update((Path(work) / "spec.json").read_bytes())
+    for f in sorted([Path(__file__).resolve(), *TB.glob("*")]):
+        if f.is_file():
+            h.update(f.read_bytes())
     h.update(json.dumps([only, canonical] + ([True] if ports else [])).encode())
     return h.hexdigest()
 
 
-def up_to_date(run: Path, only=None, canonical: bool = False, ports: bool = False) -> bool:
+def up_to_date(run: Path, only=None, canonical: bool = False, ports: bool = False, work: Path | None = None) -> bool:
     m = run / "export" / "manifest.json"
-    return m.exists() and json.loads(m.read_text()).get("inputs") == inputs_key(run, only, canonical, ports)
+    return m.exists() and json.loads(m.read_text()).get("inputs") == inputs_key(run, only, canonical, ports, work)
 
 
 def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical: bool = False,
@@ -305,6 +316,9 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
     from fabtest.sim import stimuli as rf
     from fabtest.model.generic import GenericFabric
     out = run / "export"
+    # manifest.json marks a finished export (fabtest run trusts it): it goes first and is
+    # written last, so an interrupted export is never taken as up to date
+    (out / "manifest.json").unlink(missing_ok=True)
     for d in ("bitstreams", "vectors", "tb", "ports"):
         if only is None and (out / d).exists():   # a full export: nothing left of an older one
             shutil.rmtree(out / d)
@@ -318,7 +332,7 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
     kept = set(json.loads(fsj.read_text())["kept"]) if fsj.exists() and only is None else None
     manifest = {"spec": str(work / "spec.json"), "fabulous_version": spec.d.get("fabulous_version"),
                 "config_set": str(cfg_path), "frame_order": "canonical" if canonical else "fault-simulated",
-                "inputs": inputs_key(run, only, canonical, ports), "configs": {}, "left_out": []}
+                "inputs": inputs_key(run, only, canonical, ports, work), "configs": {}, "left_out": []}
     runs = []
     ins = outs = None
     stims = {c: rf.build_stim(ff, data, c) for c in idx}
@@ -342,6 +356,10 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
         bs = bitstream(ff, spec, words, None if canonical else order)
         (out / "bitstreams" / f"{name}.bin").write_bytes(bs)
         (out / "bitstreams" / f"{name}.hex").write_text(hexfile(bs))
+        if len(bs) > HEX_BYTES and not manifest.get("hex_note"):
+            manifest["hex_note"] = (f"bitstreams of {len(bs)} bytes > {HEX_BYTES}: the .hex files are not padded; "
+                                    "raise MAX_BITBYTES in FABulous's Test/makehex.py and testbench to load them there")
+            print(f"  note: {manifest['hex_note']}", flush=True)
         ins, outs, table = vector_table(st, spec)
         write_vectors(out / "vectors" / name, name, ins, outs, table)
         nw = len(bs) // 4
@@ -385,7 +403,7 @@ def export(spec, work: Path, run: Path, only: list[int] | None = None, canonical
             for k, r in enumerate(plan):
                 w.writerow([k + 1, r["config"], r["new"], r["coverage"], r["pm95"], r["load_s"],
                             " ".join(r.get("marks", []))])
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
+    atomic_write_text(out / "manifest.json", json.dumps(manifest, indent=1))
     print(f"fabtest export: {len(manifest['configs'])} configs ({len(manifest['left_out'])} left out) -> {out}")
     return out
 
@@ -443,7 +461,10 @@ def bitgen_check(spec, work: Path, cfg_path: Path, only: list[int]) -> bool:
     out.mkdir(parents=True, exist_ok=True)
     data = json.loads(Path(cfg_path).read_text())
     ff = GenericFabric(spec)
-    tool = os.environ.get("FABTEST_BIT_GEN") or shutil.which("bit_gen") or "/home/user/ext/venv/bin/bit_gen"
+    tool = os.environ.get("FABTEST_BIT_GEN") or shutil.which("bit_gen") or ext_tool("bit_gen")
+    if not tool:
+        raise SystemExit("fabtest bitgen-check: no bit_gen found (FABulous's venv: . scripts/env.sh, "
+                         "or set $FABTEST_BIT_GEN)")
     ok = True
     for c in only:
         name = f"FF{c:02d}"

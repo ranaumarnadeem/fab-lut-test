@@ -16,42 +16,68 @@ import hashlib
 import os
 import pickle
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
+from fabtest import util  # noqa: E402
 from fabtest.paths import REPO as ROOT  # noqa: E402
 from fabtest.patterns.faults import gen_faults  # noqa: E402
+from fabtest.sim import graph  # noqa: E402
 from fabtest.sim.graph import tarjan  # noqa: E402
 
 SRC = Path(__file__).resolve().parent / "fsim.c"
-LIB = ROOT / "build" / "fastsim" / "libfsim.so"
+LIBDIR = ROOT / "build" / "fastsim"
+CFLAGS = ["-O3", "-march=native", "-shared", "-fPIC"]
 TYPES = {"$_AND_": 0, "$_OR_": 1, "$_NOT_": 2, "$_BUF_": 3, "$_DLATCH_P_": 4, "$_DFFE_PP_": 5}
 PINS = {"$_AND_": ("A", "B", None), "$_OR_": ("A", "B", None), "$_NOT_": ("A", None, None),
         "$_BUF_": ("A", None, None), "$_DLATCH_P_": ("E", "D", None), "$_DFFE_PP_": ("C", "E", "D")}
 OUTPIN = {"$_DLATCH_P_": "Q", "$_DFFE_PP_": "Q"}
+MAXW = 16   # lane words per kernel call (fixed arrays in fsim.c)
+_LIB = None
+_LIB_LOCK = threading.Lock()
+
+
+def kernel_key() -> str:
+    """What the statuses of a fault simulation depend on in the code: the kernel and this
+    driver (stored with every run's fault simulation, faultsim/sample.json)."""
+    h = hashlib.sha1(SRC.read_bytes())
+    h.update(Path(__file__).read_bytes())
+    return h.hexdigest()[:16]
+
+
+def lib_path() -> Path:
+    """build/fastsim/libfsim-<key>.so, the key: the source, compiler, flags and host CPU
+    (-march=native code may not run on another one). Built once, under a lock."""
+    cc = os.environ.get("CC", "gcc")
+
+    def build(tmp: Path) -> None:
+        subprocess.run([cc, *CFLAGS, "-o", str(tmp), str(SRC)], check=True)
+    return util.built(LIBDIR, "libfsim", ".so", [SRC.read_bytes(), cc, util.compiler_version(cc),
+                                                 " ".join(CFLAGS), util.machine_key()], build)
 
 
 def build_lib() -> ctypes.CDLL:
-    if not LIB.exists() or LIB.stat().st_mtime < SRC.stat().st_mtime:
-        LIB.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["gcc", "-O3", "-march=native", "-shared", "-fPIC", "-o", str(LIB), str(SRC)], check=True)
-    lib = ctypes.CDLL(str(LIB))
+    global _LIB
+    with _LIB_LOCK:   # every worker thread makes an Engine: one build, one load
+        if _LIB is None:
+            _LIB = ctypes.CDLL(str(lib_path()))
     # FASTSIM_OSC=local: an oscillating lane keeps being simulated with only its
     # oscillating nets at X (default "kill": the whole lane goes X)
-    lib.set_osc_local(1 if os.environ.get("FASTSIM_OSC", "kill") == "local" else 0)
-    return lib
+    _LIB.set_osc_local(1 if os.environ.get("FASTSIM_OSC", "kill") == "local" else 0)
+    return _LIB
 
 
 def _netlist_cache(path: Path) -> Path | None:
     """Cache file of a netlist JSON: keyed by its path, size and mtime and by the code that
-    builds the arrays (this file, gen_faults.py). FASTSIM_NETLIST_CACHE=0: no cache."""
+    builds the arrays (this file, gen_faults.py, graph.py). FASTSIM_NETLIST_CACHE=0: no cache."""
     if os.environ.get("FASTSIM_NETLIST_CACHE", "1") == "0" or not path.exists():
         return None
     st = path.stat()
     h = hashlib.sha1(f"{path.resolve()}:{st.st_size}:{st.st_mtime_ns}".encode())
-    for src in (Path(__file__), Path(gen_faults.__file__)):
+    for src in (Path(__file__), Path(gen_faults.__file__), Path(graph.__file__)):
         h.update(src.read_bytes())
     return ROOT / "build" / "cache" / "netlist" / f"{path.stem}-{h.hexdigest()[:16]}.pkl"
 
@@ -71,7 +97,7 @@ class Netlist:
                     self.__dict__.update(pickle.load(fh))
                 self.name = name
                 return
-            except (OSError, EOFError, pickle.UnpicklingError, AttributeError):
+            except Exception:   # unreadable (another numpy, a half-written file): built again
                 pass
         self._build(name, path)
         if cache is not None:
@@ -85,19 +111,18 @@ class Netlist:
         self.name = name
         _, mod = gen_faults.load_top(path, None)
         bits = gen_faults.analyse(mod)
+        maxbit = max([b for c in mod["cells"].values() for s in c["connections"].values()
+                      for b in s if isinstance(b, int)] +
+                     [b for p in mod["ports"].values() for b in p["bits"] if isinstance(b, int)] + [0])
+        # names of bits no cell and no port touches (dangling netnames) are left out: their
+        # index would point past the nets (or onto a constant net)
         self.net_bit: dict[str, int] = {}
         for b, e in bits.items():
+            if not isinstance(b, int) or b > maxbit:
+                continue
             self.net_bit[e["names"][0][0]] = b
             for a in e.get("aliases", []):
                 self.net_bit.setdefault(a, b)
-        self.port_bits: dict[str, int] = {}
-        for pname, port in mod["ports"].items():
-            for k, b in enumerate(port["bits"]):
-                self.port_bits[f"{pname}[{k}]"] = b
-                if len(port["bits"]) == 1:
-                    self.port_bits[pname] = b
-        maxbit = max([b for c in mod["cells"].values() for s in c["connections"].values()
-                      for b in s if isinstance(b, int)] + list(self.port_bits.values()))
         self.consts: dict[str, int] = {}
         nxt = maxbit + 1
 
@@ -109,6 +134,12 @@ class Netlist:
                 self.consts[sig] = nxt
                 nxt += 1
             return self.consts[sig]
+        self.port_bits: dict[str, int] = {}
+        for pname, port in mod["ports"].items():
+            for k, b in enumerate(port["bits"]):   # a port bit tied to "0" / "1": a constant net
+                self.port_bits[f"{pname}[{k}]"] = net(b)
+                if len(port["bits"]) == 1:
+                    self.port_bits[pname] = net(b)
 
         names = sorted(mod["cells"])
         cells = []
@@ -227,6 +258,8 @@ class Engine:
     releases the GIL during the kernel call, so threads run in parallel)."""
 
     def __init__(self, nl: Netlist, stims: list[Stim], W: int = 8, limit_factor: int = 20):
+        if not 1 <= W <= MAXW:
+            raise ValueError(f"fastsim: W={W} lane words, the kernel takes 1..{MAXW}")
         self.lib = build_lib()
         self.lib.run_config.restype = ctypes.c_int
         self.nl, self.W, self.limit = nl, W, limit_factor * nl.n_cells
@@ -352,6 +385,10 @@ def run_faults(netlist: str, stims: list[Stim], faults: list[dict], jobs: int = 
     if missing:
         raise SystemExit(f"fault nets not in the netlist: {missing[:5]}")
     items = [(nl.net_bit[f["net"]], int(f["polarity"])) for f in faults]
+    first_const = nl.n_nets - nl.n_const
+    bad = [f["net"] for f, (b, _) in zip(faults, items) if not 0 <= b < first_const]
+    if bad:
+        raise SystemExit(f"fault nets outside the netlist's nets (or on a constant): {bad[:5]}")
     observed = {nl.port_bits[n] for st in stims for n in st.out_names}
     reps = collapse(nl, items, observed) if do_collapse else list(range(len(items)))
     todo = sorted(set(reps))

@@ -36,6 +36,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sys
 import tomllib
 from pathlib import Path
 
@@ -75,13 +76,33 @@ def _merge(base: dict, over: dict, where: str) -> dict:
 
 def load(work: Path, n_tiles: int | None = None) -> dict:
     """Settings of a work dir: defaults (route caps scaled by n_tiles), then
-    <work>/project/fabtest.toml."""
+    <work>/project/fabtest.toml (the copy `fabtest init` made; a warning when the
+    project's own file changed since)."""
     d = copy.deepcopy(DEFAULTS)
     if n_tiles and n_tiles > DEMO_TILES:
         for k in SCALED:
             d["route"][k] = int(round(d["route"][k] * n_tiles / DEMO_TILES))
     f = Path(work) / "project" / NAME
+    _check_source(Path(work))
     return _merge(d, _read(f), str(f)) if f.exists() else d
+
+
+_WARNED: set = set()
+
+
+def _check_source(work: Path) -> None:
+    """Warn (once per work dir) when the project's fabtest.toml differs from the work dir's
+    copy: a step run on its own would silently use the old settings."""
+    try:
+        proj = Path(json.loads((work / "source.json").read_text())["project"])
+    except (OSError, ValueError, KeyError):
+        return
+    if not proj.is_dir() or str(work) in _WARNED:
+        return
+    if file_hash(proj) != file_hash(work / "project"):
+        _WARNED.add(str(work))
+        print(f"fabtest: warning: {proj / NAME} changed since `fabtest init`; this step uses the work "
+              f"dir's copy (`fabtest init {proj}` or `fabtest run` takes the new settings)", file=sys.stderr)
 
 
 def file_hash(proj: Path) -> str:
@@ -91,13 +112,14 @@ def file_hash(proj: Path) -> str:
 
 
 def suite(name: str) -> dict:
-    """A suite by name (src/fabtest/suites/<name>.toml) or path: {"name", "passes"}."""
+    """A suite by name (src/fabtest/suites/<name>.toml) or by the path of a suite file
+    (a directory of the same name, e.g. a FABulous project called demo, is not one)."""
     p = Path(name)
-    if not p.exists():
+    if not p.is_file():
         p = SUITES / f"{name}.toml"
-    if not p.exists():
+    if not p.is_file():
         known = ", ".join(sorted(q.stem for q in SUITES.glob("*.toml")))
-        raise SystemExit(f"fabtest: no suite {name} (known: {known}, or a path)")
+        raise SystemExit(f"fabtest: no suite {name} (known: {known}, or the path of a .toml file)")
     d = _read(p)
     passes = d.get("pass") or []
     if not passes:
@@ -105,9 +127,11 @@ def suite(name: str) -> dict:
     out = []
     for i, ps in enumerate(passes):
         extra = set(ps) - {"configs", "chains"}
-        if extra or not isinstance(ps.get("configs"), int) or ps["configs"] < 1:
-            raise SystemExit(f"fabtest: {p}: pass {i}: configs (int >= 1) and chains only")
-        out.append({"configs": ps["configs"], "chains": int(ps.get("chains", 2))})
+        chains = ps.get("chains", 2)
+        if extra or not isinstance(ps.get("configs"), int) or ps["configs"] < 1 or \
+                not isinstance(chains, int) or chains < 1:
+            raise SystemExit(f"fabtest: {p}: pass {i}: configs and chains (ints >= 1) only")
+        out.append({"configs": ps["configs"], "chains": chains})
     return {"name": d.get("name", p.stem), "passes": out}
 
 
