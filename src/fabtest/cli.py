@@ -13,7 +13,7 @@ compact, pack, clockcheck, export, cfgtest, bitgen-check).
   python3 -m fabtest untestable <work dir> [--run NAME] [--jobs 4]
   python3 -m fabtest clockcheck <work dir> [--run NAME] [--states 4] [--configs 8]
   python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME] [--by items]
-  python3 -m fabtest pack <work dir> [--run NAME] [--configs 8] [--types LUT4AB,DSP_top] [--to NAME]
+  python3 -m fabtest pack <work dir> [--run NAME] [--configs 8] [--types LUT4AB,DSP_top] [--to NAME] [--solver cpsat|greedy]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -299,8 +299,8 @@ def main(argv=None) -> None:
     p.add_argument("--configs", type=int, default=8, help="configs to add")
     p.add_argument("--to", help="name of the new run (default: <run>_p<N>)")
     p.add_argument("--types", help="only faults of these tile types, e.g. LUT4AB,DSP_top,DSP_bot")
-    p.add_argument("--solver", choices=("greedy", "cpsat"), default="greedy",
-                   help="bin packing: greedy first fit, or CP-SAT (OR-Tools)")
+    p.add_argument("--solver", choices=("cpsat", "greedy"), default="cpsat",
+                   help="bin packing: CP-SAT (OR-Tools; greedy when not installed), or greedy first fit")
     p.add_argument("--time", type=float, default=300, help="CP-SAT time limit, seconds")
     p.add_argument("--jobs", type=int, help="processes (default: fabtest.toml)")
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")

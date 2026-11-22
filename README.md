@@ -554,8 +554,8 @@ treats the extra configs as bin packing with conflicts: every fault the run's fa
 simulation leaves undetected is mapped to the switch-matrix outputs its value reaches
 first, every code of those muxes is routed alone on the backbone of each new config, and
 the routes go into the configs (a mux takes one code per config) by the faults' weight,
-then the router items: greedy first fit (default), or CP-SAT with `--solver cpsat`
-(OR-Tools, `--time` seconds). Each config then gets the router's cover of what is left. The new run holds the old configs
+then the router items: CP-SAT (default, OR-Tools, `--time` seconds; greedy first fit when
+OR-Tools is not installed), or greedy first fit with `--solver greedy`. Each config then gets the router's cover of what is left. The new run holds the old configs
 and the new ones; only the new ones are fault-simulated.
 
 Against the router's own extra configs (`route --extend`), the same number:
@@ -570,8 +570,8 @@ Against the router's own extra configs (`route --extend`), the same number:
 On the demo a CP-SAT prototype that targeted only a random half of the 550 also detected
 more of the other half than the router (LUT4AB 57 against 51 of 140), so the gain is not
 only on the faults that were targeted. CP-SAT is the better packing on the demo (the solver
-stops at `--time`, not optimal); on F1 the two are within the sample's noise. Greedy is the
-default as it needs no OR-Tools and is faster.
+stops at `--time`, not optimal); on F1 the two are within the sample's noise. CP-SAT is the
+default; greedy is faster and needs no OR-Tools.
 
 What did not help: packing by router items instead of faults (50% more items than the
 router, the same faults: an item is a model-level select test, a fault also needs the
@@ -631,8 +631,8 @@ Tested on Ubuntu 24.04 (Linux or WSL).
   pybind11, a C / C++ compiler (the fault simulation kernel and the native router are
   built on first use)
 - for `fabtest untestable`: python-sat (`pip install python-sat`, or `pip install .[sat]`)
-- for `fabtest pack --solver cpsat`: OR-Tools (`pip install ortools`, or
-  `pip install .[pack]`); the default greedy solver needs nothing
+- for `fabtest pack`: OR-Tools (`pip install ortools`, or `pip install .[pack]`); without
+  it pack falls back to greedy first fit and says so
 
 `scripts/env.sh` sets the tool paths (default: a FABulous venv in `../ext`) and puts `src/`
 on `PYTHONPATH`; `scripts/fabtest` runs the command line from the checkout. Packaging (Nix

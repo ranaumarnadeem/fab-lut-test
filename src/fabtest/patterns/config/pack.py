@@ -10,8 +10,9 @@ by another route of that config. Packing chooses which targets share a config fi
      those muxes is routed alone (Cfg.try_cover on a copy: forward to an observed net and
      the inputs driven): a candidate is the set of mux codes its route needs;
   3. bin packing with conflicts: candidates into the new configs, a mux takes one code per
-     config; greedy first fit by weight (the fault weight of the target, then its router
-     items), or CP-SAT (OR-Tools) maximizing the weight of every code the routes set;
+     config; CP-SAT (OR-Tools, the default) maximizing the weight of every code the routes
+     set, or greedy first fit by weight (the fault weight of the target, then its router
+     items; also when OR-Tools is not installed);
   4. each config: backbone, its packed routes, then the router's greedy cover and fill.
 
 On the demo (96 configs, 8 more, 550 undetected faults of the sample): greedy 199 and CP-SAT
@@ -124,9 +125,9 @@ def _grade(c: int) -> dict:
     return fabric.grade(arr, {t: dict(prior[c][arr.tn(t)]) for t in arr.tiles})
 
 
-def _solve(cand: dict, weight, K: int, time_limit: float, solver: str = "greedy") -> tuple[list, str]:
-    """cand: (target, bin) -> {mux: code}. Bins of targets: greedy first fit (by weight), or
-    CP-SAT (solver="cpsat", when OR-Tools is installed)."""
+def _solve(cand: dict, weight, K: int, time_limit: float, solver: str = "cpsat") -> tuple[list, str]:
+    """cand: (target, bin) -> {mux: code}. Bins of targets: CP-SAT (solver="cpsat", when
+    OR-Tools is installed), else greedy first fit (by weight)."""
     cp_model = None
     if solver == "cpsat":
         try:
@@ -145,7 +146,7 @@ def _solve(cand: dict, weight, K: int, time_limit: float, solver: str = "greedy"
                 bins[b].update(r)
                 out[b].append(key)
                 done.add(key)
-        return out, "greedy first fit" + (" (no ortools)" if solver == "cpsat" else "")
+        return out, "greedy first fit" + (" (OR-Tools not installed: pip install ortools)" if solver == "cpsat" else "")
     mdl = cp_model.CpModel()
     x = {kb: mdl.NewBoolVar("") for kb in cand}
     uses = defaultdict(list)
@@ -192,7 +193,7 @@ def _solve(cand: dict, weight, K: int, time_limit: float, solver: str = "greedy"
 
 
 def pack(arr: fabric.Array, prior: list, nl, faults: list, K: int, time_limit: float = 300,
-         jobs: int = 4, max_targets: int = 4000, verbose: bool = True, solver: str = "greedy"):
+         jobs: int = 4, max_targets: int = 4000, verbose: bool = True, solver: str = "cpsat"):
     """K configs after the prior ones (selects per tile name) for the undetected faults.
     Returns (configs, log, info)."""
     global _JOB
