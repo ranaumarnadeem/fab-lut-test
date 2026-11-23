@@ -1,5 +1,100 @@
 # fab-lut-test (fabtest)
 
+## Branch prototype-1: two prototypes that did not raise coverage
+
+This branch is dev at 996c6d5 (pack with carry / EN-SR targets) plus two prototypes, built
+in parallel and merged here. Neither raised the F1 coverage, so dev and main do not carry
+them; they stay here for reference. Both are opt-in: without their options every command
+gives the same output as dev at 996c6d5.
+
+Both were measured on F1 (`build/fabtest/F1-*`), 24 router configs (`base24`: `route
+--configs 24`, `faultsim --sample 20000 --chunk 2000`, seed 1): 86.29%, 2,742 of the
+20,000 sampled faults undetected.
+
+| | coverage | against base24 |
+|---|---|---|
+| base24 (60 vectors: 6 counting, 54 random) | 86.29% | |
+| `route --linear`, 24 configs | 86.59% | +515 / -456 faults (net +59, about 1.9 sigma) |
+| base24 with 256 random vectors | 86.31% | +5 |
+| base24 + SAT vectors (68 to 75 per config, 2 clocks) | 86.30% | +2 |
+| base24 + SAT vectors, 4 clocks | 86.30% | +2 |
+| `route --linear` + SAT vectors | 86.61% | +64 (SAT: +4 on the --linear configs) |
+
+What both found: on F1 the faults left need other configs, not other vectors or a
+reconvergence-aware cover. SAT proves 2,511 of the 2,742 impossible in every one of the 24
+configs; the linear diagnostic puts 87% of the misses in mux trees on a code no config
+uses or a mux output no config observes.
+
+### Linear check (`src/fabtest/patterns/config/linear.py`)
+
+In a test config every chain / route LUT is a registered XOR / XNOR and every switch-matrix
+mux a fixed wire, so the fault-free value of a net is an affine GF(2) function of the pad
+inputs of earlier vectors and the flops' power-up values (non-linear BELs and memory reads:
+fresh variables). Two mux inputs can take opposite values in some vector iff their
+functions differ. The functions come from the model's ops; the flat netlist (no XOR cells,
+a LUT is an AND / OR tree) gives each mux's gate-level tree, the exact effect of a stuck-at
+fault on the mux output for the config's code, and a gate-level observability run.
+
+```bash
+scripts/fabtest linear <work> --run base24 [--sound 2000] [--jobs 3]   # -> <run>/linear.json
+scripts/fabtest route <work> --configs 24 --run X --linear               # or FABTEST_LINEAR=1
+```
+
+`fabtest linear` sorts the faults a run misses (F1 base24):
+
+| undetected faults | |
+|---|---|
+| in a mux tree | 1,677 |
+| no config code shows the fault at the mux output | 780 |
+| no config observes the mux output while the fault shows | 613 |
+| the needed input values impossible (equal or constant inputs: reconvergence) | 64 |
+| possible in some config (vector, timing or X problem), median 3 of 24 configs | 220 |
+| outside mux trees (LUT and BEL logic, config and clock logic, RAM_IO) | 1,065 |
+
+Soundness: of 2,000 sampled detected (fault, config) pairs, 1 is called impossible in the
+config that detects it (term-tile bounce wires, where the model's wiring differs from the
+gates). The chain-end pads were X in 53.3% of their samples in the fault-free gate run
+(on dev the SR pulse, `route --sr-pulse`, removes the power-up part of that).
+
+`route --linear`: the bidirectional cover's second input is judged by the functions instead
+of the signal names, and codes that can show none of their open items in the config so far
+are skipped. The reconvergence category goes from 64 to 74 instead of shrinking, so the net
++59 comes from the routes changing, not from the check.
+
+Caveats: the activation check tries at most 16 time points per (fault, config); BlockRAM and
+RegFile reads count as defined (optimistic); 144 muxes have no recognised tree in the
+netlist, 3 more fail the code check; F1 only.
+
+### SAT vectors (`src/fabtest/sim/satvec.py`)
+
+Scan-style SAT per config: the config fixed (its latch values), the flops as state points
+(their fault-free values at the chosen vector from simulation; an XOR chain carries a
+difference in a chain flop to its pad), the target a first difference at a flop D input or
+an output within 1 to 4 clocks of the fault's cone (pysat, CaDiCaL, as `fabtest
+untestable`). The vectors found go after each config's own (`configs.json`
+`extra_vectors`), after a flush, and the fault simulation grades them exactly.
+
+```bash
+scripts/fabtest satvec <work> --run base24 --to base24_satk2 [--frames 2] [--max-vectors 256] [--targets 400]
+scripts/fabtest faultsim <work> --run base24_satk2 --sample 20000 --chunk 2000
+```
+
+Outcome on F1 base24 (2,742 faults x 24 configs, one clock, flop states free): 1,537 pairs
+possible, 7,220 UNSAT, 56,403 with no path to a flop or output, 0 timeouts, 648 not decided
+(27 faults that reach the config load or clock logic). Per fault: 204 can make a first
+difference in some config (the most any vector set can add: 1.02 points), 2,511 are
+impossible in every config, 27 not decided. 99 of the 204 keep X in the faulty machine where
+the good one is defined (mostly EN stuck-at-0: the flop never loads), a power-up question,
+so strict mode skips them. 25 (fault, config) pairs got a vector (17 faults), 2 detected;
+the rest fail because the model is 2-valued and the faulty machine turns X downstream in the
+3-valued kernel (a dual-rail model would fix that, for at most 105 faults).
+
+Caveats: `pack` and `compact` drop `extra_vectors`; export with extra vectors is not
+checked; the impossibility proofs assume clock nets feed only flop clocks (true on F1);
+F1 only.
+
+## fabtest
+
 Configuration-based manufacturing test for [FABulous](https://github.com/FPGA-Research/FABulous)
 eFPGA fabrics, without scan chains and without changing FABulous. From a FABulous project
 with its generated RTL, fabtest builds test configurations (bitstreams), input vectors
