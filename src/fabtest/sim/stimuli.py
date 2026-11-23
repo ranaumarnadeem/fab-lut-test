@@ -72,12 +72,21 @@ def _fabric_key(ff) -> str:
     return hashlib.sha1(f"{type(ff).__name__}:{ff.name}:{ff.n_rand}:{getattr(ff, 'bram', None)}:{src}".encode()).hexdigest()
 
 
+def extra_vectors(data: dict, c: int) -> list[int]:
+    """Vectors of config c after the fabric's own (configs.json "extra_vectors", fabtest
+    satvec); none in an ordinary config set."""
+    ev = data.get("extra_vectors")
+    return list(ev[c]) if ev else []
+
+
 def _stim_cache(ff, data: dict, c: int) -> Path | None:
     if os.environ.get("FABTEST_STIM_CACHE", "1") == "0":
         return None
     from fabtest.paths import BUILD
+    ev = extra_vectors(data, c)
     key = hashlib.sha1(f"{_code_hash()}:{_fabric_key(ff)}:{c}:".encode()
-                       + json.dumps(data["configs"][c], sort_keys=True).encode()).hexdigest()
+                       + json.dumps(data["configs"][c], sort_keys=True).encode()
+                       + (f":extra{ev}".encode() if ev else b"")).hexdigest()
     return BUILD / "cache" / "stims" / f"{key}.pkl"
 
 
@@ -92,7 +101,8 @@ def build_stim(ff, data: dict, c: int):
         except Exception:   # unreadable (another numpy, a half-written file): built again
             pass
     sels, order, luts = config_setup(ff, data, c)
-    st = fabric.stim_clocked(ff, f"FF{c:02d}", sels, order, None, list(ff.vecs), luts, partial=True)
+    st = fabric.stim_clocked(ff, f"FF{c:02d}", sels, order, None, list(ff.vecs) + extra_vectors(data, c),
+                             luts, partial=True)
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache.with_suffix(f".tmp{os.getpid()}")

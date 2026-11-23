@@ -567,6 +567,42 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
     return text
 
 
+def satvec(spec, work: Path, run: Path, name: str | None = None, frames: int = 2, max_vectors: int = 256,
+           targets: int = 400, budget: int = 2000, jobs: int = 3) -> Path:
+    """SAT vectors (sim/satvec.py, a prototype) for the faults the run's fault simulation
+    leaves undetected: the new run <run>_v holds the run's configs with the found vectors
+    after each config's own (configs.json "extra_vectors"); fault-simulate it with faultsim."""
+    from fabtest import config
+    from fabtest.sim import satvec as sv
+    fdir = run / "faultsim"
+    if not sorted(fdir.glob("chunk_*.csv")):
+        raise SystemExit("fabtest satvec: no fault simulation results (run faultsim first)")
+    _same_netlist(work, fdir, "satvec")
+    why = _stale(json.loads((fdir / "sample.json").read_text()),
+                 _inputs_meta(work, run, config.load(work)["vectors"]["random"]), work)
+    if why and why[0] == "inputs":
+        raise SystemExit(f"fabtest satvec: the run's fault simulation is of {why[1]}: run faultsim again")
+    out = run.parent / (name or f"{run.name}_v")
+    if out.resolve() == run.resolve():
+        raise SystemExit(f"fabtest satvec: --to {out.name} is the run itself: choose another name")
+    if out.exists() and any(out.iterdir()) and not (out / "satvec.json").exists():
+        raise SystemExit(f"fabtest satvec: {out} exists and is not a satvec run: choose another --to")
+    t0 = time.time()
+    info = sv.satvec(spec, work, run, out, {"frames": frames, "max_vectors": max_vectors, "targets": targets,
+                                            "budget": budget}, jobs)
+    c, g = info["classes"], info["gen"]
+    print(f"fabtest satvec: {info['targets']} undetected faults x {len(info['vectors'])} configs: possible "
+          f"{c['possible']}, impossible {c['unsat'] + c['blocked']} (UNSAT {c['unsat']}, blocked {c['blocked']}), "
+          f"timeout {c['timeout']}, load / clock {c['load']}", flush=True)
+    print(f"  faults: possible in some config {info['possible_in_some_config']} (without X in the faulty "
+          f"state {info['possible_without_x_state']}), impossible in every config "
+          f"{info['impossible_in_every_config']}, not decided {info['undecided']}", flush=True)
+    n = sum(v[0] for v in info["vectors"].values())
+    print(f"  {g['found']} targets with a vector, {n} SAT vectors (+ flush) in {time.time() - t0:.0f} s -> {out}",
+          flush=True)
+    return out
+
+
 def pack(spec, work: Path, run: Path, n_configs: int = 8, name: str | None = None, time_limit: float = 300,
          types: list[str] | None = None, jobs: int = 4, solver: str = "cpsat", kinds=("mux",)) -> Path:
     """n_configs more configs for the faults the run's fault simulation leaves undetected

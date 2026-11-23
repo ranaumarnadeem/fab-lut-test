@@ -16,6 +16,7 @@ compact, pack, clockcheck, export, cfgtest, bitgen-check).
   python3 -m fabtest pack <work dir> [--run NAME] [--configs 8] [--types LUT4AB,DSP_top] [--to NAME] [--solver cpsat|greedy]
       [--kinds mux,carry,ensr]
   python3 -m fabtest linear <work dir> [--run NAME] [--sound 2000]
+  python3 -m fabtest satvec <work dir> [--run NAME] [--to NAME] [--frames 2] [--max-vectors 256] [--targets 400]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -198,6 +199,13 @@ def cmd_linear(a) -> None:
     print(linear.diagnose(s, w, _run(a, w), a.sound, jobs=_jobs(a, s)), end="")
 
 
+def cmd_satvec(a) -> None:
+    from fabtest import pipeline, spec
+    w = _work(a.work)
+    s = spec.load(w)
+    pipeline.satvec(s, w, _run(a, w), a.to, a.frames, a.max_vectors, a.targets, a.budget, a.jobs or 3)
+
+
 def cmd_export(a) -> None:
     from fabtest import export, pipeline, spec
     w = _work(a.work)
@@ -324,6 +332,15 @@ def main(argv=None) -> None:
     p.add_argument("--run", help="run name (default: the latest run)")
     p.add_argument("--sound", type=int, default=2000, help="detected (fault, config) pairs checked")
     p.add_argument("--jobs", type=int, help="threads (default: fabtest.toml)")
+    p = sub.add_parser("satvec", help="SAT vectors for the undetected faults, after each config's own (prototype)")
+    p.add_argument("work")
+    p.add_argument("--run", help="run name (default: the latest run)")
+    p.add_argument("--to", help="name of the new run (default: <run>_v)")
+    p.add_argument("--frames", type=int, default=2, help="clocks per SAT model")
+    p.add_argument("--max-vectors", type=int, default=256, help="vectors per config in all")
+    p.add_argument("--targets", type=int, default=400, help="target faults per config at most")
+    p.add_argument("--budget", type=int, default=2000, help="SAT conflicts per call")
+    p.add_argument("--jobs", type=int, help="processes (default 3)")
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
@@ -348,5 +365,5 @@ def main(argv=None) -> None:
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "untestable": cmd_untestable,
      "compact": cmd_compact, "pack": cmd_pack, "clockcheck": cmd_clockcheck, "linear": cmd_linear,
-     "export": cmd_export,
+     "satvec": cmd_satvec, "export": cmd_export,
      "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)
