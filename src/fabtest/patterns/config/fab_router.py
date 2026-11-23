@@ -50,8 +50,16 @@ def MM(i):
     return _ARR.MT(i[0])[i[1]]
 
 
+CI_MIN_DEPTH = 4   # carry graph: a carry-mode LUT's Ci at least this many majority stages from an X
+
+
 class Graph:
-    def __init__(self, arr: fabric.Array):
+    """Routing graph of an array. carry (fabtest pack): the I0 mux of every LUT as two nodes,
+    I0 -> I0a -> O and Ci -> I0b -> O, and a config cuts one of them (backbone: I0b, or I0a
+    for its carry-mode LUTs). ensr (fabtest pack): EN / SR -> O (the flop), so a target on an
+    EN / SR mux is observed through the LUT output. The default graph has neither."""
+
+    def __init__(self, arr: fabric.Array, carry: bool = False, ensr: bool = False):
         global _ARR
         _ARR = self.arr = arr
         cn = arr.canon
@@ -85,6 +93,7 @@ class Graph:
                     edge(cn(t, m.inputs[0].net), cn(t, m.net), 0.0)
             for o, i in gt.passes.items():
                 edge(cn(t, i), cn(t, o), 0.0)
+        self.ci_nodes: dict = {}
         for t in arr.lut_tiles:
             for o, m in M.items():
                 if m.model == "direct":
@@ -93,8 +102,62 @@ class Graph:
                 edge(cn(t, i), cn(t, o), 0.0)
             for out, ins in BELDEPS.items():
                 for i in ins:
+                    if carry and out.endswith("_O") and i.endswith("_I0"):
+                        continue   # through I0a below
                     edge(cn(t, i), cn(t, out), 2.0 if out.endswith("_O") else 4.0)
+            for x in sc.LUTS if carry or ensr else ():
+                o = cn(t, f"L{x}_O")
+                if carry:
+                    a, b = cn(t, f"L{x}_I0a"), cn(t, f"L{x}_I0b")
+                    edge(cn(t, f"L{x}_I0"), a, 0.0)
+                    edge(cn(t, f"L{x}_Ci"), b, 0.0)
+                    edge(a, o, 2.0)
+                    edge(b, o, 2.0)
+                    self.ci_nodes[(t, x)] = (a, b)
+                if ensr:
+                    for p in ("EN", "SR"):
+                        edge(cn(t, f"L{x}_{p}"), o, 2.0)
         self.out_nets = set(arr.border_out)
+        self.ci_prev, self.ci_ok = self._carry_chains() if carry else ({}, set())
+
+    def _carry_chains(self) -> tuple[dict, set]:
+        """Carry graph: per LUT the LUT whose Co its Ci reads (through direct muxes and
+        wires), and the LUTs whose Ci is at least CI_MIN_DEPTH majority stages from the
+        chain's start. A chain starts at a net that is no LUT's Co (the terminal tile at the
+        column end): taken as unknown, X; a stage passes an X only when its I1 and I2
+        differ, so it fades by half per stage."""
+        cn = self.arr.canon
+        co_of = {cn(t, f"L{x}_Co"): (t, x) for t in self.arr.lut_tiles for x in sc.LUTS}
+        prev, root = {}, {}
+        for t in self.arr.lut_tiles:
+            for x in sc.LUTS:
+                n, seen = cn(t, f"L{x}_Ci"), set()
+                while n not in co_of and n not in seen:
+                    seen.add(n)
+                    p = self.fixed_pred.get(n, ())
+                    if len(p) != 1:
+                        break
+                    n = p[0]
+                if n in co_of:
+                    prev[(t, x)] = co_of[n]
+                else:
+                    root[(t, x)] = n
+        depth: dict = {}
+        for k0 in list(prev) + list(root):
+            path, k = [], k0
+            while k not in depth and k in prev and k not in path:
+                path.append(k)
+                k = prev[k]
+            if k in depth:
+                d = depth[k]
+            elif k in root:
+                d = depth[k] = 0
+            else:
+                d = 99   # a carry loop: never X from outside
+            for p in reversed(path):
+                d = min(d + 1, 99)
+                depth[p] = d
+        return prev, {k for k, d in depth.items() if d >= CI_MIN_DEPTH}
 
     def src(self, i, k):
         t, o = i
@@ -520,6 +583,9 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
         sels[t]["__cbits"] = CBITS_PATTERN[bias % len(CBITS_PATTERN)]
     for t, c in getattr(cfg, "lut_const", {}).items():   # before the loop check: constants
         sels[t]["__lut"] = dict(c)
+    for t, xs in getattr(cfg, "lut_ci", {}).items():     # carry-mode LUTs (fabtest pack)
+        if xs:
+            sels[t]["__ci"] = sorted(xs)
     if g.arr.cycles(sels):
         moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000),
                                   pinned=getattr(cfg, "pinned", frozenset()))
@@ -541,12 +607,14 @@ def _ctrl(cfg) -> set:
         return c
     g = cfg.g
     const = _const_nets(cfg)
+    lutcut = cfg.__dict__.get("_lutcut", ())
     c = set(g.arr.border_in)
     root = {n: n for n in c}   # the signal a net carries: its pad, or the LUT it comes out of
     stack = list(c)
     while stack:
         n = stack.pop()
-        nxt = [(b, b if cost > 0 else root[n]) for b, cost in g.fixed.get(n, ()) if b not in const]
+        nxt = [(b, b if cost > 0 else root[n]) for b, cost in g.fixed.get(n, ())
+               if b not in const and b not in lutcut]
         nxt += [(g.net_of[i], root[n]) for i, k in g.readers.get(n, ()) if cfg.sel.get(i) == k]
         for b, r in nxt:
             if b not in c:
@@ -613,6 +681,7 @@ def drive_input(cfg, net: str, avoid=frozenset()) -> bool:
     ow = getattr(cfg, "_open_work", None) if BIDIR >= 2 else None
     om = cfg._open_muxes(ow) if ow else set()
     const = _const_nets(cfg)
+    lutcut = cfg.__dict__.get("_lutcut", ())
     fpc = _fixed_pred_cost(g)
     dist, prev, pq, pops = {net: 0.0}, {}, [(0.0, net)], 0
     end = None
@@ -630,7 +699,7 @@ def drive_input(cfg, net: str, avoid=frozenset()) -> bool:
             BIDIR_STATS["failed"] += 1
             return False
         cand = []
-        for a, c in fpc.get(n, ()):
+        for a, c in () if n in lutcut else fpc.get(n, ()):   # a cut I0a / I0b: no edge into it
             if c > 0 and n in const:
                 continue   # a constant LUT: its inputs do not drive its output
             cand.append((a, c, None))
@@ -781,7 +850,7 @@ def _free_luts(cfg, tiles, bias):
     """(tile, letter) not yet used as a constant or helper LUT, in rotation order."""
     for t in tiles:
         for x in letters(bias):
-            if x not in cfg.lut_const.get(t, {}):
+            if x not in cfg.lut_const.get(t, {}) and x not in getattr(cfg, "lut_ci", {}).get(t, ()):
                 yield t, x
 
 
@@ -844,19 +913,29 @@ def route_const(cfg, val: int, targets: list, near, bias: int) -> bool:
     return False
 
 
-def backbone(cfg: Cfg, bias: int = 0) -> dict:
+def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
     """Observation backbone: per row, the LUTs of the row linked into one chain
     (each LUT output routed into an input of the next LUT, from the east tile to
     the west tile, LA..LH within a tile, rotated by bias), the chain end routed
     to the border (a W_IO pad in a fabric). With XOR LUTs every input of a chain
     LUT is then observable at the border. RegFiles and BlockRAMs are pinned to defined
     values first, from constants shared through the config (route_const) and helper LUTs
-    in nearby tiles, both rotated per config. Returns a report."""
+    in nearby tiles, both rotated per config. ci: (tile, LUT) in carry mode, I0 from Ci (a
+    carry graph only: their I0a cut, every other LUT's I0b). Returns a report."""
     arr = cfg.g.arr
     links = fails = 0
     cfg.lut_const = {}
     cfg.consts = {0: [], 1: []}
     cfg.set_cut(())
+    cfg.lut_ci = {}
+    if getattr(cfg.g, "ci_nodes", None):
+        ci, cuts = set(ci), set()
+        for k, (a, b) in cfg.g.ci_nodes.items():
+            cuts.add(a if k in ci else b)
+            if k in ci:
+                cfg.lut_ci.setdefault(k[0], set()).add(k[1])
+        cfg.set_cut(cuts)
+        cfg.__dict__["_lutcut"] = cuts
     rf = getattr(arr, "rf_pins", {})
     br = getattr(arr, "bram_pins", {})
     for t in arr.lut_tiles:   # registered use (chain suite): EN = VCC, SR = GND
@@ -1008,7 +1087,8 @@ def backbone(cfg: Cfg, bias: int = 0) -> dict:
             if not seg:   # a row with fewer free LUTs than CHAINS: no chain here
                 continue
             for (ta, xa), (tb, xb) in zip(seg, seg[1:]):
-                pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)}
+                pins = {arr.canon(tb, f"L{xb}_I{j}") for j in range(4)
+                        if j or xb not in cfg.lut_ci.get(tb, ())}   # carry mode: I0 not read
                 if route_to(cfg, arr.canon(ta, f"L{xa}_O"), pins):
                     links += 1
                 else:

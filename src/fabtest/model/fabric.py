@@ -155,6 +155,9 @@ class Array:
                     raw[cn(f"L{x}_O")] = ("l", ([cn(f"L{x}_I{j}") for j in range(4)], val["tt"]))
                 else:
                     raw[cn(f"L{x}_O")] = ("c", self.FULL if val else 0)
+            for x in sel.get("__ci", ()):   # carry mode (fabtest pack): I0 of the LUT from Ci
+                if x not in sel.get("__lut", {}):
+                    raw[cn(f"L{x}_O")] = ("x", [cn(f"L{x}_Ci")] + [cn(f"L{x}_I{j}") for j in (1, 2, 3)])
             for x in sc.LUTS:
                 lc = (luts or {}).get(t, {}).get(x)
                 if lc is None or x in sel.get("__lut", {}):

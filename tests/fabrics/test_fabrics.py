@@ -9,7 +9,8 @@ equality and the Icarus replay of the first configs and the port test. Scratch r
 build/tests/<name>. Slow (synth: minutes). OPAQUE: BELs a fabric's report must name as
 opaque (F3: the ALU4 BEL no plugin knows); every other fabric has none. SAT soundness:
 SAT_SAMPLE detected faults per fabric, none proven untestable. compact: 2 configs, the
-report of the new run equals the cover. pack: 1 config more, up to date and no worse.
+report of the new run equals the cover. pack: 1 config more, up to date and no worse; with
+carry / EN-SR targets, 1 config that passes the fault-free check.
 """
 from __future__ import annotations
 
@@ -64,6 +65,12 @@ def pack_ok(s, w: Path, run_dir: Path) -> str:
         return "fault simulation of the new run not up to date"
     if m["newly_detected"] < 0 or json.loads((out / "configs.json").read_text())["log"][-1]["backbone"]["packed"] == 0 and m["mapped"]:
         return f"nothing packed ({m})"
+    # carry / EN-SR targets: the new config passes the fault-free check (carry-mode LUTs and
+    # freed EN / SR modelled as the gates run them)
+    out = pipeline.pack(s, w, run_dir, 1, name=run_dir.name + "_pk", time_limit=20, jobs=2,
+                        kinds=("mux", "carry", "ensr"))
+    if json.loads((out / "faultsim" / "configs.json").read_text())["left_out"]:
+        return f"carry / EN-SR config fails the fault-free check ({json.loads((out / 'pack.json').read_text())})"
     return ""
 
 

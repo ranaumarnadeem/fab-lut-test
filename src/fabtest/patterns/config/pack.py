@@ -17,6 +17,14 @@ by another route of that config. Packing chooses which targets share a config fi
 
 On the demo (96 configs, 8 more, 550 undetected faults of the sample): greedy 199 and CP-SAT
 232 detected against 180 with the router's own 8 (README).
+
+Target kinds (kinds): mux, the switch-matrix muxes above. carry: a fault whose first
+switch-matrix output is a LUT's Ci (the direct mux from the previous LUT's Co, which no
+ordinary config reads) targets that LUT in carry mode, I0 from Ci (a carry graph,
+fab_router.Graph(carry=True); the config's "__ci"); its candidate drives the previous
+LUT's I1 / I2 and conflicts with every route that reads the LUT's I0. ensr: the EN / SR
+muxes of the LUT flops, pinned to 1 / 0 by the backbone, take a non-constant code (an
+ensr graph: EN / SR -> O); the pin is freed for the packed route.
 """
 from __future__ import annotations
 
@@ -32,6 +40,14 @@ from fabtest.patterns.config import fab_router as fr
 MUXNET = re.compile(r"^Tile_X(\d+)Y(\d+)_\w+?\.(?:Tile_X(\d+)Y(\d+)_\w+?\.)?Inst_\w+_switch_matrix\.(\w+)$")
 LATCH, DFF = 4, 5
 MAX_DEPTH = 40   # BFS levels from a fault net to the first switch-matrix output
+KINDS = ("mux", "carry", "ensr")
+CI_RE = re.compile(r"^L([A-H])_Ci$")
+ENSR_RE = re.compile(r"^L[A-H]_(EN|SR)$")
+
+
+def is_ci(i) -> bool:
+    """A carry target: (tile, "__ci<LUT>"), code 1 (carry mode) or 0 (I0 read by a route)."""
+    return isinstance(i[1], str) and i[1].startswith("__ci")
 
 
 def mux_nets(nl) -> dict:
@@ -47,42 +63,92 @@ def mux_nets(nl) -> dict:
     return out
 
 
-def nearest_muxes(nl, mux_of: dict, bit: int) -> set:
+LUTPIN = re.compile(r"^Tile_X(\d+)Y(\d+)_LUT4AB\.Inst_L([A-H])_LUT4c_frame_config_dffesr\.(Co|EN|SR|LUT_flop)$")
+
+
+def lut_pins(nl, g, kinds) -> tuple[dict, dict]:
+    """Targets on LUT cell pins, which keep their names in the flat netlist (the switch-matrix
+    names of the same nets do not): bit -> targets of a Co (carry: the next LUT of the chain in
+    carry mode) and of an EN / SR (ensr: its mux); and flop output bit -> the LUT's EN / SR
+    muxes (ensr: a fault that reaches the flop through its set / reset logic)."""
+    nxt = {p: k for k, p in g.ci_prev.items()}
+    pins: dict = defaultdict(set)
+    flops: dict = defaultdict(set)
+    for name, b in nl.net_bit.items():
+        m = LUTPIN.match(name)
+        if not m:
+            continue
+        t, x, p = (int(m.group(1)) - 1, int(m.group(2))), m.group(3), m.group(4)
+        if p == "Co" and "carry" in kinds and (t, x) in nxt:
+            tn, xn = nxt[(t, x)]
+            pins[int(b)].add((tn, f"__ci{xn}"))
+        elif p in ("EN", "SR") and "ensr" in kinds and (t, f"L{x}_{p}") in g.pos:
+            pins[int(b)].add((t, f"L{x}_{p}"))
+        elif p == "LUT_flop" and "ensr" in kinds:
+            flops[int(b)] |= {(t, f"L{x}_{q}") for q in ("EN", "SR") if (t, f"L{x}_{q}") in g.pos}
+    return pins, flops
+
+
+def nearest_muxes(nl, mux_of: dict, bit: int, pins=None, flops=None) -> set:
     """The mux ids of the first BFS level (forward, combinational cells) from bit that reaches
-    a switch-matrix output."""
+    a switch-matrix output; pins / flops (lut_pins): LUT pins and flops that are targets too."""
     seen, front = {bit}, [bit]
     for _ in range(MAX_DEPTH):
         hit = {mux_of[n] for n in front if n in mux_of}
+        if pins:
+            for n in front:
+                hit |= pins.get(n, set())
         if hit or not front:
             return hit
         nxt = []
         for n in front:
             for c in nl.rd_idx[nl.rd_off[n]:nl.rd_off[n + 1]]:
                 if nl.type[c] in (LATCH, DFF):
+                    if flops and int(nl.out[c]) in flops:
+                        hit |= flops[int(nl.out[c])]
                     continue
                 o = int(nl.out[c])
                 if o not in seen:
                     seen.add(o)
                     nxt.append(o)
+        if hit:
+            return hit
         front = nxt
     return set()
 
 
-def fault_weights(nl, g, faults) -> tuple[dict, dict]:
-    """(mux, code) -> weight (each fault 1, over its nearest muxes, each mux over its codes)
-    and a count of mapped / unmapped faults."""
+def fault_weights(nl, g, faults, kinds=("mux",)) -> tuple[dict, dict]:
+    """(target, code) -> weight (each fault 1, over its nearest targets, each mux over its
+    codes) and a count of mapped / unmapped faults (and of those with a carry or EN / SR
+    target). kinds: see the module docstring; with ensr an EN / SR mux takes only its
+    non-constant codes."""
     mux_of = mux_nets(nl)
+    pins, flops = lut_pins(nl, g, kinds) if {"carry", "ensr"} & set(kinds) else (None, None)
     wm: dict = defaultdict(float)
-    stat = {"mapped": 0, "unmapped": 0}
+    stat = {"mapped": 0, "unmapped": 0, "carry": 0, "ensr": 0}
     for f in faults:
-        hit = {i for i in nearest_muxes(nl, mux_of, int(nl.net_bit[f["net"]]))
-               if i in g.pos and fr.MM(i).model != "direct"}
+        near = nearest_muxes(nl, mux_of, int(nl.net_bit[f["net"]]), pins, flops)
+        hit = {i for i in near if not is_ci(i) and i in g.pos and fr.MM(i).model != "direct"}
+        if "mux" not in kinds:
+            hit = {i for i in hit if ENSR_RE.match(i[1])} if "ensr" in kinds else set()
+        if "carry" in kinds:
+            hit |= {i for i in near if is_ci(i) and (i[0], i[1][4:]) in g.ci_ok}
+            for t, o in near:   # a fabric whose netlist keeps the switch-matrix name of a Ci
+                m = None if is_ci((t, o)) else CI_RE.match(o)
+                if m and (t, o) in g.pos and fr.MM((t, o)).model == "direct" and (t, m.group(1)) in g.ci_ok:
+                    hit.add((t, f"__ci{m.group(1)}"))
         stat["mapped" if hit else "unmapped"] += 1
+        stat["carry"] += any(is_ci(i) for i in hit)
+        stat["ensr"] += "ensr" in kinds and any(ENSR_RE.match(i[1]) for i in hit if not is_ci(i))
         for i in hit:
             wm[i] += 1 / len(hit)
     w = {}
     for i, v in wm.items():
-        ks = [k for k in range(fr.MM(i).fan_in) if not g.forbidden(i, k)]
+        if is_ci(i):
+            w[(i, 1)] = v
+            continue
+        ks = [k for k in range(fr.MM(i).fan_in) if not g.forbidden(i, k)
+              and not ("ensr" in kinds and ENSR_RE.match(i[1]) and g.src(i, k) is None)]
         for k in ks:
             w[(i, k)] = v / len(ks)
     return w, stat
@@ -96,27 +162,51 @@ def _clone(c):
     n.__dict__["_ctrl_set"] = set(c.__dict__["_ctrl_set"])
     n.__dict__["_root"] = dict(c.__dict__["_root"])
     n.__dict__.pop("_om_src", None)
+    n.lut_ci = {t: set(v) for t, v in getattr(c, "lut_ci", {}).items()}
+    if "_lutcut" in c.__dict__:
+        n.__dict__["_lutcut"] = c.__dict__["_lutcut"]
     return n
 
 
-_JOB = None   # (graph, open work, targets) for the forked workers
+_JOB = None   # (graph, open work, targets, kinds) for the forked workers
 
 
 def _candidates(bias: int):
     """Routes of the targets, each alone on the backbone of config `bias` (pure Python Cfg:
     it can be copied)."""
-    g, open_work, targets = _JOB
+    g, open_work, targets, kinds = _JOB
     base = fr.Cfg(g)
     base.bias, base._open_work = bias, open_work
     fr.backbone(base, bias)
     fr._ctrl(base)
+    cn = g.arr.canon
     out = {}
     for i, k in targets:
+        if is_ci(i):   # carry mode: the LUT output routed to an observed net (along its chain:
+            t, x = i[0], i[1][4:]   # no new mux; the seed's backbone links the chain into I1..I3)
+            m0 = g.mux_of.get(cn(t, f"L{x}_I0"))
+            c = _clone(base)
+            if not fr.route_net(c, cn(t, f"L{x}_O")):
+                continue
+            p = g.ci_prev.get((t, x))
+            if p is not None:   # the previous LUT's I1 / I2 (its majority with Ci) driven
+                for j in (1, 2):
+                    fr.drive_input(c, cn(p[0], f"L{p[1]}_I{j}"))
+            if m0 is not None and m0 in c.sel and m0 not in base.sel:
+                continue   # the drive reads the LUT's own I0
+            r = {m: v for m, v in c.sel.items() if base.sel.get(m) != v}
+            r[i] = 1
+            out[(i, k)] = r
+            continue
         if i in base.sel:
-            continue   # fixed by the backbone
-        c = _clone(base)
+            if "ensr" not in kinds or not ENSR_RE.match(i[1]) or base.sel[i] == k:
+                continue   # fixed by the backbone
+            c = _clone(base)
+            del c.sel[i]   # the backbone's EN = 1 / SR = 0, freed for this target
+        else:
+            c = _clone(base)
         if c.try_cover(i, k, open_work):
-            out[(i, k)] = {m: c.sel[m] for m in c.sel if m not in base.sel}
+            out[(i, k)] = {m: v for m, v in c.sel.items() if base.sel.get(m) != v}
     return bias, out
 
 
@@ -193,12 +283,17 @@ def _solve(cand: dict, weight, K: int, time_limit: float, solver: str = "cpsat")
 
 
 def pack(arr: fabric.Array, prior: list, nl, faults: list, K: int, time_limit: float = 300,
-         jobs: int = 4, max_targets: int = 4000, verbose: bool = True, solver: str = "cpsat"):
+         jobs: int = 4, max_targets: int = 4000, verbose: bool = True, solver: str = "cpsat",
+         kinds=("mux",)):
     """K configs after the prior ones (selects per tile name) for the undetected faults.
-    Returns (configs, log, info)."""
+    kinds: target kinds (KINDS, module docstring). Returns (configs, log, info)."""
     global _JOB
     t0 = time.time()
-    g = fr.Graph(arr)
+    bad = set(kinds) - set(KINDS)
+    if bad or not kinds:
+        raise SystemExit(f"fabtest pack: target kinds are {', '.join(KINDS)} (got {', '.join(sorted(bad)) or 'none'})")
+    ensr = "ensr" in kinds
+    g = fr.Graph(arr, carry="carry" in kinds, ensr=ensr)
     reach = g.reachable()
     open_work = {(t, o, k): fabric.work_items_m(fr.MM((t, o)), k) for t, o in g.ids if (t, o) in reach
                  for k in range(fr.MM((t, o)).fan_in) if not g.forbidden((t, o), k)}
@@ -211,20 +306,36 @@ def pack(arr: fabric.Array, prior: list, nl, faults: list, K: int, time_limit: f
     if verbose:
         print(f"  {len(prior)} prior configs graded: {sum(len(v) for v in open_work.values())} router items open "
               f"({time.time() - t0:.0f} s)", flush=True)
-    fw, stat = fault_weights(nl, g, faults)
+    fw, stat = fault_weights(nl, g, faults, kinds)
     targets = sorted(fw, key=lambda ik: -fw[ik])[:max_targets]
     if verbose:
-        print(f"  {len(faults)} undetected faults: {stat['mapped']} mapped to {len({i for i, _ in fw})} muxes, "
-              f"{len(targets)} target codes ({time.time() - t0:.0f} s)", flush=True)
+        extra = "".join(f", {stat[k]} with a {k} target" for k in ("carry", "ensr") if k in kinds)
+        print(f"  {len(faults)} undetected faults: {stat['mapped']} mapped to {len({i for i, _ in fw})} targets"
+              f"{extra}, {len(targets)} target codes ({time.time() - t0:.0f} s)", flush=True)
     idx0 = len(prior)
-    _JOB = (g, open_work, targets)
+    _JOB = (g, open_work, targets, tuple(kinds))
     cand = {}
     with mp.get_context("fork").Pool(min(jobs, K)) as pool:
         for bias, out in pool.imap_unordered(_candidates, range(idx0, idx0 + K)):
             cand.update({(key, bias - idx0): r for key, r in out.items()})
     _JOB = None
+    if g.ci_nodes:   # a route that reads a LUT's I0 excludes that LUT's carry mode (code 0 vs 1)
+        cn = arr.canon
+        i0_of = {g.mux_of[cn(t, f"L{x}_I0")]: (t, x) for t, x in g.ci_nodes if cn(t, f"L{x}_I0") in g.mux_of}
+        for kb in list(cand):
+            r = cand[kb]
+            for m in [m for m in r if m in i0_of]:
+                ci = (i0_of[m][0], f"__ci{i0_of[m][1]}")
+                if r.get(ci) == 1:
+                    del cand[kb]
+                    break
+                r[ci] = 0
     if verbose:
-        print(f"  {len(cand)} candidate routes on {K} backbones ({time.time() - t0:.0f} s)", flush=True)
+        n_ci = sum(1 for (key, _b) in cand if is_ci(key[0]))
+        n_es = sum(1 for (key, _b) in cand if not is_ci(key[0]) and ENSR_RE.match(key[0][1])) if ensr else 0
+        print(f"  {len(cand)} candidate routes on {K} backbones"
+              + (f" ({n_ci} carry)" if g.ci_nodes else "") + (f" ({n_es} EN / SR)" if ensr else "")
+              + f" ({time.time() - t0:.0f} s)", flush=True)
 
     def weight(ik):
         return 1000 * fw.get(ik, 0) + len(open_work.get((*ik[0], ik[1]), ()))
@@ -233,16 +344,32 @@ def pack(arr: fabric.Array, prior: list, nl, faults: list, K: int, time_limit: f
         print(f"  {how}: {[len(b) for b in bins]} routes per config ({time.time() - t0:.0f} s)", flush=True)
     configs, log = [], []
     for b, chosen in enumerate(bins):
-        def seed(cfg, bias, chosen=chosen, b=b):
-            rep = fr.backbone(cfg, bias)
+        ci_b = {(key[0][0], key[0][1][4:]) for key in chosen if is_ci(key[0])}
+
+        def seed(cfg, bias, chosen=chosen, b=b, ci_b=ci_b):
+            rep = fr.backbone(cfg, bias, ci=ci_b)   # the carry-mode LUTs cut from the start
             placed = 0
             for key in chosen:
-                before = set(cfg.sel)
-                if all(cfg.assign(m, code) for m, code in cand[(key, b)].items()):
+                before, freed, ok = set(cfg.sel), {}, True
+                for m, code in cand[(key, b)].items():
+                    if is_ci(m):
+                        continue   # set by the backbone
+                    if ensr and m in cfg.sel and cfg.sel[m] != code and ENSR_RE.match(m[1]):
+                        freed[m] = cfg.sel[m]   # the backbone's EN / SR pin
+                        del cfg.sel[m]
+                    if not cfg.assign(m, code):
+                        ok = False
+                        break
+                if ok:
                     placed += 1
-                else:
-                    fr._undo(cfg, before)
-            return {**rep, "packed": placed, "routes": len(chosen)}
+                    continue
+                fr._undo(cfg, before)
+                for m, old in freed.items():   # the pins back
+                    if cfg.sel.get(m) != old:
+                        if m in cfg.sel:
+                            del cfg.sel[m]
+                        cfg.assign(m, old)
+            return {**rep, "packed": placed, "routes": len(chosen), "carry": len(ci_b)}
         sels = fr.build_config(g, open_work, defaultdict(int), idx0 + b, seed)
         gained = 0
         for key, items in fabric.grade(arr, sels).items():
@@ -253,7 +380,8 @@ def pack(arr: fabric.Array, prior: list, nl, faults: list, K: int, time_limit: f
         configs.append({arr.tn(t): s for t, s in sels.items()})
         log.append({"gain": gained, "backbone": g.last_seed})
         if verbose:
-            print(f"  config {idx0 + b}: {g.last_seed['packed']} of {len(chosen)} packed routes, "
-                  f"+{gained} router items ({time.time() - t0:.0f} s)", flush=True)
+            print(f"  config {idx0 + b}: {g.last_seed['packed']} of {len(chosen)} packed routes"
+                  + (f" ({len(ci_b)} carry-mode LUTs)" if ci_b else "")
+                  + f", +{gained} router items ({time.time() - t0:.0f} s)", flush=True)
     return configs, log, {"faults": len(faults), **stat, "targets": len(targets), "candidates": len(cand),
-                          "solver": how}
+                          "solver": how, "kinds": list(kinds)}

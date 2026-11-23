@@ -580,6 +580,28 @@ configs) and freeing the LUT flops' EN / SR muxes (the flops in the chains then 
 hold: 155 against 180). Run time (4 workers): about 1.5 min on F1; on the demo 16 min greedy,
 23 min CP-SAT (7 min candidate routes, CP-SAT 300 s, the rest fault simulation).
 
+Target kinds (`--kinds`, default `mux`): `carry` and `ensr` add the LUT faults the
+switch-matrix mapping cannot reach. The flat netlist keeps the LUT cells' pin names (Co, EN,
+SR), not the switch-matrix names of the same nets. With `carry` a fault that reaches a LUT's
+Co first targets the next LUT of the carry chain in carry mode (I0 from Ci, the config's
+`__ci`): no ordinary config selects Ci, so the chain is otherwise never tested. A carry-mode
+LUT is at least 4 majority stages from the chain's start (the undriven Ci at the column end
+is X, and a stage passes an X only when its I1 and I2 differ). With `ensr` a fault that
+reaches an EN / SR pin, or the flop through its set / reset logic, targets that EN / SR mux
+with a non-constant code: only that LUT's pin is freed, the other chain flops keep EN = 1,
+SR = 0 (freeing them all is the 155 above). F1, 24 + 4 configs, greedy, on the run's own
+20k sample (2,742 undetected):
+
+| newly detected, of them | `mux` | `mux,carry,ensr` |
+|---|---|---|
+| all | 435 | **616** |
+| carry logic (124) | 0 | 51 |
+| EN, SR, flop set / reset (72) | 0 | 16 |
+| sample coverage (86.29% before) | 88.47% | **89.37%** |
+
+The new configs pass the fault-free check: the model's carry mode and varying EN / SR
+match the gates.
+
 ### Pinning: shared constants, rotated per config
 
 RegFiles and BlockRAMs are pinned to defined values with constant LUTs (no switch-matrix
@@ -712,6 +734,7 @@ scripts/fabtest powerup build/fabtest/<fabric> --run r1 --sample 400
 scripts/fabtest untestable build/fabtest/<fabric> --run r1   # SAT: undetected faults no test detects
 scripts/fabtest compact build/fabtest/<fabric> --run r1 --target 99 --by items   # fewest configs
 scripts/fabtest pack build/fabtest/<fabric> --run r1 --configs 8   # configs for the undetected faults
+scripts/fabtest pack build/fabtest/<fabric> --run r1 --configs 8 --kinds mux,carry,ensr   # also LUT carry, EN / SR
 scripts/fabtest clockcheck build/fabtest/<fabric> --run r1   # clock network, random power-up states
 scripts/fabtest export build/fabtest/<fabric> --run r1  # bitstreams, vectors, testbench, plan
 results/<fabric>/r1/export/tb/run_icarus.sh             # replay on the generated RTL

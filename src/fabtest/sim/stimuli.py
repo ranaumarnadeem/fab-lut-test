@@ -20,7 +20,8 @@ from fabtest.model import sm_configs as sc
 def config_setup(ff, data: dict, c: int) -> tuple[dict, list, dict]:
     """Config c of a config set as fault-simulated: (sels per tile, frame order, LUTs: tile ->
     LUT -> (table, i0_from_ci, ff, reset value)). All LUTs registered XOR (even c) / XNOR (odd
-    c); the constant LUTs (RegFile / BRAM pinning) combinational."""
+    c), I0 from Ci for the carry-mode LUTs ("__ci", fabtest pack); the constant LUTs (RegFile /
+    BRAM pinning) combinational."""
     inv = {ff.tn(t): t for t in ff.tiles}
     sels = {inv[n]: s for n, s in data["configs"][c].items()}
     for t in ff.tiles:
@@ -28,6 +29,8 @@ def config_setup(ff, data: dict, c: int) -> tuple[dict, list, dict]:
     tt = sc.cell.XNOR_TT if c % 2 else sc.cell.XOR_TT
     luts = {t: {x: (tt, 0, 1, 0) for x in sc.LUTS} for t in ff.lut_tiles}
     for t in ff.lut_tiles:
+        for x in sels[t].get("__ci", ()):
+            luts[t][x] = (tt, 1, 1, 0)
         for x, val in sels[t].get("__lut", {}).items():
             luts[t][x] = (val["tt"] if isinstance(val, dict) else 0xFFFF if val else 0, 0, 0, 0)
     return sels, sc.frame_order(c % sc.F), luts

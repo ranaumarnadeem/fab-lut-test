@@ -562,7 +562,7 @@ def compact(spec, work: Path, run: Path, target_pct: float | None = None, max_co
 
 
 def pack(spec, work: Path, run: Path, n_configs: int = 8, name: str | None = None, time_limit: float = 300,
-         types: list[str] | None = None, jobs: int = 4, solver: str = "cpsat") -> Path:
+         types: list[str] | None = None, jobs: int = 4, solver: str = "cpsat", kinds=("mux",)) -> Path:
     """n_configs more configs for the faults the run's fault simulation leaves undetected
     (fault-targeted bin packing, patterns.config.pack; types: only faults of these tile types).
     The new run <run>_p<k> holds the run's configs and the new ones; its fault simulation is
@@ -605,7 +605,7 @@ def pack(spec, work: Path, run: Path, n_configs: int = 8, name: str | None = Non
     nl = fastsim.Netlist("fabtest", work / "synth" / "netlist.json")
     print(f"fabtest pack: {len(data['configs'])} configs, {len(und)} of {len(rows)} sampled faults undetected"
           + (f" in {', '.join(types)}" if types else ""), flush=True)
-    new, log, info = pk.pack(ff, data["configs"], nl, und, n_configs, time_limit, jobs, solver=solver)
+    new, log, info = pk.pack(ff, data["configs"], nl, und, n_configs, time_limit, jobs, solver=solver, kinds=kinds)
     if out.exists():
         shutil.rmtree(out)   # an earlier packing of this run: made again from the run
     (out / "faultsim").mkdir(parents=True)

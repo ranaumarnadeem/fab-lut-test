@@ -14,6 +14,7 @@ compact, pack, clockcheck, export, cfgtest, bitgen-check).
   python3 -m fabtest clockcheck <work dir> [--run NAME] [--states 4] [--configs 8]
   python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME] [--by items]
   python3 -m fabtest pack <work dir> [--run NAME] [--configs 8] [--types LUT4AB,DSP_top] [--to NAME] [--solver cpsat|greedy]
+      [--kinds mux,carry,ensr]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -185,7 +186,7 @@ def cmd_pack(a) -> None:
     w = _work(a.work)
     s = spec.load(w)
     pipeline.pack(s, w, _run(a, w), a.configs, a.to, a.time, a.types.split(",") if a.types else None, _jobs(a, s),
-                  a.solver)
+                  a.solver, tuple(k for k in a.kinds.split(",") if k))
 
 
 def cmd_export(a) -> None:
@@ -302,6 +303,9 @@ def main(argv=None) -> None:
     p.add_argument("--solver", choices=("cpsat", "greedy"), default="cpsat",
                    help="bin packing: CP-SAT (OR-Tools; greedy when not installed), or greedy first fit")
     p.add_argument("--time", type=float, default=300, help="CP-SAT time limit, seconds")
+    p.add_argument("--kinds", default="mux",
+                   help="target kinds: mux (switch-matrix codes), carry (LUTs with I0 from Ci), "
+                        "ensr (non-constant EN / SR of the LUT flops), e.g. mux,carry,ensr")
     p.add_argument("--jobs", type=int, help="processes (default: fabtest.toml)")
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
