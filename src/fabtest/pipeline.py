@@ -108,7 +108,7 @@ def apply_caps(ff, spec) -> None:
 
 
 def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False, ff=None,
-          linear: bool = False) -> Path:
+          linear: bool = False, sr_pulse: bool = False) -> Path:
     from fabtest.patterns.config import fab_router as fr
     out = run / "configs.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +117,11 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
     fr.CHAINS = chains
     if linear:
         fr.LINEAR = 1   # linear.py: functions instead of signal names (bidirectional cover)
+    if sr_pulse:
+        fr.SR_PULSE = 1   # the LUT flops' SR from a pad, 1 in the first vector only
     lin = {"linear": 1} if fr.LINEAR else {}
+    if fr.SR_PULSE:
+        lin["sr_pulse"] = 1
     prior, plog, ppass = [], [], []
     if extend and out.exists():
         d = json.loads(out.read_text())

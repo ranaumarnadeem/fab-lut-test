@@ -44,6 +44,12 @@ BIDIR = int(os.environ.get("FABTEST_BIDIR", "2") or 0)
 # the nets' functions (patterns/config/linear.py: XOR of delayed pads) instead of their
 # signal names, and codes skipped that can show none of their open items in the config so far
 LINEAR = int(os.environ.get("FABTEST_LINEAR", "0") or 0)
+# FABTEST_SRP=1 (fabtest route --sr-pulse): the SR of the LUT flops from a pad that is 1 in the
+# first vector only (stimuli.config_vectors), routed to J_SR of every LUT4AB tile it reaches
+# (wires only, a tree from the pad): the chain flops are defined from the first clock, and
+# the SR muxes, the J_SR path and both reset values are tested. The reset pad rotates over
+# the border inputs per config and drives no test route.
+SR_PULSE = int(os.environ.get("FABTEST_SRP", "0") or 0)
 BACK_MAX_POP = 4000   # backward search cap (nets popped)
 BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
@@ -597,6 +603,12 @@ def fill(g: Graph, cfg: Cfg, open_work: dict, bias: int) -> dict:
     for t, xs in getattr(cfg, "lut_ci", {}).items():     # carry-mode LUTs (fabtest pack)
         if xs:
             sels[t]["__ci"] = sorted(xs)
+    if getattr(cfg, "sr_tiles", None):   # SR pulse (SR_PULSE): the tiles, the reset pad
+        from fabtest.model import wio_model as wm
+        for t in cfg.sr_tiles:
+            sels[t]["__srp"] = 1
+        j = g.arr.border_in.index(cfg.sr_pad)
+        sels[g.arr.io_tiles[j // len(wm.PADS_IN)]]["__rst"] = wm.PADS_IN[j % len(wm.PADS_IN)]
     if g.arr.cycles(sels):
         moves = g.arr.break_loops(sels, max_moves=getattr(g.arr, "loop_max_moves", 2000),
                                   pinned=getattr(cfg, "pinned", frozenset()))
@@ -619,7 +631,7 @@ def _ctrl(cfg) -> set:
     g = cfg.g
     const = _const_nets(cfg)
     lutcut = cfg.__dict__.get("_lutcut", ())
-    c = set(g.arr.border_in)
+    c = set(g.arr.border_in) - {getattr(cfg, "sr_pad", None)}   # the reset pad: no test signal
     root = {n: n for n in c}   # the signal a net carries: its pad, or the LUT it comes out of
     stack = list(c)
     while stack:
@@ -831,10 +843,24 @@ def lut_near(arr, t, side: int, avoid=()) -> tuple | None:
     return r[0] if r else None
 
 
-def pads_near(arr, y: int, names) -> list:
-    """Pad nets of the W_IO tiles, rows nearest to y first."""
+def pads_near(arr, y: int, names, avoid=()) -> list:
+    """Pad nets of the W_IO tiles, rows nearest to y first; avoid: nets left out (the reset
+    pad of an SR-pulse config)."""
     rows = sorted({t[1] for t in arr.io_tiles}, key=lambda yy: (abs(yy - y), yy))
-    return [arr.canon((-1, yy), q) for yy in rows for q in names]
+    return [n for yy in rows for q in names if (n := arr.canon((-1, yy), q)) not in avoid]
+
+
+def sr_avoid(cfg) -> set:
+    """The reset pad of an SR-pulse config and its fabric-side net (A_O / B_O of its W_IO):
+    no RegFile / BlockRAM pin takes it (a write enable or address stuck after the first
+    vector leaves the memory unwritten: X reads into the chains)."""
+    if getattr(cfg, "sr_pad", None) is None:
+        return set()
+    from fabtest.model import wio_model as wm
+    arr = cfg.g.arr
+    j = arr.border_in.index(cfg.sr_pad)
+    t, p = arr.io_tiles[j // len(wm.PADS_IN)], wm.PADS_IN[j % len(wm.PADS_IN)]
+    return {cfg.sr_pad, arr.canon(t, p.removesuffix("_top"))}
 
 
 def _rot(seq, k: int) -> list:
@@ -924,6 +950,49 @@ def route_const(cfg, val: int, targets: list, near, bias: int) -> bool:
     return False
 
 
+def sr_pad(arr, bias: int):
+    """The reset pad of config `bias` (SR_PULSE, a fabric), rotated over the border inputs;
+    None without the SR pulse."""
+    pads = list(getattr(arr, "border_in", ()))
+    return pads[bias % len(pads)] if SR_PULSE and getattr(arr, "fabric", False) and pads else None
+
+
+def sr_tree(cfg) -> tuple[int, int]:
+    """Route the reset pad to the J_SR input of the LUT SR muxes of every LUT4AB tile (wires
+    only, nearest rows first; a route reuses the tree so far at no cost) and select it (code
+    1) on the tile's eight SR muxes; a tile it does not reach keeps SR = GND. The tree is
+    pinned (never moved by loop repair). Returns (tiles reached, tiles not reached)."""
+    from fabtest.model import wio_model as wm
+    arr, g = cfg.g.arr, cfg.g
+    j = arr.border_in.index(cfg.sr_pad)
+    py = arr.io_tiles[j // len(wm.PADS_IN)][1]
+    before0 = set(cfg.sel)
+    miss = 0
+    for t in sorted(arr.lut_tiles, key=lambda t: (abs(t[1] - py), t[0], t[1])):
+        srs = [(t, f"L{x}_SR") for x in sc.LUTS]
+        tgt = g.src(srs[0], 1) if srs[0] in g.pos else None   # J_SR_END0 (code 0: GND)
+        if tgt is None:
+            continue
+        before = set(cfg.sel)
+        if not route_to(cfg, cfg.sr_pad, {tgt}, True):
+            miss += 1
+            continue
+        for i in srs:
+            if i in cfg.sel:
+                del cfg.sel[i]
+        if all(cfg.assign(i, 1) for i in srs):
+            cfg.sr_tiles.add(t)
+            continue
+        for i in srs:   # back to SR = GND, the route undone
+            if i in cfg.sel:
+                del cfg.sel[i]
+            cfg.assign(i, 0)
+        _undo(cfg, before)
+        miss += 1
+    cfg.pinned = set(getattr(cfg, "pinned", ())) | (set(cfg.sel) - before0)
+    return len(cfg.sr_tiles), miss
+
+
 def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
     """Observation backbone: per row, the LUTs of the row linked into one chain
     (each LUT output routed into an input of the next LUT, from the east tile to
@@ -939,6 +1008,7 @@ def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
     cfg.consts = {0: [], 1: []}
     cfg.set_cut(())
     cfg.lut_ci = {}
+    cfg.sr_pad, cfg.sr_tiles = sr_pad(arr, bias), set()   # SR_PULSE: chosen now (_ctrl), routed last
     if getattr(cfg.g, "ci_nodes", None):
         ci, cuts = set(ci), set()
         for k, (a, b) in cfg.g.ci_nodes.items():
@@ -965,7 +1035,7 @@ def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
             links += 1
         else:
             fails += 1
-        pads = _rot(pads_near(arr, r[1], ("A_O", "B_O")), bias + ri)
+        pads = _rot(pads_near(arr, r[1], ("A_O", "B_O"), sr_avoid(cfg)), bias + ri)
         helpers_t = _rot(lut_rank(arr, r, -1, 3), bias + ri)
         for i in range(2):
             got = False
@@ -1038,7 +1108,7 @@ def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
                 links += 2
             else:
                 fails += 1
-        pads = _rot(pads_near(arr, y1, ("A_O", "B_O")), bias + k)
+        pads = _rot(pads_near(arr, y1, ("A_O", "B_O"), sr_avoid(cfg)), bias + k)
         helpers_t = _rot(lut_rank(arr, near, -1, 3), bias + k)
         cap, cfg.g.max_pop = cfg.g.max_pop, BRAM_MAX_POP
         pa = None
@@ -1109,7 +1179,10 @@ def backbone(cfg: Cfg, bias: int = 0, ci=()) -> dict:
             if not ok:
                 fails += 1
     n_const = sum(len(c) for c in cfg.lut_const.values())
-    return {"links": links, "fails": fails, "const_luts": n_const}
+    rep = {"links": links, "fails": fails, "const_luts": n_const}
+    if cfg.sr_pad is not None:   # after the chains: the reset tree takes what they leave
+        rep["sr_tiles"], rep["sr_fails"] = sr_tree(cfg)
+    return rep
 
 
 def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
@@ -1135,8 +1208,16 @@ def route_all(arr: fabric.Array, max_configs: int = 40, verbose: bool = True,
     configs, log, stall = [], [], 0
     while len(configs) < max_configs and any(open_work.values()):
         t0 = time.time()
-        sels = build_config(g, open_work, hist, idx0 + len(configs), seed)
-        shown = fabric.grade(arr, sels)
+        pad = sr_pad(arr, idx0 + len(configs))
+        saved = arr.invec.get(pad) if pad is not None else None
+        if pad is not None:   # the reset pad as the vectors drive it: 1 in the first vector only
+            arr.invec[pad] = 1
+        try:
+            sels = build_config(g, open_work, hist, idx0 + len(configs), seed)
+            shown = fabric.grade(arr, sels)
+        finally:
+            if pad is not None:
+                arr.invec[pad] = saved
         for t, o in g.ids:
             k = sels[t].get(o, 0) if arr.MT(t)[o].model != "direct" else 0
             key = (t, o, k)

@@ -33,7 +33,32 @@ def config_setup(ff, data: dict, c: int) -> tuple[dict, list, dict]:
             luts[t][x] = (tt, 1, 1, 0)
         for x, val in sels[t].get("__lut", {}).items():
             luts[t][x] = (val["tt"] if isinstance(val, dict) else 0xFFFF if val else 0, 0, 0, 0)
+        if sels[t].get("__srp"):   # SR pulse (route --sr-pulse): reset values 0 / 1 by config and LUT
+            for k, x in enumerate(sc.LUTS):
+                a, i0, f, _rv = luts[t][x]
+                if f:
+                    luts[t][x] = (a, i0, f, (c + k) % 2)
     return sels, sc.frame_order(c % sc.F), luts
+
+
+def reset_pad(ff, sels: dict) -> int | None:
+    """Index in ff.border_in of the config's reset pad ("__rst" on its W_IO tile: fabtest
+    route --sr-pulse), None in an ordinary config."""
+    for t in getattr(ff, "io_tiles", ()):
+        p = sels.get(t, {}).get("__rst")
+        if p is not None:
+            return ff.border_in.index(f"PAD/{ff.out_or_pad(t, p)}")
+    return None
+
+
+def config_vectors(ff, data: dict, c: int, sels: dict) -> list[int]:
+    """The vectors of config c: the fabric's own, then extra_vectors; with a reset pad, that
+    pad 1 in the first vector and 0 in every other (the SR pulse)."""
+    vecs = list(ff.vecs) + extra_vectors(data, c)
+    j = reset_pad(ff, sels)
+    if j is not None:
+        vecs = [v | (1 << j) if k == 0 else v & ~(1 << j) for k, v in enumerate(vecs)]
+    return vecs
 
 
 def lut_bits(luts: dict) -> dict:
@@ -101,7 +126,7 @@ def build_stim(ff, data: dict, c: int):
         except Exception:   # unreadable (another numpy, a half-written file): built again
             pass
     sels, order, luts = config_setup(ff, data, c)
-    st = fabric.stim_clocked(ff, f"FF{c:02d}", sels, order, None, list(ff.vecs) + extra_vectors(data, c),
+    st = fabric.stim_clocked(ff, f"FF{c:02d}", sels, order, None, config_vectors(ff, data, c, sels),
                              luts, partial=True)
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)

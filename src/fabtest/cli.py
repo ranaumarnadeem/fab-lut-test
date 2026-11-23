@@ -120,7 +120,8 @@ def _jobs(a, s) -> int:
 def cmd_route(a) -> None:
     from fabtest import pipeline, spec
     w = _work(a.work)
-    pipeline.route(spec.load(w), _run(a, w, create=True), a.configs, a.chains, a.extend, linear=a.linear)
+    pipeline.route(spec.load(w), _run(a, w, create=True), a.configs, a.chains, a.extend, linear=a.linear,
+                   sr_pulse=a.sr_pulse)
 
 
 def cmd_faultsim(a) -> None:
@@ -274,6 +275,8 @@ def main(argv=None) -> None:
     p.add_argument("--extend", action="store_true", help="add configs to the run's configs.json")
     p.add_argument("--linear", action="store_true",
                    help="bidirectional cover by the nets' functions (linear model), not their signal names")
+    p.add_argument("--sr-pulse", action="store_true",
+                   help="LUT flops' SR from a pad, 1 in the first vector only (rotated pad, reset tree)")
     p.add_argument("--run", help="run name (default: a new timestamped run)")
     p = sub.add_parser("faultsim", help="sampled fault simulation, resumable in chunks")
     p.add_argument("work")
