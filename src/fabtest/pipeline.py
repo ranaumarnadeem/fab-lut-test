@@ -107,13 +107,17 @@ def apply_caps(ff, spec) -> None:
     fr.BRAM_MAX_POP, fr.CONST_RADIUS = c["bram_max_pop"], c["const_radius"]
 
 
-def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False, ff=None) -> Path:
+def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False, ff=None,
+          linear: bool = False) -> Path:
     from fabtest.patterns.config import fab_router as fr
     out = run / "configs.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     ff = ff or model(spec)
     apply_caps(ff, spec)
     fr.CHAINS = chains
+    if linear:
+        fr.LINEAR = 1   # linear.py: functions instead of signal names (bidirectional cover)
+    lin = {"linear": 1} if fr.LINEAR else {}
     prior, plog, ppass = [], [], []
     if extend and out.exists():
         d = json.loads(out.read_text())
@@ -123,7 +127,7 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
 
     def save(cs, lg, total, left):   # chains: of the last pass (passes: every pass)
         atomic_write_text(out, json.dumps({"configs": prior + cs, "log": plog + lg, "chains": chains,
-                                           "passes": ppass + [{"configs": len(cs), "chains": chains}],
+                                           "passes": ppass + [{"configs": len(cs), "chains": chains, **lin}],
                                            "items": {"total": total, "shown": total - left}}, indent=0))
     configs, open_work, total, log, _ = fr.route_all(ff, n_configs, prior=prior or None,
                                                      seed=lambda cfg, b: fr.backbone(cfg, b),
@@ -132,6 +136,8 @@ def route(spec, run: Path, n_configs: int, chains: int = 2, extend: bool = False
     save(configs, log, total, total - done)
     print(f"fabtest route: {len(prior) + len(configs)} configs, {done} of {total} items "
           f"({100 * done / total:.2f}%), {time.time() - t0:.0f} s -> {out}")
+    if fr.LINEAR:
+        print("  linear: " + ", ".join(f"{k[4:]} {v}" for k, v in sorted(fr.BIDIR_STATS.items()) if k.startswith("lin ")))
     return out
 
 

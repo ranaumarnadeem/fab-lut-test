@@ -40,6 +40,10 @@ _ARR = None   # the array of the current Graph (tile types: fabric.Array.MT)
 # values in some vector (select / decode faults); the selected input avoids the signals of
 # the mux's other inputs; backward paths prefer open codes, as forward routes do
 BIDIR = int(os.environ.get("FABTEST_BIDIR", "2") or 0)
+# FABTEST_LINEAR=1 (fabtest route --linear): the bidirectional cover's second input judged by
+# the nets' functions (patterns/config/linear.py: XOR of delayed pads) instead of their
+# signal names, and codes skipped that can show none of their open items in the config so far
+LINEAR = int(os.environ.get("FABTEST_LINEAR", "0") or 0)
 BACK_MAX_POP = 4000   # backward search cap (nets popped)
 BIDIR_STATS = defaultdict(int)   # drive_input: already driven / routed / failed
 CBITS_PATTERN = [0x0F, 0xF0, 0x33, 0xCC, 0x55, 0xAA]   # W_IO Config_access bits per config
@@ -357,7 +361,10 @@ class Cfg:
         if ok and BIDIR:
             s = self.g.src(i, k)
             if s is not None:
-                if BIDIR >= 2:
+                if BIDIR >= 2 and LINEAR:
+                    from fabtest.patterns.config import linear
+                    linear.drive_pair(self, i, k, s)
+                elif BIDIR >= 2:
                     _drive_pair(self, i, k, s)
                 else:
                     drive_input(self, s)
@@ -532,6 +539,10 @@ def build_config(g: Graph, open_work: dict, hist: dict, bias: int, seed=None) ->
         ks = sorted((k for k in range(MM(i).fan_in) if open_work.get((*i, k))),
                     key=lambda k: (-len(open_work[(*i, k)]), (k + bias) % MM(i).fan_in))
         for k in ks:
+            if LINEAR:
+                from fabtest.patterns.config import linear
+                if not linear.useful(cfg, i, k, open_work):
+                    continue
             if cfg.try_cover(i, k, open_work):
                 break
     return fill(g, cfg, open_work, bias)
