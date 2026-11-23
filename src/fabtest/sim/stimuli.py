@@ -52,9 +52,9 @@ def reset_pad(ff, sels: dict) -> int | None:
 
 
 def config_vectors(ff, data: dict, c: int, sels: dict) -> list[int]:
-    """The vectors of config c: the fabric's own, then extra_vectors; with a reset pad, that
-    pad 1 in the first vector and 0 in every other (the SR pulse)."""
-    vecs = list(ff.vecs) + extra_vectors(data, c)
+    """The vectors of config c: the fabric's own; with a reset pad, that pad 1 in the first
+    vector and 0 in every other (the SR pulse)."""
+    vecs = list(ff.vecs)
     j = reset_pad(ff, sels)
     if j is not None:
         vecs = [v | (1 << j) if k == 0 else v & ~(1 << j) for k, v in enumerate(vecs)]
@@ -97,21 +97,12 @@ def _fabric_key(ff) -> str:
     return hashlib.sha1(f"{type(ff).__name__}:{ff.name}:{ff.n_rand}:{getattr(ff, 'bram', None)}:{src}".encode()).hexdigest()
 
 
-def extra_vectors(data: dict, c: int) -> list[int]:
-    """Vectors of config c after the fabric's own (configs.json "extra_vectors", fabtest
-    satvec); none in an ordinary config set."""
-    ev = data.get("extra_vectors")
-    return list(ev[c]) if ev else []
-
-
 def _stim_cache(ff, data: dict, c: int) -> Path | None:
     if os.environ.get("FABTEST_STIM_CACHE", "1") == "0":
         return None
     from fabtest.paths import BUILD
-    ev = extra_vectors(data, c)
     key = hashlib.sha1(f"{_code_hash()}:{_fabric_key(ff)}:{c}:".encode()
-                       + json.dumps(data["configs"][c], sort_keys=True).encode()
-                       + (f":extra{ev}".encode() if ev else b"")).hexdigest()
+                       + json.dumps(data["configs"][c], sort_keys=True).encode()).hexdigest()
     return BUILD / "cache" / "stims" / f"{key}.pkl"
 
 

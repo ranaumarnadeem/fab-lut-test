@@ -6,7 +6,7 @@ compact, pack, clockcheck, export, cfgtest, bitgen-check).
   python3 -m fabtest init <FABulous project> [--work DIR] [--force]
   python3 -m fabtest info <work dir> [--bels]
   python3 -m fabtest synth <work dir> [--jobs 4]
-  python3 -m fabtest route <work dir> [--run NAME] [--configs 24] [--chains 2] [--extend] [--linear]
+  python3 -m fabtest route <work dir> [--run NAME] [--configs 24] [--chains 2] [--extend]
   python3 -m fabtest faultsim <work dir> [--run NAME] [--configs-from JSON] [--sample 2000] [--jobs 4] [--force]
   python3 -m fabtest report <work dir> [--run NAME]
   python3 -m fabtest powerup <work dir> [--run NAME] [--sample 400] [--max-u 10]
@@ -15,8 +15,6 @@ compact, pack, clockcheck, export, cfgtest, bitgen-check).
   python3 -m fabtest compact <work dir> [--run NAME] [--target 99 | --configs N] [--to NAME] [--by items]
   python3 -m fabtest pack <work dir> [--run NAME] [--configs 8] [--types LUT4AB,DSP_top] [--to NAME] [--solver cpsat|greedy]
       [--kinds mux,carry,ensr]
-  python3 -m fabtest linear <work dir> [--run NAME] [--sound 2000]
-  python3 -m fabtest satvec <work dir> [--run NAME] [--to NAME] [--frames 2] [--max-vectors 256] [--targets 400]
   python3 -m fabtest export <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--canonical] [--port-test]
   python3 -m fabtest cfgtest <work dir> [--run NAME] [--configs-from JSON] [--only 0,1] [--jobs 4]
   python3 -m fabtest bitgen-check <work dir> [--run NAME | --configs-from JSON] [--only 0,1,2,3]
@@ -120,7 +118,7 @@ def _jobs(a, s) -> int:
 def cmd_route(a) -> None:
     from fabtest import pipeline, spec
     w = _work(a.work)
-    pipeline.route(spec.load(w), _run(a, w, create=True), a.configs, a.chains, a.extend, linear=a.linear,
+    pipeline.route(spec.load(w), _run(a, w, create=True), a.configs, a.chains, a.extend,
                    sr_pulse=a.sr_pulse)
 
 
@@ -192,21 +190,6 @@ def cmd_pack(a) -> None:
                   a.solver, tuple(k for k in a.kinds.split(",") if k))
 
 
-def cmd_linear(a) -> None:
-    from fabtest import spec
-    from fabtest.patterns.config import linear
-    w = _work(a.work)
-    s = spec.load(w)
-    print(linear.diagnose(s, w, _run(a, w), a.sound, jobs=_jobs(a, s)), end="")
-
-
-def cmd_satvec(a) -> None:
-    from fabtest import pipeline, spec
-    w = _work(a.work)
-    s = spec.load(w)
-    pipeline.satvec(s, w, _run(a, w), a.to, a.frames, a.max_vectors, a.targets, a.budget, a.jobs or 3)
-
-
 def cmd_export(a) -> None:
     from fabtest import export, pipeline, spec
     w = _work(a.work)
@@ -273,8 +256,6 @@ def main(argv=None) -> None:
     p.add_argument("--configs", type=int, default=24)
     p.add_argument("--chains", type=int, default=2)
     p.add_argument("--extend", action="store_true", help="add configs to the run's configs.json")
-    p.add_argument("--linear", action="store_true",
-                   help="bidirectional cover by the nets' functions (linear model), not their signal names")
     p.add_argument("--sr-pulse", action="store_true",
                    help="LUT flops' SR from a pad, 1 in the first vector only (rotated pad, reset tree)")
     p.add_argument("--run", help="run name (default: a new timestamped run)")
@@ -329,21 +310,6 @@ def main(argv=None) -> None:
                    help="target kinds: mux (switch-matrix codes), carry (LUTs with I0 from Ci), "
                         "ensr (non-constant EN / SR of the LUT flops), e.g. mux,carry,ensr")
     p.add_argument("--jobs", type=int, help="processes (default: fabtest.toml)")
-    p = sub.add_parser("linear", help="diagnostic of the undetected faults: could some config detect them "
-                                      "(linear model of the configs)")
-    p.add_argument("work")
-    p.add_argument("--run", help="run name (default: the latest run)")
-    p.add_argument("--sound", type=int, default=2000, help="detected (fault, config) pairs checked")
-    p.add_argument("--jobs", type=int, help="threads (default: fabtest.toml)")
-    p = sub.add_parser("satvec", help="SAT vectors for the undetected faults, after each config's own (prototype)")
-    p.add_argument("work")
-    p.add_argument("--run", help="run name (default: the latest run)")
-    p.add_argument("--to", help="name of the new run (default: <run>_v)")
-    p.add_argument("--frames", type=int, default=2, help="clocks per SAT model")
-    p.add_argument("--max-vectors", type=int, default=256, help="vectors per config in all")
-    p.add_argument("--targets", type=int, default=400, help="target faults per config at most")
-    p.add_argument("--budget", type=int, default=2000, help="SAT conflicts per call")
-    p.add_argument("--jobs", type=int, help="processes (default 3)")
     p = sub.add_parser("export", help="bitstreams, vectors, Icarus testbench, plan, manifest")
     p.add_argument("work")
     p.add_argument("--configs-from", help="a stored config set: copied into the run")
@@ -367,6 +333,5 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     {"run": cmd_run, "init": cmd_init, "info": cmd_info, "synth": cmd_synth, "route": cmd_route,
      "faultsim": cmd_faultsim, "report": cmd_report, "powerup": cmd_powerup, "untestable": cmd_untestable,
-     "compact": cmd_compact, "pack": cmd_pack, "clockcheck": cmd_clockcheck, "linear": cmd_linear,
-     "satvec": cmd_satvec, "export": cmd_export,
+     "compact": cmd_compact, "pack": cmd_pack, "clockcheck": cmd_clockcheck, "export": cmd_export,
      "cfgtest": cmd_cfgtest, "bitgen-check": cmd_bitgen_check}[a.cmd](a)
